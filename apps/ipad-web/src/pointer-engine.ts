@@ -1,0 +1,262 @@
+import { calculateContentRect, normalizePoint, type FitMode } from "./geometry";
+import {
+  DeviceType,
+  PointerAction,
+  encodePointerBatch,
+  type DeviceTypeValue,
+  type PointerActionValue,
+  type PointerSample,
+} from "./protocol";
+
+type ExtendedPointerEvent = PointerEvent & {
+  getPredictedEvents?: () => PointerEvent[];
+};
+
+export interface PointerTelemetry {
+  pointerType: string;
+  pointerId: number;
+  x: number;
+  y: number;
+  pressure: number;
+  tiltX: number;
+  tiltY: number;
+  altitudeAngle: number;
+  azimuthAngle: number;
+  twist: number;
+  buttons: number;
+  coalesced: number;
+  eventsPerSecond: number;
+  samplesPerSecond: number;
+}
+
+export interface PointerEngineOptions {
+  overlay: HTMLCanvasElement;
+  video: HTMLVideoElement;
+  send: (packet: ArrayBuffer) => void;
+  getFitMode: () => FitMode;
+  getTouchEnabled: () => boolean;
+  inputEnabled?: boolean;
+  onTelemetry?: (telemetry: PointerTelemetry) => void;
+}
+
+export class PointerEngine {
+  private readonly overlay: HTMLCanvasElement;
+  private readonly video: HTMLVideoElement;
+  private readonly sendPacket: (packet: ArrayBuffer) => void;
+  private readonly getFitMode: () => FitMode;
+  private readonly getTouchEnabled: () => boolean;
+  private readonly onTelemetry?: (telemetry: PointerTelemetry) => void;
+  private readonly activePointers = new Set<number>();
+  private batchSequence = 0;
+  private sampleSequence = 0;
+  private eventCounter = 0;
+  private sampleCounter = 0;
+  private rateStarted = performance.now();
+  private disposed = false;
+
+  constructor(options: PointerEngineOptions) {
+    this.overlay = options.overlay;
+    this.video = options.video;
+    this.sendPacket = options.send;
+    this.getFitMode = options.getFitMode;
+    this.getTouchEnabled = options.getTouchEnabled;
+    this.onTelemetry = options.onTelemetry;
+    if (options.inputEnabled !== false) {
+      this.bind();
+    }
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    this.overlay.removeEventListener("pointerdown", this.handlePointer);
+    this.overlay.removeEventListener("pointermove", this.handlePointer);
+    this.overlay.removeEventListener("pointerup", this.handlePointer);
+    this.overlay.removeEventListener("pointercancel", this.handlePointer);
+    document.removeEventListener("visibilitychange", this.handleVisibility);
+  }
+
+  cancelAll(): void {
+    for (const pointerId of this.activePointers) {
+      this.sendSamples([
+        {
+          deviceType: DeviceType.Pen,
+          action: PointerAction.Cancel,
+          flags: 0,
+          pointerId,
+          sampleSequence: this.nextSampleSequence(),
+          xNorm: 0,
+          yNorm: 0,
+          pressure: 0,
+          tiltXDeg: 0,
+          tiltYDeg: 0,
+          twistDeg: 0,
+          clientTimeMs: performance.now(),
+        },
+      ]);
+    }
+    this.activePointers.clear();
+  }
+
+  private bind(): void {
+    const listenerOptions: AddEventListenerOptions = { passive: false };
+    this.overlay.addEventListener("pointerdown", this.handlePointer, listenerOptions);
+    this.overlay.addEventListener("pointermove", this.handlePointer, listenerOptions);
+    this.overlay.addEventListener("pointerup", this.handlePointer, listenerOptions);
+    this.overlay.addEventListener("pointercancel", this.handlePointer, listenerOptions);
+    document.addEventListener("visibilitychange", this.handleVisibility);
+  }
+
+  private readonly handleVisibility = (): void => {
+    if (document.hidden) {
+      this.cancelAll();
+    }
+  };
+
+  private readonly handlePointer = (event: PointerEvent): void => {
+    if (this.disposed || (event.pointerType !== "pen" && event.pointerType !== "touch")) {
+      return;
+    }
+    if (event.pointerType === "touch" && !this.getTouchEnabled()) {
+      event.preventDefault();
+      return;
+    }
+    event.preventDefault();
+    if (event.type === "pointerdown") {
+      this.activePointers.add(event.pointerId);
+      try {
+        this.overlay.setPointerCapture(event.pointerId);
+      } catch {
+        // Safari can reject capture if the pointer already ended; lifecycle packets still recover safely.
+      }
+    }
+
+    const extended = event as ExtendedPointerEvent;
+    const coalesced = extended.getCoalescedEvents?.() ?? [];
+    const actualEvents = coalesced.length > 0 ? coalesced : [event];
+    const samples = actualEvents
+      .map((sampleEvent) => this.toSample(sampleEvent, event.type))
+      .filter((sample): sample is PointerSample => sample !== null);
+    if (samples.length > 0) {
+      this.sendSamples(samples);
+      this.sampleCounter += samples.length;
+    }
+    this.eventCounter += 1;
+    this.emitTelemetry(event, coalesced.length, samples.length);
+    this.drawPrediction(extended);
+
+    if (event.type === "pointerup" || event.type === "pointercancel") {
+      this.activePointers.delete(event.pointerId);
+      try {
+        this.overlay.releasePointerCapture(event.pointerId);
+      } catch {
+        // The browser may release automatically before this handler.
+      }
+    }
+  };
+
+  private toSample(event: PointerEvent, sourceType: string): PointerSample | null {
+    const bounds = this.overlay.getBoundingClientRect();
+    const sourceWidth = this.video.videoWidth || bounds.width;
+    const sourceHeight = this.video.videoHeight || bounds.height;
+    const rect = calculateContentRect(bounds.width, bounds.height, sourceWidth, sourceHeight, this.getFitMode());
+    const point = normalizePoint(event.clientX - bounds.left, event.clientY - bounds.top, rect, this.getFitMode() !== "fit");
+    if (!point) {
+      return null;
+    }
+    const deviceType: DeviceTypeValue = event.pointerType === "pen" ? DeviceType.Pen : DeviceType.Touch;
+    return {
+      deviceType,
+      action: actionFor(sourceType, event),
+      flags: event.buttons & 0xffff,
+      pointerId: event.pointerId,
+      sampleSequence: this.nextSampleSequence(),
+      xNorm: point.u,
+      yNorm: point.v,
+      pressure: event.pressure,
+      tiltXDeg: event.tiltX,
+      tiltYDeg: event.tiltY,
+      twistDeg: event.twist,
+      clientTimeMs: event.timeStamp,
+    };
+  }
+
+  private sendSamples(samples: readonly PointerSample[]): void {
+    this.sendPacket(
+      encodePointerBatch({
+        batchSequence: this.batchSequence++ >>> 0,
+        clientSendTimeMs: performance.now(),
+        samples,
+      }),
+    );
+  }
+
+  private nextSampleSequence(): number {
+    const sequence = this.sampleSequence;
+    this.sampleSequence = (this.sampleSequence + 1) >>> 0;
+    return sequence;
+  }
+
+  private emitTelemetry(event: PointerEvent, coalesced: number, samples: number): void {
+    if (!this.onTelemetry) {
+      return;
+    }
+    const elapsed = Math.max(0.001, (performance.now() - this.rateStarted) / 1000);
+    const extended = event as ExtendedPointerEvent;
+    this.onTelemetry({
+      pointerType: event.pointerType,
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      pressure: event.pressure,
+      tiltX: event.tiltX,
+      tiltY: event.tiltY,
+      altitudeAngle: extended.altitudeAngle ?? 0,
+      azimuthAngle: extended.azimuthAngle ?? 0,
+      twist: event.twist,
+      buttons: event.buttons,
+      coalesced,
+      eventsPerSecond: this.eventCounter / elapsed,
+      samplesPerSecond: (this.sampleCounter + samples) / elapsed,
+    });
+    if (elapsed >= 1) {
+      this.eventCounter = 0;
+      this.sampleCounter = 0;
+      this.rateStarted = performance.now();
+    }
+  }
+
+  private drawPrediction(event: ExtendedPointerEvent): void {
+    const predictions = event.getPredictedEvents?.() ?? [];
+    const prediction = predictions.at(-1);
+    const context = this.overlay.getContext("2d");
+    if (!context) {
+      return;
+    }
+    context.clearRect(0, 0, this.overlay.width, this.overlay.height);
+    if (!prediction) {
+      return;
+    }
+    const bounds = this.overlay.getBoundingClientRect();
+    const scaleX = this.overlay.width / Math.max(1, bounds.width);
+    const scaleY = this.overlay.height / Math.max(1, bounds.height);
+    context.beginPath();
+    context.arc((prediction.clientX - bounds.left) * scaleX, (prediction.clientY - bounds.top) * scaleY, 3 * scaleX, 0, Math.PI * 2);
+    context.fillStyle = "rgba(91, 224, 194, 0.62)";
+    context.fill();
+  }
+}
+
+function actionFor(sourceType: string, event: PointerEvent): PointerActionValue {
+  switch (sourceType) {
+    case "pointerdown":
+      return PointerAction.Down;
+    case "pointerup":
+      return PointerAction.Up;
+    case "pointercancel":
+      return PointerAction.Cancel;
+    default:
+      return event.pointerType === "pen" && event.pressure === 0 && event.buttons === 0
+        ? PointerAction.Hover
+        : PointerAction.Move;
+  }
+}
