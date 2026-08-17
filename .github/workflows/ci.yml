@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/ipad-web/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install browser dependencies
+        working-directory: apps/ipad-web
+        run: npm ci
+      - name: Typecheck and test browser client
+        working-directory: apps/ipad-web
+        run: |
+          npm run typecheck
+          npm test
+          npm run build
+
+      - name: Rust formatting
+        run: cargo fmt --all -- --check
+      - name: Rust check
+        run: cargo check --workspace --all-targets --locked
+      - name: Rust Clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Rust tests
+        run: cargo test --workspace --locked
+      - name: Release executables
+        run: cargo build --release --locked -p nfidb -p pointer-sink
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NFiDB-windows-x64-ci
+          if-no-files-found: error
+          path: |
+            target/release/nfidb.exe
+            target/release/pointer-sink.exe
