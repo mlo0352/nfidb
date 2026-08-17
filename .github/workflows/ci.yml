@@ -44,7 +44,7 @@ jobs:
         run: cargo test --workspace --locked
       - name: Release executables
         run: cargo build --release --locked -p nfidb -p pointer-sink
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: NFiDB-windows-x64-ci
           if-no-files-found: error
