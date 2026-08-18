@@ -1,6 +1,6 @@
 # NFiDB
 
-**No Frills iPad Drawing Bridge** turns an iPad and Apple Pencil into a local-network pen display for a Windows 11 PC. Run one portable Windows app, open the address it shows in Safari, enter the six-digit PIN, and draw. There is no iPad app, account, subscription, cloud relay, or internet dependency after installation.
+**No Frills iPad Drawing Bridge** turns an iPad and Apple Pencil into a local-network pen display for a Windows 11 PC. Extract one portable Windows app, open the address it shows in Safari, enter the six-digit PIN, and draw. There is no iPad app, account, subscription, cloud relay, or internet service involved in a session.
 
 > NFiDB is an early MVP. Its protocol, native pen injection, Windows capture, browser pairing, and WebRTC video path have automated coverage. Physical iPad/Apple Pencil and individual art-app compatibility still need field validation; see [the test matrix](docs/TEST_MATRIX.md) before relying on it for production work.
 
@@ -15,6 +15,7 @@
 - mDNS-friendly and numeric-IP URLs, with automatic port fallback.
 - Pen-display, input-only, and display-only modes.
 - A standalone browser pointer diagnostic and a native `WM_POINTER` validation sink.
+- Authenticated continuity, lifecycle, buffering, resolution, encoder, and WebRTC diagnostics.
 
 The first MVP mirrors one Windows monitor. It is not an extended-desktop display driver, remote-desktop product, or internet relay. Window-only capture, hardware Media Foundation encoding, audio, multi-client sessions, and an installer are not in this release.
 
@@ -26,6 +27,8 @@ The first MVP mirrors one Windows monitor. It is not an extended-desktop display
 4. Put the PC and iPad on the same normal LAN. Guest Wi-Fi/client isolation will prevent a connection.
 5. Open the shown `.local` or numeric address in iPad Safari and enter the PIN (or scan the QR code).
 6. Open the drawing app on the selected Windows monitor and draw on the iPad.
+
+Nothing is installed on the iPad: the Windows host serves the complete browser client from the EXE. The Windows ZIP is portable and has only standard Windows DLL dependencies in the tested build. It is unsigned, so SmartScreen can warn, and Windows Firewall may ask once for Private-network access.
 
 Touch is deliberately disabled until enabled in both the host and browser. Use input-only mode when another screen-sharing system handles the picture, or display-only mode when you do not want remote input.
 
@@ -68,9 +71,11 @@ nfidb --display-only
 nfidb --diagnostics
 nfidb --capture test-pattern --input-sink log
 pointer-sink --self-test
+pointer-sink --stress-test --samples 14400 --rate 240 --batch-size 4
+./scripts/benchmark.ps1 -DurationSeconds 10
 ```
 
-The host stores user settings in `%APPDATA%\NFiDB\config.toml`. Full flags are available with `nfidb --help` in a debug/console build; release builds normally launch as a GUI application.
+The host stores user settings in `%APPDATA%\NFiDB\config.toml`. Full flags are available with `nfidb --help`; release builds normally launch as a GUI application. The measured release-mode resolution and frame-rate envelope is published in [Performance notes](docs/PERFORMANCE.md).
 
 ## Documentation
 

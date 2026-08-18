@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 use std::time::Duration;
+use std::{fs, path::PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
@@ -36,6 +37,22 @@ struct Cli {
     headless: bool,
     #[arg(long, requires = "headless", help = "Exit headless mode after this many seconds")]
     run_seconds: Option<u64>,
+    #[arg(long, value_enum, help = "Override the saved video quality profile")]
+    video_profile: Option<VideoProfileChoice>,
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..=120), help = "Override the capture frame-rate limit")]
+    max_fps: Option<u32>,
+    #[arg(long, default_value_t = 1280, help = "Generated test-pattern source width")]
+    test_width: u32,
+    #[arg(long, default_value_t = 720, help = "Generated test-pattern source height")]
+    test_height: u32,
+    #[arg(long, value_parser = clap::value_parser!(u16).range(1024..=65500), help = "Override the saved HTTP port")]
+    port: Option<u16>,
+    #[arg(long, help = "Disable local mDNS advertisement for this run")]
+    no_mdns: bool,
+    #[arg(long, requires = "headless", help = "Write startup URL/PIN JSON for automation")]
+    session_info: Option<PathBuf>,
+    #[arg(long, requires_all = ["headless", "run_seconds"], help = "Write final host metrics JSON for benchmarks")]
+    metrics_output: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -49,6 +66,23 @@ enum CaptureChoice {
 enum InputSinkChoice {
     Inject,
     Log,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum VideoProfileChoice {
+    Fast,
+    Balanced,
+    Sharp,
+}
+
+impl From<VideoProfileChoice> for VideoProfile {
+    fn from(value: VideoProfileChoice) -> Self {
+        match value {
+            VideoProfileChoice::Fast => Self::Fast,
+            VideoProfileChoice::Balanced => Self::Balanced,
+            VideoProfileChoice::Sharp => Self::Sharp,
+        }
+    }
 }
 
 fn main() -> Result<()> {
@@ -68,6 +102,18 @@ fn main() -> Result<()> {
         config.mode = CaptureMode::InputOnly;
     } else if cli.display_only {
         config.mode = CaptureMode::DisplayOnly;
+    }
+    if let Some(profile) = cli.video_profile {
+        config.video.profile = profile.into();
+    }
+    if let Some(max_fps) = cli.max_fps {
+        config.video.max_fps = max_fps;
+    }
+    if let Some(port) = cli.port {
+        config.network.port = port;
+    }
+    if cli.no_mdns {
+        config.network.mdns = false;
     }
     let monitors = enumerate_monitors()
         .map_err(anyhow::Error::msg)
@@ -110,7 +156,7 @@ fn main() -> Result<()> {
     if config.mode != CaptureMode::InputOnly {
         let capture_result = match cli.capture {
             CaptureChoice::Monitor => capture.start_monitor(selected.index),
-            CaptureChoice::TestPattern => capture.start_test_pattern(),
+            CaptureChoice::TestPattern => capture.start_test_pattern_size(cli.test_width, cli.test_height),
             CaptureChoice::None => Ok(()),
         };
         if let Err(error) = capture_result {
@@ -136,10 +182,24 @@ fn main() -> Result<()> {
     );
 
     if cli.headless {
-        println!("NFiDB ready");
-        println!("URL={}", server.info.fallback_url);
-        println!("FRIENDLY_URL={}", server.info.friendly_url);
-        println!("PIN={}", server.info.pin);
+        if let Some(path) = &cli.session_info {
+            write_json(
+                path,
+                &serde_json::json!({
+                    "product": "NFiDB",
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "pid": std::process::id(),
+                    "url": server.info.fallback_url,
+                    "friendly_url": server.info.friendly_url,
+                    "pin": server.info.pin,
+                    "port": server.info.port,
+                    "capture": capture.status().source,
+                    "profile": format!("{:?}", config.video.profile).to_ascii_lowercase(),
+                    "max_fps": config.video.max_fps,
+                }),
+            )?;
+        }
+        tracing::info!(url = %server.info.fallback_url, "NFiDB headless host ready");
         if let Some(seconds) = cli.run_seconds {
             std::thread::sleep(Duration::from_secs(seconds));
         } else {
@@ -148,6 +208,9 @@ fn main() -> Result<()> {
             }
         }
         capture.stop();
+        if let Some(path) = &cli.metrics_output {
+            write_json(path, &metrics.snapshot())?;
+        }
         server.stop();
         return Ok(());
     }
@@ -179,6 +242,16 @@ fn main() -> Result<()> {
     )
     .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     Ok(())
+}
+
+fn write_json(path: &PathBuf, value: &impl serde::Serialize) -> Result<()> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    let bytes = serde_json::to_vec_pretty(value)?;
+    fs::write(path, bytes).with_context(|| format!("failed to write {}", path.display()))
 }
 
 struct HostApp {
@@ -459,7 +532,7 @@ impl HostApp {
                 }
                 if ui.button("Copy sanitized diagnostics").clicked() {
                     let report = serde_json::json!({
-                        "product": "NFiDB 0.1.0",
+                        "product": concat!("NFiDB ", env!("CARGO_PKG_VERSION")),
                         "host": "redacted",
                         "capture": capture.source,
                         "encoder": capture.encoder,

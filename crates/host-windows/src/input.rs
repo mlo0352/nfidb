@@ -1,4 +1,6 @@
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 use nfidb_core::{InputError, InputSink};
 use nfidb_protocol::{Action, DeviceType, NormalizedPoint, PointerBatch, PointerSample, TargetGeometry};
@@ -21,6 +23,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 const MAX_TOUCH_CONTACTS: u32 = 10;
+const ERROR_NOT_READY: i32 = 21;
+const INJECTION_RETRY_LIMIT: Duration = Duration::from_millis(5);
 
 #[derive(Debug, Clone, Copy)]
 pub struct PointerInjectorOptions {
@@ -76,6 +80,7 @@ pub struct PointerInjector {
     state: Mutex<InjectorState>,
     target: RwLock<TargetGeometry>,
     options: RwLock<PointerInjectorOptions>,
+    target_window: AtomicUsize,
 }
 
 impl PointerInjector {
@@ -98,6 +103,7 @@ impl PointerInjector {
             }),
             target: RwLock::new(target),
             options: RwLock::new(options),
+            target_window: AtomicUsize::new(0),
         })
     }
 
@@ -109,7 +115,19 @@ impl PointerInjector {
         *self.options.write() = options;
     }
 
-    fn inject_pen(state: &mut InjectorState, sample: PointerSample, point: POINT) -> Result<(), InputError> {
+    /// Directs injected messages to a specific HWND. Production leaves this unset so User32
+    /// performs normal screen-coordinate hit testing; the native sink uses it for deterministic
+    /// automation when the test runner's own topmost window obscures the desktop.
+    pub fn set_target_window(&self, hwnd: usize) {
+        self.target_window.store(hwnd, Ordering::Relaxed);
+    }
+
+    fn inject_pen(
+        state: &mut InjectorState,
+        sample: PointerSample,
+        point: POINT,
+        target_window: usize,
+    ) -> Result<(), InputError> {
         if state.pen.is_some_and(|active| active.pointer_id != sample.pointer_id) {
             release_pen(state)?;
         }
@@ -154,7 +172,7 @@ impl PointerInjector {
                 frameId: 0,
                 pointerFlags: pointer_flags,
                 sourceDevice: std::ptr::null_mut(),
-                hwndTarget: std::ptr::null_mut(),
+                hwndTarget: target_window as _,
                 ptPixelLocation: point,
                 ptHimetricLocation: POINT::default(),
                 ptPixelLocationRaw: point,
@@ -177,9 +195,7 @@ impl PointerInjector {
             r#type: PT_PEN,
             Anonymous: POINTER_TYPE_INFO_0 { penInfo: pen_info },
         };
-        if unsafe { InjectSyntheticPointerInput(state.pen_device, &info, 1) } == 0 {
-            return Err(last_error("InjectSyntheticPointerInput(PT_PEN)"));
-        }
+        inject_with_retry(state.pen_device, &info, 1, "InjectSyntheticPointerInput(PT_PEN)")?;
 
         if sample.action.is_terminal() {
             state.pen = None;
@@ -197,7 +213,12 @@ impl PointerInjector {
         Ok(())
     }
 
-    fn inject_touch(state: &mut InjectorState, sample: PointerSample, point: POINT) -> Result<(), InputError> {
+    fn inject_touch(
+        state: &mut InjectorState,
+        sample: PointerSample,
+        point: POINT,
+        target_window: usize,
+    ) -> Result<(), InputError> {
         let pointer_id = sample.pointer_id.max(1);
         match sample.action {
             Action::Down | Action::Move => {
@@ -232,7 +253,7 @@ impl PointerInjector {
             } else {
                 POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT | POINTER_FLAG_UPDATE
             } | POINTER_FLAG_CONFIDENCE;
-            contacts.push(touch_info(*active, flags));
+            contacts.push(touch_info(*active, flags, target_window));
         }
 
         if sample.action.is_terminal() && !state.touches.contains_key(&pointer_id) {
@@ -252,13 +273,17 @@ impl PointerInjector {
                     } else {
                         0
                     },
+                target_window,
             ));
         }
 
-        if !contacts.is_empty()
-            && unsafe { InjectSyntheticPointerInput(state.touch_device, contacts.as_ptr(), contacts.len() as u32) } == 0
-        {
-            return Err(last_error("InjectSyntheticPointerInput(PT_TOUCH)"));
+        if !contacts.is_empty() {
+            inject_with_retry(
+                state.touch_device,
+                contacts.as_ptr(),
+                contacts.len() as u32,
+                "InjectSyntheticPointerInput(PT_TOUCH)",
+            )?;
         }
         if sample.action.is_terminal() {
             state.touches.remove(&pointer_id);
@@ -271,6 +296,7 @@ impl InputSink for PointerInjector {
     fn inject_batch(&self, batch: &PointerBatch) -> Result<(), InputError> {
         let options = *self.options.read();
         let target = *self.target.read();
+        let target_window = self.target_window.load(Ordering::Relaxed);
         let mut state = self.state.lock();
         for sample in &batch.samples {
             let point = target.map(NormalizedPoint {
@@ -279,12 +305,12 @@ impl InputSink for PointerInjector {
             });
             let point = POINT { x: point.x, y: point.y };
             match sample.device_type {
-                DeviceType::Pen if options.pen_enabled => Self::inject_pen(&mut state, *sample, point)?,
+                DeviceType::Pen if options.pen_enabled => Self::inject_pen(&mut state, *sample, point, target_window)?,
                 DeviceType::Touch
                     if options.touch_enabled
                         && !(options.strict_palm_rejection && state.pen.is_some_and(|pen| pen.down)) =>
                 {
-                    Self::inject_touch(&mut state, *sample, point)?;
+                    Self::inject_touch(&mut state, *sample, point, target_window)?;
                 }
                 DeviceType::Pen | DeviceType::Touch => {}
             }
@@ -300,7 +326,13 @@ impl InputSink for PointerInjector {
                 .touches
                 .values()
                 .copied()
-                .map(|active| touch_info(active, POINTER_FLAG_CANCELED | POINTER_FLAG_UP))
+                .map(|active| {
+                    touch_info(
+                        active,
+                        POINTER_FLAG_CANCELED | POINTER_FLAG_UP,
+                        self.target_window.load(Ordering::Relaxed),
+                    )
+                })
                 .collect();
             if unsafe { InjectSyntheticPointerInput(state.touch_device, contacts.as_ptr(), contacts.len() as u32) } == 0
             {
@@ -309,6 +341,25 @@ impl InputSink for PointerInjector {
             state.touches.clear();
         }
         Ok(())
+    }
+}
+
+fn inject_with_retry(
+    device: HSYNTHETICPOINTERDEVICE,
+    info: *const POINTER_TYPE_INFO,
+    count: u32,
+    context: &str,
+) -> Result<(), InputError> {
+    let started = Instant::now();
+    loop {
+        if unsafe { InjectSyntheticPointerInput(device, info, count) } != 0 {
+            return Ok(());
+        }
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() != Some(ERROR_NOT_READY) || started.elapsed() >= INJECTION_RETRY_LIMIT {
+            return Err(InputError(format!("{context} failed: {error}")));
+        }
+        std::thread::yield_now();
     }
 }
 
@@ -346,13 +397,14 @@ fn release_pen(state: &mut InjectorState) -> Result<(), InputError> {
     Ok(())
 }
 
-fn touch_info(active: ActivePointer, flags: u32) -> POINTER_TYPE_INFO {
+fn touch_info(active: ActivePointer, flags: u32, target_window: usize) -> POINTER_TYPE_INFO {
     let radius = 4;
     let touch_info = POINTER_TOUCH_INFO {
         pointerInfo: POINTER_INFO {
             pointerType: PT_TOUCH,
             pointerId: active.pointer_id,
             pointerFlags: flags,
+            hwndTarget: target_window as _,
             ptPixelLocation: active.point,
             ptPixelLocationRaw: active.point,
             historyCount: 1,

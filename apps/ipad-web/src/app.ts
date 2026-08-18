@@ -1,8 +1,28 @@
-import { disconnect, getStatus, pairWithPin, pairWithQr, sendOffer, type HostMetrics, type HostStatus } from "./api";
+import { disconnect, getMetrics, getStatus, pairWithPin, pairWithQr, sendOffer, type HostMetrics, type HostStatus } from "./api";
 import type { FitMode } from "./geometry";
 import { PointerEngine } from "./pointer-engine";
 
 type ConnectionState = "pairing" | "connecting" | "connected" | "input-only" | "failed";
+type InputTransport = "datachannel" | "websocket";
+
+export interface ClientDiagnosticSnapshot {
+  connectionState: ConnectionState;
+  peerConnectionState: RTCPeerConnectionState | "none";
+  inputTransport: InputTransport | "pending";
+  dataChannelBufferedBytes: number;
+  webSocketBufferedBytes: number;
+  video: {
+    width: number;
+    height: number;
+    readyState: number;
+    currentTime: number;
+    totalFrames: number;
+    droppedFrames: number;
+  };
+  inboundVideo: Record<string, unknown> | null;
+  candidatePair: Record<string, unknown> | null;
+  host: HostMetrics;
+}
 
 export class NfidbApp {
   private readonly root: HTMLElement;
@@ -13,6 +33,8 @@ export class NfidbApp {
   private channel: RTCDataChannel | null = null;
   private socket: WebSocket | null = null;
   private pointerEngine: PointerEngine | null = null;
+  private inputTransport: InputTransport | null = null;
+  private readonly pendingInput: ArrayBuffer[] = [];
   private fitMode: FitMode = "fit";
   private touchEnabled = false;
   private metrics: HostMetrics | null = null;
@@ -101,6 +123,8 @@ export class NfidbApp {
       const channel = peer.createDataChannel("input", { ordered: true });
       channel.binaryType = "arraybuffer";
       this.channel = channel;
+      channel.addEventListener("open", () => this.drainPendingInput());
+      channel.addEventListener("close", () => this.handleInputTransportClose("datachannel"));
       peer.addTransceiver("video", { direction: "recvonly" });
       peer.addEventListener("track", (event) => {
         const video = this.requiredElement<HTMLVideoElement>("remoteVideo");
@@ -215,10 +239,14 @@ export class NfidbApp {
     const scheme = location.protocol === "https:" ? "wss:" : "ws:";
     const socket = new WebSocket(`${scheme}//${location.host}/api/ws`);
     socket.binaryType = "arraybuffer";
-    socket.addEventListener("open", () => this.sendPing());
+    socket.addEventListener("open", () => {
+      this.sendPing();
+      this.drainPendingInput();
+    });
     socket.addEventListener("message", (event) => this.handleControlMessage(event.data));
     socket.addEventListener("close", () => {
-      if (this.state !== "pairing") {
+      this.handleInputTransportClose("websocket");
+      if (this.state !== "pairing" && this.channel?.readyState !== "open") {
         this.showNotice("Control channel disconnected. Reopen this page to reconnect.");
       }
     });
@@ -226,13 +254,60 @@ export class NfidbApp {
   }
 
   private sendInput(packet: ArrayBuffer): void {
-    if (this.channel?.readyState === "open") {
+    if (this.inputTransport === "datachannel" && this.channel?.readyState === "open") {
       this.channel.send(packet);
       return;
     }
-    if (this.socket?.readyState === WebSocket.OPEN) {
+    if (this.inputTransport === "websocket" && this.socket?.readyState === WebSocket.OPEN) {
       this.socket.send(packet);
+      return;
     }
+    if (this.inputTransport === null) {
+      if (this.channel?.readyState === "open") {
+        this.inputTransport = "datachannel";
+        this.channel.send(packet);
+        return;
+      }
+      if (this.socket?.readyState === WebSocket.OPEN) {
+        this.inputTransport = "websocket";
+        this.socket.send(packet);
+        return;
+      }
+      if (this.pendingInput.length < 16_384) {
+        this.pendingInput.push(packet);
+      } else {
+        this.pendingInput.length = 0;
+        this.pointerEngine?.abandonAll();
+        this.showNotice("Input transport is unavailable. Lift the Pencil and reconnect before drawing.");
+      }
+    }
+  }
+
+  private drainPendingInput(): void {
+    if (this.pendingInput.length === 0 || this.inputTransport !== null) {
+      return;
+    }
+    if (this.channel?.readyState === "open") {
+      this.inputTransport = "datachannel";
+      for (const packet of this.pendingInput.splice(0)) {
+        this.channel.send(packet);
+      }
+    } else if (this.socket?.readyState === WebSocket.OPEN) {
+      this.inputTransport = "websocket";
+      for (const packet of this.pendingInput.splice(0)) {
+        this.socket.send(packet);
+      }
+    }
+  }
+
+  private handleInputTransportClose(transport: InputTransport): void {
+    if (this.inputTransport !== transport) {
+      return;
+    }
+    this.inputTransport = null;
+    this.pendingInput.length = 0;
+    this.pointerEngine?.abandonAll();
+    this.showNotice("Input transport changed. Lift the Pencil once before continuing.");
   }
 
   private handleControlMessage(data: unknown): void {
@@ -294,9 +369,9 @@ export class NfidbApp {
       return;
     }
     const metrics = this.metrics;
-    this.setText("videoStats", `${metrics.source_width}×${metrics.source_height} · ${metrics.encoded_fps.toFixed(0)} fps · ${metrics.encode_ms.toFixed(1)} ms encode`);
-    this.setText("networkStats", `${metrics.rtt_ms.toFixed(1)} ms RTT · ${formatBytes(metrics.encoded_bytes)} sent · ${metrics.dropped_frames} dropped`);
-    this.setText("pencilStats", `${metrics.input_samples_per_sec.toFixed(0)} samples/s · ${metrics.input_samples} total`);
+    this.setText("videoStats", `${metrics.output_width}×${metrics.output_height} from ${metrics.source_width}×${metrics.source_height} · ${metrics.encoded_fps.toFixed(0)} fps · ${metrics.preprocess_ms.toFixed(1)} + ${metrics.encode_ms.toFixed(1)} ms`);
+    this.setText("networkStats", `${metrics.rtt_ms.toFixed(1)} ms RTT · ${formatBytes(metrics.encoded_bytes)} sent · ${metrics.dropped_frames} stale / ${metrics.video_transport_drops} transport skips`);
+    this.setText("pencilStats", `${metrics.input_samples_per_sec.toFixed(0)} samples/s · ${metrics.input_samples} total · ${metrics.sample_sequence_gaps} gaps`);
     this.setText("pressureStats", `${metrics.pressure.toFixed(2)} · ${metrics.tilt_x.toFixed(0)}° / ${metrics.tilt_y.toFixed(0)}°`);
   }
 
@@ -340,6 +415,8 @@ export class NfidbApp {
     this.channel?.close();
     this.peer?.close();
     this.socket?.close();
+    this.inputTransport = null;
+    this.pendingInput.length = 0;
     try {
       await disconnect(this.token);
     } catch {
@@ -348,6 +425,66 @@ export class NfidbApp {
     this.token = "";
     this.status = await getStatus().catch(() => this.status);
     this.renderPairing();
+  }
+
+  async diagnosticSnapshot(): Promise<ClientDiagnosticSnapshot> {
+    const video = this.root.querySelector<HTMLVideoElement>("#remoteVideo");
+    const quality = video?.getVideoPlaybackQuality();
+    let inboundVideo: Record<string, unknown> | null = null;
+    let candidatePair: Record<string, unknown> | null = null;
+    if (this.peer) {
+      const reports = await this.peer.getStats();
+      for (const report of reports.values()) {
+        const record = report as unknown as Record<string, unknown>;
+        if (report.type === "inbound-rtp" && (record.kind === "video" || record.mediaType === "video")) {
+          inboundVideo = pickStats(record, [
+            "bytesReceived",
+            "packetsReceived",
+            "packetsLost",
+            "framesReceived",
+            "framesDecoded",
+            "framesDropped",
+            "framesPerSecond",
+            "frameWidth",
+            "frameHeight",
+            "jitter",
+            "jitterBufferDelay",
+            "jitterBufferEmittedCount",
+            "totalDecodeTime",
+            "totalInterFrameDelay",
+            "freezeCount",
+            "totalFreezesDuration",
+          ]);
+        } else if (report.type === "candidate-pair" && record.state === "succeeded" && record.nominated === true) {
+          candidatePair = pickStats(record, [
+            "currentRoundTripTime",
+            "availableIncomingBitrate",
+            "bytesReceived",
+            "bytesSent",
+            "localCandidateId",
+            "remoteCandidateId",
+          ]);
+        }
+      }
+    }
+    return {
+      connectionState: this.state,
+      peerConnectionState: this.peer?.connectionState ?? "none",
+      inputTransport: this.inputTransport ?? "pending",
+      dataChannelBufferedBytes: this.channel?.bufferedAmount ?? 0,
+      webSocketBufferedBytes: this.socket?.bufferedAmount ?? 0,
+      video: {
+        width: video?.videoWidth ?? 0,
+        height: video?.videoHeight ?? 0,
+        readyState: video?.readyState ?? 0,
+        currentTime: video?.currentTime ?? 0,
+        totalFrames: quality?.totalVideoFrames ?? 0,
+        droppedFrames: quality?.droppedVideoFrames ?? 0,
+      },
+      inboundVideo,
+      candidatePair,
+      host: await getMetrics(),
+    };
   }
 
   private renderFatal(message: string): void {
@@ -399,4 +536,8 @@ function escapeHtml(value: string): string {
   const element = document.createElement("span");
   element.textContent = value;
   return element.innerHTML;
+}
+
+function pickStats(source: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
+  return Object.fromEntries(keys.filter((key) => source[key] !== undefined).map((key) => [key, source[key]]));
 }

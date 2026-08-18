@@ -22,20 +22,51 @@ export interface HostMetrics {
   encoded_fps: number;
   input_samples_per_sec: number;
   coalesced_samples_per_sec: number;
+  capture_frames: number;
+  encoded_frames: number;
   dropped_frames: number;
+  video_transport_drops: number;
   encoded_bytes: number;
+  input_batches: number;
   input_samples: number;
+  injected_samples: number;
+  input_errors: number;
+  batch_sequence_gaps: number;
+  sample_sequence_gaps: number;
+  out_of_order_batches: number;
+  out_of_order_samples: number;
+  lifecycle_errors: number;
+  active_pointers: number;
+  last_batch_sequence: number;
+  last_sample_sequence: number;
   pressure: number;
+  pressure_min: number;
+  pressure_max: number;
   tilt_x: number;
   tilt_y: number;
+  tilt_x_min: number;
+  tilt_x_max: number;
+  tilt_y_min: number;
+  tilt_y_max: number;
   rtt_ms: number;
   encode_ms: number;
+  preprocess_ms: number;
+  average_preprocess_ms: number;
+  max_preprocess_ms: number;
+  average_encode_ms: number;
+  max_encode_ms: number;
   source_width: number;
   source_height: number;
+  output_width: number;
+  output_height: number;
 }
 
 export async function getStatus(): Promise<HostStatus> {
   return requestJson<HostStatus>("/api/status");
+}
+
+export async function getMetrics(): Promise<HostMetrics> {
+  return requestJson<HostMetrics>("/api/metrics");
 }
 
 export async function pairWithPin(pin: string): Promise<PairResult> {

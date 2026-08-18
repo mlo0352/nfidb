@@ -10,5 +10,7 @@ if (!root) {
 if (location.pathname.startsWith("/diagnostics/pointer")) {
   new PointerDiagnostics(root).start();
 } else {
-  void new NfidbApp(root).start();
+  const app = new NfidbApp(root);
+  Object.assign(window, { __nfidbDiagnostics: () => app.diagnosticSnapshot() });
+  void app.start();
 }

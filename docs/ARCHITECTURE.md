@@ -3,7 +3,7 @@
 NFiDB is a single-PC, single-browser, trusted-LAN bridge. The Windows executable owns capture, H.264 encoding, signaling, WebRTC, native pointer injection, configuration, and the desktop UI. The iPad side is a small TypeScript application embedded in that executable.
 
 ```text
-Windows monitor -> WGC newest-frame slot -> scale -> H.264 -> WebRTC video -> Safari <video>
+Windows monitor -> WGC newest-frame slot -> scale/YUV newest-frame slot -> H.264 -> WebRTC video -> Safari <video>
 Windows PT_PEN <- native injector <- binary batches <- DataChannel <- Safari Pointer Events
                                       ^ WebSocket fallback/control/stats
 ```
@@ -20,13 +20,13 @@ Windows PT_PEN <- native injector <- binary batches <- DataChannel <- Safari Poi
 
 ## Capture and backpressure
 
-Windows Graphics Capture copies the newest BGRA frame into a one-element slot. Replacing an unencoded frame increments the dropped-frame counter. This deliberately bounds memory and latency: an overloaded encoder discards stale pictures instead of building a queue.
+Windows Graphics Capture copies the newest BGRA frame into a one-element slot. A preprocessing worker scales and converts that frame to YUV into a second one-element slot, independently of the encoder. Replacing stale work at either boundary increments the dropped-frame counter. This deliberately bounds memory and latency: an overloaded stage discards stale pictures instead of building a queue.
 
-The encoder scales down only when the selected profile requires it, converts BGRA to YUV, and emits an Annex-B H.264 access unit. Keyframes are requested once per target frame-rate interval. The current portable MVP uses the isolated OpenH264 software implementation; the intended replacement boundary is the encoder inside `host-windows`, leaving capture and WebRTC unchanged.
+The encoder emits Annex-B H.264 access units and assigns RTP durations from the actual interval between encoded frames, so frame shedding cannot make media time fall behind wall time. Keyframes are requested once per target frame-rate interval. The current portable MVP uses the isolated OpenH264 software implementation; the intended replacement boundary is the encoder inside `host-windows`, leaving capture and WebRTC unchanged.
 
 ## Input path
 
-The browser listens only to `pointerdown`, `pointermove`, `pointerup`, and `pointercancel`. It sends all actual coalesced samples, never predicted points. A predicted point may be drawn locally as transient feedback. Packets are sent over the WebRTC DataChannel when open and the authenticated WebSocket otherwise.
+The browser listens only to `pointerdown`, `pointermove`, `pointerup`, and `pointercancel`. It sends all actual coalesced samples in chronological order, never predicted points. A predicted point may be drawn locally as transient feedback. A contact stays on the transport selected at pointer-down; switching DataChannel/WebSocket during a stroke is forbidden. Interrupted contacts are cancelled and blocked until lifted rather than silently split across transports.
 
 The host validates packet version, exact length, enum values, finite numbers, pressure, tilt, and sample count before injection. Normalized points are mapped against the selected monitor's physical desktop rectangle. The injector maintains pointer lifecycle state and releases every active pen/touch contact on channel close, peer failure, and application shutdown.
 

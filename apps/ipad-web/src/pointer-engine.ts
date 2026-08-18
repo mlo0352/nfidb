@@ -46,7 +46,8 @@ export class PointerEngine {
   private readonly getFitMode: () => FitMode;
   private readonly getTouchEnabled: () => boolean;
   private readonly onTelemetry?: (telemetry: PointerTelemetry) => void;
-  private readonly activePointers = new Set<number>();
+  private readonly activePointers = new Map<number, DeviceTypeValue>();
+  private readonly interruptedPointers = new Set<number>();
   private batchSequence = 0;
   private sampleSequence = 0;
   private eventCounter = 0;
@@ -76,10 +77,10 @@ export class PointerEngine {
   }
 
   cancelAll(): void {
-    for (const pointerId of this.activePointers) {
+    for (const [pointerId, deviceType] of this.activePointers) {
       this.sendSamples([
         {
-          deviceType: DeviceType.Pen,
+          deviceType,
           action: PointerAction.Cancel,
           flags: 0,
           pointerId,
@@ -93,6 +94,13 @@ export class PointerEngine {
           clientTimeMs: performance.now(),
         },
       ]);
+    }
+    this.activePointers.clear();
+  }
+
+  abandonAll(): void {
+    for (const pointerId of this.activePointers.keys()) {
+      this.interruptedPointers.add(pointerId);
     }
     this.activePointers.clear();
   }
@@ -116,13 +124,20 @@ export class PointerEngine {
     if (this.disposed || (event.pointerType !== "pen" && event.pointerType !== "touch")) {
       return;
     }
+    if (this.interruptedPointers.has(event.pointerId)) {
+      event.preventDefault();
+      if (event.type === "pointerup" || event.type === "pointercancel") {
+        this.interruptedPointers.delete(event.pointerId);
+      }
+      return;
+    }
     if (event.pointerType === "touch" && !this.getTouchEnabled()) {
       event.preventDefault();
       return;
     }
     event.preventDefault();
     if (event.type === "pointerdown") {
-      this.activePointers.add(event.pointerId);
+      this.activePointers.set(event.pointerId, event.pointerType === "pen" ? DeviceType.Pen : DeviceType.Touch);
       try {
         this.overlay.setPointerCapture(event.pointerId);
       } catch {
@@ -141,7 +156,7 @@ export class PointerEngine {
       this.sampleCounter += samples.length;
     }
     this.eventCounter += 1;
-    this.emitTelemetry(event, coalesced.length, samples.length);
+    this.emitTelemetry(event, coalesced.length);
     this.drawPrediction(extended);
 
     if (event.type === "pointerup" || event.type === "pointercancel") {
@@ -196,7 +211,7 @@ export class PointerEngine {
     return sequence;
   }
 
-  private emitTelemetry(event: PointerEvent, coalesced: number, samples: number): void {
+  private emitTelemetry(event: PointerEvent, coalesced: number): void {
     if (!this.onTelemetry) {
       return;
     }
@@ -216,7 +231,7 @@ export class PointerEngine {
       buttons: event.buttons,
       coalesced,
       eventsPerSecond: this.eventCounter / elapsed,
-      samplesPerSecond: (this.sampleCounter + samples) / elapsed,
+      samplesPerSecond: this.sampleCounter / elapsed,
     });
     if (elapsed >= 1) {
       this.eventCounter = 0;

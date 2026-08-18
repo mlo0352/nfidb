@@ -165,6 +165,7 @@ async fn run_server(
     });
     let app = Router::new()
         .route("/api/status", get(status))
+        .route("/api/metrics", get(metrics_handler))
         .route("/api/pair", post(pair))
         .route("/api/disconnect", post(disconnect))
         .route("/api/webrtc/offer", post(webrtc_offer))
@@ -276,6 +277,7 @@ async fn pair(State(state): State<Arc<AppState>>, Json(request): Json<PairReques
     };
     match result {
         Ok(result) => {
+            state.metrics.reset_input_continuity();
             let cookie = format!(
                 "nfidb_token={}; Path=/; HttpOnly; SameSite=Strict; Max-Age=28800",
                 result.access_token
@@ -288,6 +290,13 @@ async fn pair(State(state): State<Arc<AppState>>, Json(request): Json<PairReques
         }
         Err(error) => api_error(StatusCode::UNAUTHORIZED, &error.to_string()),
     }
+}
+
+async fn metrics_handler(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if !authorized_cookie(&headers, &state.session) {
+        return api_error(StatusCode::UNAUTHORIZED, "invalid session token");
+    }
+    Json(state.metrics.snapshot()).into_response()
 }
 
 #[derive(Deserialize)]
@@ -328,16 +337,20 @@ async fn webrtc_offer(State(state): State<Arc<AppState>>, Json(offer): Json<WebR
 }
 
 async fn websocket(State(state): State<Arc<AppState>>, headers: HeaderMap, upgrade: WebSocketUpgrade) -> Response {
-    let token = headers
-        .get(header::COOKIE)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|cookies| cookie_value(cookies, "nfidb_token"));
-    if !token.is_some_and(|token| state.session.authorize(token)) {
+    if !authorized_cookie(&headers, &state.session) {
         return api_error(StatusCode::UNAUTHORIZED, "invalid session token");
     }
     upgrade
         .on_upgrade(move |socket| websocket_loop(socket, state))
         .into_response()
+}
+
+fn authorized_cookie(headers: &HeaderMap, session: &SessionManager) -> bool {
+    headers
+        .get(header::COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|cookies| cookie_value(cookies, "nfidb_token"))
+        .is_some_and(|token| session.authorize(token))
 }
 
 fn cookie_value<'a>(cookies: &'a str, name: &str) -> Option<&'a str> {
@@ -384,17 +397,13 @@ async fn websocket_loop(socket: WebSocket, state: Arc<AppState>) {
 fn process_input(state: &AppState, bytes: &[u8]) {
     match PointerBatch::decode(bytes) {
         Ok(batch) => {
-            if let Some(last) = batch.samples.last() {
-                state.metrics.input(
-                    batch.samples.len(),
-                    batch.samples.len().saturating_sub(1),
-                    last.pressure,
-                    last.tilt_x_deg,
-                    last.tilt_y_deg,
-                );
-            }
-            if let Err(error) = state.input.inject_batch(&batch) {
-                tracing::warn!(%error, "pointer injection failed");
+            state.metrics.input_batch(&batch);
+            match state.input.inject_batch(&batch) {
+                Ok(()) => state.metrics.input_injected(batch.samples.len()),
+                Err(error) => {
+                    state.metrics.input_error();
+                    tracing::warn!(%error, "pointer injection failed");
+                }
             }
         }
         Err(error) => tracing::warn!(%error, "discarded invalid pointer packet"),

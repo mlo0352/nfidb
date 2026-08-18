@@ -2,7 +2,7 @@
 
 ## Versioning
 
-The workspace and browser package start at `0.1.0`. Release tags use `vMAJOR.MINOR.PATCH`. Until the physical iPad/app matrix and performance target pass, releases should be clearly marked prerelease.
+The workspace and browser package share one version. Release tags use `vMAJOR.MINOR.PATCH`. Until the physical iPad/app matrix and performance target pass, releases are marked prerelease.
 
 ## Local package
 
@@ -11,6 +11,7 @@ From a clean Windows checkout with the documented toolchain:
 ```powershell
 .\scripts\test.ps1
 .\scripts\build-release.ps1
+.\scripts\portable-smoke.ps1
 ```
 
 The build script creates `build\packages\NFiDB-windows-x64.zip` and a sibling `.sha256` file. It contains the GUI host, pointer sink, README, licenses, third-party notice, and operating documentation. An installer is explicitly deferred; the ZIP is portable and unsigned.

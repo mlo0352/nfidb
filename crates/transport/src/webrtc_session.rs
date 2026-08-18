@@ -121,17 +121,13 @@ pub async fn accept_offer(
                     }
                     match PointerBatch::decode(&message.data) {
                         Ok(batch) => {
-                            if let Some(last) = batch.samples.last() {
-                                metrics.input(
-                                    batch.samples.len(),
-                                    batch.samples.len().saturating_sub(1),
-                                    last.pressure,
-                                    last.tilt_x_deg,
-                                    last.tilt_y_deg,
-                                );
-                            }
-                            if let Err(error) = input.inject_batch(&batch) {
-                                tracing::warn!(%error, "DataChannel pointer injection failed");
+                            metrics.input_batch(&batch);
+                            match input.inject_batch(&batch) {
+                                Ok(()) => metrics.input_injected(batch.samples.len()),
+                                Err(error) => {
+                                    metrics.input_error();
+                                    tracing::warn!(%error, "DataChannel pointer injection failed");
+                                }
                             }
                         }
                         Err(error) => tracing::warn!(%error, "invalid DataChannel pointer packet"),
@@ -177,16 +173,26 @@ pub async fn accept_offer(
         .await
         .context("WebRTC local description unavailable")?;
 
+    let video_metrics = Arc::clone(&metrics);
     tokio::spawn(async move {
-        while let Ok(frame) = video_rx.recv().await {
-            let sample = Sample {
-                data: Bytes::copy_from_slice(&frame.data),
-                duration: frame.duration,
-                ..Default::default()
-            };
-            if let Err(error) = video_track.write_sample(&sample).await {
-                tracing::debug!(%error, "video track closed");
-                break;
+        loop {
+            match video_rx.recv().await {
+                Ok(frame) => {
+                    let sample = Sample {
+                        data: Bytes::copy_from_slice(&frame.data),
+                        duration: frame.duration,
+                        ..Default::default()
+                    };
+                    if let Err(error) = video_track.write_sample(&sample).await {
+                        tracing::debug!(%error, "video track closed");
+                        break;
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    video_metrics.video_transport_dropped(skipped);
+                    tracing::debug!(skipped, "dropped stale video frames before WebRTC");
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
             }
         }
     });

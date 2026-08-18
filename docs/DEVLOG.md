@@ -120,3 +120,21 @@ Started the headless host against the 3840×2160 primary monitor, paired an auth
 ### Decision
 
 Keep callback rate limiting and avoid the newer optional WGC interval API so the host supports older Windows 11 builds. The measurement reinforces the Media Foundation encoder priority.
+
+## 2026-08-17 — Sustained input and 4K receiver validation
+
+### Goal
+
+Detect silent line holes, pressure/angle flattening, transport switching, media-clock drift, tearing, and unbounded video queues at realistic Pencil sample rates.
+
+### Experiment
+
+Added independent continuity/lifecycle metrics, sticky per-contact transport, bounded browser buffers, User32 retry and pointer-history recovery, a deterministic native stress receiver, duplicated video integrity markers, authenticated browser/host diagnostics, and a LAN Playwright benchmark. The live soak generated 60 parent pointer events per second with four chronological coalesced samples per event while decoding a 4K-source H.264 stream.
+
+### Result
+
+**PASS within the tested hardware envelope.** The native receiver accepted all 14,400 exact samples over one minute, including 4,846 recovered through `GetPointerPenInfoHistory`. The ten-minute WebRTC run delivered and accepted all 144,002 samples at 240.001 Hz with full pressure and ±60° tilt ranges. It decoded 30,508 video frames with zero RTP loss, decoder drops, freezes, media regressions, transport drops, or integrity-marker mismatches.
+
+### Decision
+
+Use actual encoded-frame intervals for RTP timestamps and keep newest-frame replacement as the explicit low-latency policy. Publish software profile throughput rather than imply 60 fps at every resolution. Keep physical iPad, art-application, WAN-disconnect, and glass-to-glass latency checks as explicit unverified gates.

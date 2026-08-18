@@ -16,6 +16,7 @@ nfidb-host-windows.workspace = true
 nfidb-protocol.workspace = true
 nfidb-transport.workspace = true
 qrcode.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
