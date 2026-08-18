@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use nfidb_protocol::{Action, PointerBatch};
 use parking_lot::Mutex;
@@ -71,8 +71,11 @@ pub struct Metrics {
     connected: AtomicBool,
     capture_frames: AtomicU64,
     encoded_frames: AtomicU64,
+    encoded_keyframes: AtomicU64,
     dropped_frames: AtomicU64,
     video_transport_drops: AtomicU64,
+    video_startup_delta_frames: AtomicU64,
+    video_startup_wait_micros: AtomicU64,
     encoded_bytes: AtomicU64,
     preprocessed_frames: AtomicU64,
     preprocess_micros: AtomicU64,
@@ -85,6 +88,15 @@ pub struct Metrics {
     input_samples: AtomicU64,
     injected_samples: AtomicU64,
     input_errors: AtomicU64,
+    client_clock_offset_bits: AtomicU64,
+    input_arrival_micros: AtomicU64,
+    input_arrival_micros_total: AtomicU64,
+    input_arrival_micros_max: AtomicU64,
+    input_arrival_samples: AtomicU64,
+    input_inject_micros: AtomicU64,
+    input_inject_micros_total: AtomicU64,
+    input_inject_micros_max: AtomicU64,
+    input_inject_samples: AtomicU64,
     coalesced_samples: AtomicU64,
     batch_sequence_gaps: AtomicU64,
     sample_sequence_gaps: AtomicU64,
@@ -134,12 +146,25 @@ impl Metrics {
         self.preprocess_micros_max.fetch_max(elapsed_micros, Ordering::Relaxed);
     }
 
+    pub fn encoded_keyframe(&self) {
+        self.encoded_keyframes.fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn dropped_frame(&self) {
         self.dropped_frames.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn video_transport_dropped(&self, count: u64) {
         self.video_transport_drops.fetch_add(count, Ordering::Relaxed);
+    }
+
+    pub fn video_startup_delta_frame_skipped(&self) {
+        self.video_startup_delta_frames.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn video_started(&self, wait: Duration) {
+        self.video_startup_wait_micros
+            .store(wait.as_micros().min(u128::from(u64::MAX)) as u64, Ordering::Relaxed);
     }
 
     pub fn input_batch(&self, batch: &PointerBatch) {
@@ -149,6 +174,7 @@ impl Metrics {
         self.coalesced_samples
             .fetch_add(batch.samples.len().saturating_sub(1) as u64, Ordering::Relaxed);
         self.last_batch_sequence.store(batch.batch_sequence, Ordering::Relaxed);
+        self.observe_input_arrival(batch);
 
         let mut state = self.input_continuity.lock();
         observe_sequence(
@@ -202,8 +228,13 @@ impl Metrics {
         }
     }
 
-    pub fn input_injected(&self, count: usize) {
+    pub fn input_injected(&self, count: usize, elapsed: Duration) {
         self.injected_samples.fetch_add(count as u64, Ordering::Relaxed);
+        let micros = elapsed.as_micros().min(u128::from(u64::MAX)) as u64;
+        self.input_inject_micros.store(micros, Ordering::Relaxed);
+        self.input_inject_micros_total.fetch_add(micros, Ordering::Relaxed);
+        self.input_inject_micros_max.fetch_max(micros, Ordering::Relaxed);
+        self.input_inject_samples.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn input_error(&self) {
@@ -220,6 +251,29 @@ impl Metrics {
     pub fn set_rtt_ms(&self, rtt_ms: f64) {
         self.rtt_micros
             .store((rtt_ms.max(0.0) * 1000.0) as u64, Ordering::Relaxed);
+    }
+
+    pub fn set_client_clock_offset_ms(&self, offset_ms: f64) {
+        if offset_ms.is_finite() {
+            self.client_clock_offset_bits
+                .store(offset_ms.to_bits(), Ordering::Relaxed);
+        }
+    }
+
+    fn observe_input_arrival(&self, batch: &PointerBatch) {
+        let Some(sample) = batch.samples.last() else {
+            return;
+        };
+        let offset_ms = f64::from_bits(self.client_clock_offset_bits.load(Ordering::Relaxed));
+        let arrival_ms = epoch_ms() - (sample.client_time_ms + offset_ms);
+        if !arrival_ms.is_finite() || !(-50.0..=5_000.0).contains(&arrival_ms) {
+            return;
+        }
+        let micros = (arrival_ms.max(0.0) * 1000.0) as u64;
+        self.input_arrival_micros.store(micros, Ordering::Relaxed);
+        self.input_arrival_micros_total.fetch_add(micros, Ordering::Relaxed);
+        self.input_arrival_micros_max.fetch_max(micros, Ordering::Relaxed);
+        self.input_arrival_samples.fetch_add(1, Ordering::Relaxed);
     }
 
     #[must_use]
@@ -247,6 +301,8 @@ impl Metrics {
         let encode_micros_total = self.encode_micros_total.load(Ordering::Relaxed);
         let preprocessed_frames = self.preprocessed_frames.load(Ordering::Relaxed);
         let preprocess_micros_total = self.preprocess_micros_total.load(Ordering::Relaxed);
+        let input_arrival_samples = self.input_arrival_samples.load(Ordering::Relaxed);
+        let input_inject_samples = self.input_inject_samples.load(Ordering::Relaxed);
         MetricsSnapshot {
             connected: self.connected.load(Ordering::Relaxed),
             capture_fps: rate.capture_fps,
@@ -255,13 +311,29 @@ impl Metrics {
             coalesced_samples_per_sec: rate.coalesced_samples_per_sec,
             capture_frames,
             encoded_frames,
+            encoded_keyframes: self.encoded_keyframes.load(Ordering::Relaxed),
             dropped_frames: self.dropped_frames.load(Ordering::Relaxed),
             video_transport_drops: self.video_transport_drops.load(Ordering::Relaxed),
+            video_startup_delta_frames: self.video_startup_delta_frames.load(Ordering::Relaxed),
+            video_startup_wait_ms: self.video_startup_wait_micros.load(Ordering::Relaxed) as f64 / 1000.0,
             encoded_bytes: self.encoded_bytes.load(Ordering::Relaxed),
             input_batches: self.input_batches.load(Ordering::Relaxed),
             input_samples,
             injected_samples: self.injected_samples.load(Ordering::Relaxed),
             input_errors: self.input_errors.load(Ordering::Relaxed),
+            client_clock_offset_ms: f64::from_bits(self.client_clock_offset_bits.load(Ordering::Relaxed)),
+            input_arrival_ms: self.input_arrival_micros.load(Ordering::Relaxed) as f64 / 1000.0,
+            average_input_arrival_ms: average_micros(
+                self.input_arrival_micros_total.load(Ordering::Relaxed),
+                input_arrival_samples,
+            ),
+            max_input_arrival_ms: self.input_arrival_micros_max.load(Ordering::Relaxed) as f64 / 1000.0,
+            input_inject_ms: self.input_inject_micros.load(Ordering::Relaxed) as f64 / 1000.0,
+            average_input_inject_ms: average_micros(
+                self.input_inject_micros_total.load(Ordering::Relaxed),
+                input_inject_samples,
+            ),
+            max_input_inject_ms: self.input_inject_micros_max.load(Ordering::Relaxed) as f64 / 1000.0,
             batch_sequence_gaps: self.batch_sequence_gaps.load(Ordering::Relaxed),
             sample_sequence_gaps: self.sample_sequence_gaps.load(Ordering::Relaxed),
             out_of_order_batches: self.out_of_order_batches.load(Ordering::Relaxed),
@@ -327,13 +399,23 @@ pub struct MetricsSnapshot {
     pub coalesced_samples_per_sec: f64,
     pub capture_frames: u64,
     pub encoded_frames: u64,
+    pub encoded_keyframes: u64,
     pub dropped_frames: u64,
     pub video_transport_drops: u64,
+    pub video_startup_delta_frames: u64,
+    pub video_startup_wait_ms: f64,
     pub encoded_bytes: u64,
     pub input_batches: u64,
     pub input_samples: u64,
     pub injected_samples: u64,
     pub input_errors: u64,
+    pub client_clock_offset_ms: f64,
+    pub input_arrival_ms: f64,
+    pub average_input_arrival_ms: f64,
+    pub max_input_arrival_ms: f64,
+    pub input_inject_ms: f64,
+    pub average_input_inject_ms: f64,
+    pub max_input_inject_ms: f64,
     pub batch_sequence_gaps: u64,
     pub sample_sequence_gaps: u64,
     pub out_of_order_batches: u64,
@@ -362,6 +444,22 @@ pub struct MetricsSnapshot {
     pub source_height: u32,
     pub output_width: u32,
     pub output_height: u32,
+}
+
+fn average_micros(total: u64, count: u64) -> f64 {
+    if count == 0 {
+        0.0
+    } else {
+        total as f64 / count as f64 / 1000.0
+    }
+}
+
+fn epoch_ms() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64()
+        * 1000.0
 }
 
 #[cfg(test)]

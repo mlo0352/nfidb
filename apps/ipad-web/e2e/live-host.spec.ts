@@ -7,10 +7,11 @@ interface DiagnosticSnapshot {
   inputTransport: string;
   dataChannelBufferedBytes: number;
   webSocketBufferedBytes: number;
-  video: { width: number; height: number; currentTime: number; totalFrames: number; droppedFrames: number };
+  video: { width: number; height: number; currentTime: number; totalFrames: number; droppedFrames: number; startupMs: number | null };
   inboundVideo: Record<string, number> | null;
   candidatePair: Record<string, unknown> | null;
   host: Record<string, number | boolean>;
+  hostDiagnostics: { sample_count: number; retained_seconds: number; discarded_samples: number };
 }
 
 test("sustains coalesced pressure/tilt input while receiving integrity-checked H.264", async ({ page }) => {
@@ -33,6 +34,9 @@ test("sustains coalesced pressure/tilt input while receiving integrity-checked H
 
   const before = await snapshot(page);
   expect(before.peerConnectionState).toBe("connected");
+  expect(before.video.startupMs).not.toBeNull();
+  expect(Number(before.video.startupMs)).toBeLessThan(5_000);
+  expect(Number(before.host.video_startup_wait_ms)).toBeLessThan(2_500);
   const result = await page.evaluate(
     async ({ durationMs, eventsPerSecond, samplesPerEvent, moveEvents }) => {
       const overlay = document.querySelector<HTMLCanvasElement>("#interactionOverlay")!;
@@ -185,6 +189,8 @@ test("sustains coalesced pressure/tilt input while receiving integrity-checked H
   expect(after.inputTransport).toBe("datachannel");
   expect(after.dataChannelBufferedBytes).toBe(0);
   expect(after.webSocketBufferedBytes).toBe(0);
+  expect(after.hostDiagnostics.sample_count).toBeGreaterThan(5);
+  expect(after.hostDiagnostics.discarded_samples).toBe(0);
   expect(Number(after.inboundVideo?.packetsLost ?? 0)).toBe(0);
   expect(Number(after.inboundVideo?.framesDecoded ?? 0)).toBeGreaterThan(0);
   expect(result.videoCallbacks).toBeGreaterThan(Math.max(2, durationMs / 1000));

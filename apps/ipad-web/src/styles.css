@@ -148,7 +148,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .icon-button { width: 34px; border: 1px solid var(--line); font-size: 1rem; }
 .icon-button.danger { color: #bc8885; font-size: 1.3rem; }
 .connection-notice { position: absolute; z-index: 8; left: 50%; top: 82px; max-width: min(560px, calc(100% - 40px)); transform: translateX(-50%); padding: 10px 14px; border: 1px solid #775b34; color: #f2d39e; background: #211a11; font-size: 0.76rem; }
-.stats-panel { position: absolute; z-index: 4; top: 78px; right: max(12px, env(safe-area-inset-right)); width: min(380px, calc(100% - 24px)); padding: 12px 15px; border: 1px solid var(--line); background: rgba(10, 13, 14, 0.93); }
+.stats-panel { position: absolute; z-index: 4; top: 78px; right: max(12px, env(safe-area-inset-right)); width: min(520px, calc(100% - 24px)); max-height: calc(100% - 96px); overflow: auto; padding: 12px 15px; border: 1px solid var(--line); background: rgba(10, 13, 14, 0.95); }
 .stats-panel > div { display: flex; justify-content: space-between; gap: 18px; padding: 8px 0; border-bottom: 1px solid #1d2425; }
 .stats-panel > div:last-child { border-bottom: 0; }
 .stats-panel span { color: #697675; font-size: 0.58rem; font-weight: 800; letter-spacing: 0.1em; }

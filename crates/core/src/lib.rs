@@ -6,6 +6,7 @@ mod session;
 
 use std::fmt;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub use config::{AppConfig, CaptureMode, InputConfig, NetworkConfig, UiConfig, VideoConfig, VideoProfile};
 pub use metrics::{Metrics, MetricsSnapshot};
@@ -19,6 +20,27 @@ pub struct EncodedVideoFrame {
     pub width: u32,
     pub height: u32,
     pub keyframe: bool,
+}
+
+/// A shared, edge-triggered request for the encoder's next frame to be an IDR.
+///
+/// The transport raises this after a receiver is actually connected. The capture
+/// thread consumes it immediately before encoding, avoiding a dependency from the
+/// platform encoder back into WebRTC.
+#[derive(Debug, Clone, Default)]
+pub struct KeyframeRequest {
+    pending: Arc<AtomicBool>,
+}
+
+impl KeyframeRequest {
+    pub fn request(&self) {
+        self.pending.store(true, Ordering::Release);
+    }
+
+    #[must_use]
+    pub fn take(&self) -> bool {
+        self.pending.swap(false, Ordering::AcqRel)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -59,4 +81,19 @@ impl InputSink for LoggingInputSink {
 fn tracing_fallback(_message: &str) {
     #[cfg(debug_assertions)]
     eprintln!("{_message}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::KeyframeRequest;
+
+    #[test]
+    fn keyframe_requests_are_shared_and_edge_triggered() {
+        let producer = KeyframeRequest::default();
+        let consumer = producer.clone();
+        assert!(!consumer.take());
+        producer.request();
+        assert!(consumer.take());
+        assert!(!producer.take());
+    }
 }

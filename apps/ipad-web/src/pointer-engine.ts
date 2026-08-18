@@ -91,7 +91,7 @@ export class PointerEngine {
           tiltXDeg: 0,
           tiltYDeg: 0,
           twistDeg: 0,
-          clientTimeMs: performance.now(),
+          clientTimeMs: Date.now(),
         },
       ]);
     }
@@ -191,7 +191,7 @@ export class PointerEngine {
       tiltXDeg: event.tiltX,
       tiltYDeg: event.tiltY,
       twistDeg: event.twist,
-      clientTimeMs: event.timeStamp,
+      clientTimeMs: eventEpochMs(event.timeStamp),
     };
   }
 
@@ -199,7 +199,7 @@ export class PointerEngine {
     this.sendPacket(
       encodePointerBatch({
         batchSequence: this.batchSequence++ >>> 0,
-        clientSendTimeMs: performance.now(),
+        clientSendTimeMs: Date.now(),
         samples,
       }),
     );
@@ -259,6 +259,13 @@ export class PointerEngine {
     context.fillStyle = "rgba(91, 224, 194, 0.62)";
     context.fill();
   }
+}
+
+function eventEpochMs(timeStamp: number): number {
+  if (timeStamp > 1_000_000_000_000) {
+    return timeStamp;
+  }
+  return performance.timeOrigin + timeStamp;
 }
 
 function actionFor(sourceType: string, event: PointerEvent): PointerActionValue {

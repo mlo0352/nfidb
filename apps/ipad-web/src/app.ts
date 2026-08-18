@@ -1,9 +1,51 @@
-import { disconnect, getMetrics, getStatus, pairWithPin, pairWithQr, sendOffer, type HostMetrics, type HostStatus } from "./api";
+import { disconnect, getDiagnosticSummary, getMetrics, getStatus, pairWithPin, pairWithQr, sendOffer, type HostDiagnosticSummary, type HostMetrics, type HostStatus } from "./api";
 import type { FitMode } from "./geometry";
 import { PointerEngine } from "./pointer-engine";
 
 type ConnectionState = "pairing" | "connecting" | "connected" | "input-only" | "failed";
 type InputTransport = "datachannel" | "websocket";
+
+interface RtcDiagnosticStats {
+  inboundVideo: Record<string, unknown> | null;
+  candidatePair: Record<string, unknown> | null;
+  localCandidate: Record<string, unknown> | null;
+  remoteCandidate: Record<string, unknown> | null;
+}
+
+interface PreviousRtcCounters {
+  atMs: number;
+  bytesReceived: number;
+  framesDecoded: number;
+  packetsLost: number;
+  jitterBufferDelay: number;
+  jitterBufferEmittedCount: number;
+  totalDecodeTime: number;
+  totalVideoFrames: number;
+  droppedVideoFrames: number;
+}
+
+interface LiveClientDiagnostic {
+  video: {
+    decodeFps: number;
+    playbackFps: number;
+    presentationDropPercent: number;
+    decodeMsPerFrame: number;
+    jitterBufferMsPerFrame: number;
+  };
+  network: {
+    rttMs: number;
+    receiveMbps: number;
+    availableIncomingMbps: number;
+    packetsLost: number;
+    jitterMs: number;
+  };
+  frameTiming: {
+    frameGapP95Ms: number;
+    frameGapMaxMs: number;
+    captureToPresentP95Ms: number | null;
+    estimatedPipelineMs: number;
+  };
+}
 
 export interface ClientDiagnosticSnapshot {
   connectionState: ConnectionState;
@@ -18,10 +60,12 @@ export interface ClientDiagnosticSnapshot {
     currentTime: number;
     totalFrames: number;
     droppedFrames: number;
+    startupMs: number | null;
   };
   inboundVideo: Record<string, unknown> | null;
   candidatePair: Record<string, unknown> | null;
   host: HostMetrics;
+  hostDiagnostics: HostDiagnosticSummary;
 }
 
 export class NfidbApp {
@@ -39,6 +83,22 @@ export class NfidbApp {
   private touchEnabled = false;
   private metrics: HostMetrics | null = null;
   private hideToolbarTimer = 0;
+  private videoTrackAtMs = 0;
+  private firstVideoFrameAtMs = 0;
+  private diagnosticTimer = 0;
+  private diagnosticSequence = 0;
+  private diagnosticCollectionActive = false;
+  private previousRtcCounters: PreviousRtcCounters | null = null;
+  private liveClientDiagnostic: LiveClientDiagnostic | null = null;
+  private rttMs = 0;
+  private clockOffsetMs = 0;
+  private videoFrameRequest = 0;
+  private frameCallbackCount = 0;
+  private lastFrameCallbackAtMs = 0;
+  private readonly frameGapsMs: number[] = [];
+  private readonly captureToPresentMs: number[] = [];
+  private readonly receiveToPresentMs: number[] = [];
+  private readonly frameProcessingMs: number[] = [];
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -128,8 +188,19 @@ export class NfidbApp {
       peer.addTransceiver("video", { direction: "recvonly" });
       peer.addEventListener("track", (event) => {
         const video = this.requiredElement<HTMLVideoElement>("remoteVideo");
+        this.videoTrackAtMs = performance.now();
+        this.firstVideoFrameAtMs = 0;
         video.srcObject = event.streams[0] ?? new MediaStream([event.track]);
-        void video.play().catch(() => undefined);
+        this.startVideoFrameTelemetry(video);
+        video.addEventListener("playing", () => this.markFirstVideoFrame(), { once: true });
+        const startPlayback = () => void video.play().catch(() => undefined);
+        video.addEventListener("loadedmetadata", startPlayback, { once: true });
+        startPlayback();
+        window.setTimeout(() => {
+          if (this.peer === peer && peer.connectionState === "connected" && this.firstVideoFrameAtMs === 0) {
+            this.showNotice("Video is connected but still waiting for its first decodable frame.");
+          }
+        }, 3000);
       });
       peer.addEventListener("connectionstatechange", () => this.updatePeerState());
       const offer = await peer.createOffer();
@@ -171,8 +242,12 @@ export class NfidbApp {
         <aside id="statsPanel" class="stats-panel" hidden>
           <div><span>VIDEO</span><b id="videoStats">Waiting…</b></div>
           <div><span>NETWORK</span><b id="networkStats">Local</b></div>
+          <div><span>PLAYOUT</span><b id="playoutStats">Waiting…</b></div>
+          <div><span>PIPELINE</span><b id="pipelineStats">Waiting…</b></div>
           <div><span>PENCIL</span><b id="pencilStats">Waiting…</b></div>
           <div><span>PRESSURE / TILT</span><b id="pressureStats">0.00 · 0° / 0°</b></div>
+          <div><span>INTEGRITY</span><b id="integrityStats">Waiting…</b></div>
+          <div><span>RECORDER</span><b id="recorderStats">Starting…</b></div>
         </aside>
         <button id="toolbarReveal" class="toolbar-reveal" aria-label="Show controls"></button>
       </main>`;
@@ -195,6 +270,49 @@ export class NfidbApp {
     });
     this.bindSurfaceControls();
     this.scheduleToolbarHide();
+  }
+
+  private markFirstVideoFrame(): void {
+    if (this.firstVideoFrameAtMs === 0) {
+      this.firstVideoFrameAtMs = performance.now();
+      this.renderStats();
+    }
+  }
+
+  private startVideoFrameTelemetry(video: HTMLVideoElement): void {
+    this.frameCallbackCount = 0;
+    this.lastFrameCallbackAtMs = 0;
+    this.frameGapsMs.length = 0;
+    this.captureToPresentMs.length = 0;
+    this.receiveToPresentMs.length = 0;
+    this.frameProcessingMs.length = 0;
+    if (!("requestVideoFrameCallback" in video)) {
+      return;
+    }
+    const callback = (now: DOMHighResTimeStamp, metadata: VideoFrameCallbackMetadata) => {
+      this.markFirstVideoFrame();
+      this.frameCallbackCount += 1;
+      if (this.lastFrameCallbackAtMs > 0) {
+        pushBounded(this.frameGapsMs, now - this.lastFrameCallbackAtMs, 900);
+      }
+      this.lastFrameCallbackAtMs = now;
+      const values = metadata as unknown as Record<string, unknown>;
+      const presentation = finiteNumber(values.presentationTime) ?? now;
+      const capture = finiteNumber(values.captureTime);
+      const receive = finiteNumber(values.receiveTime);
+      const processingSeconds = finiteNumber(values.processingDuration);
+      if (capture !== null) {
+        pushValidDuration(this.captureToPresentMs, presentation - capture, 900);
+      }
+      if (receive !== null) {
+        pushValidDuration(this.receiveToPresentMs, presentation - receive, 900);
+      }
+      if (processingSeconds !== null) {
+        pushValidDuration(this.frameProcessingMs, processingSeconds * 1000, 900);
+      }
+      this.videoFrameRequest = video.requestVideoFrameCallback(callback);
+    };
+    this.videoFrameRequest = video.requestVideoFrameCallback(callback);
   }
 
   private bindSurfaceControls(): void {
@@ -242,9 +360,11 @@ export class NfidbApp {
     socket.addEventListener("open", () => {
       this.sendPing();
       this.drainPendingInput();
+      this.startDiagnosticRecording();
     });
     socket.addEventListener("message", (event) => this.handleControlMessage(event.data));
     socket.addEventListener("close", () => {
+      this.stopDiagnosticRecording();
       this.handleInputTransportClose("websocket");
       if (this.state !== "pairing" && this.channel?.readyState !== "open") {
         this.showNotice("Control channel disconnected. Reopen this page to reconnect.");
@@ -315,14 +435,23 @@ export class NfidbApp {
       return;
     }
     try {
-      const message = JSON.parse(data) as { type?: string; t0?: number; stats?: HostMetrics };
+      const message = JSON.parse(data) as { type?: string; t0?: number; t1?: number; t2?: number; stats?: HostMetrics };
       if (message.type === "stats" && message.stats) {
         this.metrics = message.stats;
         this.renderStats();
-      } else if (message.type === "pong" && typeof message.t0 === "number") {
-        const rtt = performance.now() - message.t0;
+      } else if (
+        message.type === "pong" &&
+        typeof message.t0 === "number" &&
+        typeof message.t1 === "number" &&
+        typeof message.t2 === "number"
+      ) {
+        const t3 = Date.now();
+        const rtt = Math.max(0, t3 - message.t0 - (message.t2 - message.t1));
+        this.rttMs = rtt;
+        this.clockOffsetMs = (message.t1 - message.t0 + (message.t2 - t3)) / 2;
         if (this.metrics) {
           this.metrics.rtt_ms = rtt;
+          this.metrics.client_clock_offset_ms = this.clockOffsetMs;
         }
         window.setTimeout(() => this.sendPing(), 2000);
       }
@@ -333,8 +462,226 @@ export class NfidbApp {
 
   private sendPing(): void {
     if (this.socket?.readyState === WebSocket.OPEN) {
-      this.socket.send(JSON.stringify({ type: "ping", t0: performance.now() }));
+      this.socket.send(JSON.stringify({ type: "ping", t0: Date.now() }));
     }
+  }
+
+  private startDiagnosticRecording(): void {
+    this.stopDiagnosticRecording();
+    this.previousRtcCounters = null;
+    this.diagnosticSequence = 0;
+    void this.captureClientDiagnostic();
+    this.diagnosticTimer = window.setInterval(() => void this.captureClientDiagnostic(), 1000);
+  }
+
+  private stopDiagnosticRecording(): void {
+    window.clearInterval(this.diagnosticTimer);
+    this.diagnosticTimer = 0;
+  }
+
+  private async captureClientDiagnostic(): Promise<void> {
+    if (
+      this.diagnosticCollectionActive ||
+      this.socket?.readyState !== WebSocket.OPEN ||
+      this.socket.bufferedAmount > 256 * 1024
+    ) {
+      return;
+    }
+    this.diagnosticCollectionActive = true;
+    try {
+      const rtc = await this.readRtcStats();
+      const video = this.root.querySelector<HTMLVideoElement>("#remoteVideo");
+      const quality = video?.getVideoPlaybackQuality();
+      const inbound = rtc.inboundVideo;
+      const pair = rtc.candidatePair;
+      const nowMs = performance.now();
+      const current: PreviousRtcCounters = {
+        atMs: nowMs,
+        bytesReceived: numeric(inbound?.bytesReceived),
+        framesDecoded: numeric(inbound?.framesDecoded),
+        packetsLost: numeric(inbound?.packetsLost),
+        jitterBufferDelay: numeric(inbound?.jitterBufferDelay),
+        jitterBufferEmittedCount: numeric(inbound?.jitterBufferEmittedCount),
+        totalDecodeTime: numeric(inbound?.totalDecodeTime),
+        totalVideoFrames: quality?.totalVideoFrames ?? 0,
+        droppedVideoFrames: quality?.droppedVideoFrames ?? 0,
+      };
+      const previous = this.previousRtcCounters;
+      const intervalMs = Math.max(1, previous ? nowMs - previous.atMs : 1000);
+      const intervalSeconds = intervalMs / 1000;
+      const bytesDelta = nonnegativeDelta(current.bytesReceived, previous?.bytesReceived);
+      const decodedDelta = nonnegativeDelta(current.framesDecoded, previous?.framesDecoded);
+      const playbackDelta = nonnegativeDelta(current.totalVideoFrames, previous?.totalVideoFrames);
+      const playbackDropDelta = nonnegativeDelta(current.droppedVideoFrames, previous?.droppedVideoFrames);
+      const jitterDelayDelta = nonnegativeDelta(current.jitterBufferDelay, previous?.jitterBufferDelay);
+      const jitterCountDelta = nonnegativeDelta(
+        current.jitterBufferEmittedCount,
+        previous?.jitterBufferEmittedCount,
+      );
+      const decodeTimeDelta = nonnegativeDelta(current.totalDecodeTime, previous?.totalDecodeTime);
+      const lossDelta = current.packetsLost - (previous?.packetsLost ?? current.packetsLost);
+      const frameGapValues = this.frameGapsMs.splice(0);
+      const captureValues = this.captureToPresentMs.splice(0);
+      const receiveValues = this.receiveToPresentMs.splice(0);
+      const processingValues = this.frameProcessingMs.splice(0);
+      const frameGapP95Ms = percentile(frameGapValues, 0.95);
+      const captureToPresentP95Ms = optionalPercentile(captureValues, 0.95);
+      const receiveToPresentP95Ms = optionalPercentile(receiveValues, 0.95);
+      const decodeMsPerFrame = decodedDelta > 0 ? (decodeTimeDelta * 1000) / decodedDelta : 0;
+      const jitterBufferMsPerFrame = jitterCountDelta > 0 ? (jitterDelayDelta * 1000) / jitterCountDelta : 0;
+      const receiveMbps = (bytesDelta * 8) / intervalMs / 1000;
+      const availableIncomingMbps = numeric(pair?.availableIncomingBitrate) / 1_000_000;
+      const estimatedPipelineMs =
+        captureToPresentP95Ms ??
+        (this.metrics?.preprocess_ms ?? 0) +
+          (this.metrics?.encode_ms ?? 0) +
+          this.rttMs / 2 +
+          jitterBufferMsPerFrame +
+          decodeMsPerFrame +
+          (receiveToPresentP95Ms ?? 0);
+      const playbackFps = playbackDelta / intervalSeconds;
+      const decodeFps = decodedDelta / intervalSeconds;
+      const presentationDropPercent = (playbackDropDelta / Math.max(1, playbackDelta)) * 100;
+      const sample = {
+        sequence: this.diagnosticSequence++,
+        clientEpochMs: Date.now(),
+        sampleIntervalMs: intervalMs,
+        device: {
+          userAgent: navigator.userAgent,
+          platform: navigator.platform,
+          maxTouchPoints: navigator.maxTouchPoints,
+          viewportWidth: window.innerWidth,
+          viewportHeight: window.innerHeight,
+          screenWidth: screen.width,
+          screenHeight: screen.height,
+          devicePixelRatio: window.devicePixelRatio,
+          orientation: screen.orientation?.type ?? "unknown",
+          visibilityState: document.visibilityState,
+        },
+        connection: {
+          appState: this.state,
+          peerConnectionState: this.peer?.connectionState ?? "none",
+          iceConnectionState: this.peer?.iceConnectionState ?? "none",
+          iceGatheringState: this.peer?.iceGatheringState ?? "none",
+          signalingState: this.peer?.signalingState ?? "none",
+          inputTransport: this.inputTransport ?? "pending",
+        },
+        video: {
+          width: video?.videoWidth ?? 0,
+          height: video?.videoHeight ?? 0,
+          readyState: video?.readyState ?? 0,
+          currentTimeSeconds: video?.currentTime ?? 0,
+          totalFrames: current.totalVideoFrames,
+          droppedFrames: current.droppedVideoFrames,
+          framesReceived: numeric(inbound?.framesReceived),
+          framesDecoded: current.framesDecoded,
+          decoderDroppedFrames: numeric(inbound?.framesDropped),
+          decodeFps,
+          playbackFps,
+          presentationDropPercent,
+          decodeMsPerFrame,
+          jitterBufferMsPerFrame,
+          freezeCount: numeric(inbound?.freezeCount),
+          totalFreezeSeconds: numeric(inbound?.totalFreezesDuration),
+          startupMs:
+            this.firstVideoFrameAtMs > 0 && this.videoTrackAtMs > 0
+              ? this.firstVideoFrameAtMs - this.videoTrackAtMs
+              : null,
+        },
+        network: {
+          rttMs: this.rttMs,
+          clockOffsetMs: this.clockOffsetMs,
+          oneWayEstimateMs: this.rttMs / 2,
+          receiveMbps,
+          availableIncomingMbps,
+          bytesReceived: current.bytesReceived,
+          packetsReceived: numeric(inbound?.packetsReceived),
+          packetsLost: current.packetsLost,
+          packetLossDelta: lossDelta,
+          jitterMs: numeric(inbound?.jitter) * 1000,
+          candidateType: String(rtc.remoteCandidate?.candidateType ?? "unknown"),
+          protocol: String(rtc.remoteCandidate?.protocol ?? "unknown"),
+        },
+        frameTiming: {
+          callbackCount: this.frameCallbackCount,
+          frameGapP50Ms: percentile(frameGapValues, 0.5),
+          frameGapP95Ms,
+          frameGapP99Ms: percentile(frameGapValues, 0.99),
+          frameGapMaxMs: maximum(frameGapValues),
+          captureToPresentP50Ms: optionalPercentile(captureValues, 0.5),
+          captureToPresentP95Ms,
+          captureToPresentP99Ms: optionalPercentile(captureValues, 0.99),
+          receiveToPresentP95Ms,
+          processingP95Ms: optionalPercentile(processingValues, 0.95),
+          estimatedPipelineMs,
+        },
+        buffers: {
+          dataChannelBytes: this.channel?.bufferedAmount ?? 0,
+          webSocketBytes: this.socket?.bufferedAmount ?? 0,
+        },
+        rawRtc: {
+          inboundVideo: rtc.inboundVideo,
+          candidatePair: rtc.candidatePair,
+          localCandidate: rtc.localCandidate,
+          remoteCandidate: rtc.remoteCandidate,
+        },
+      };
+      this.previousRtcCounters = current;
+      this.liveClientDiagnostic = {
+        video: {
+          decodeFps,
+          playbackFps,
+          presentationDropPercent,
+          decodeMsPerFrame,
+          jitterBufferMsPerFrame,
+        },
+        network: {
+          rttMs: this.rttMs,
+          receiveMbps,
+          availableIncomingMbps,
+          packetsLost: current.packetsLost,
+          jitterMs: numeric(inbound?.jitter) * 1000,
+        },
+        frameTiming: {
+          frameGapP95Ms,
+          frameGapMaxMs: maximum(frameGapValues),
+          captureToPresentP95Ms,
+          estimatedPipelineMs,
+        },
+      };
+      this.socket.send(JSON.stringify({ type: "client-diagnostics", sample }));
+      this.renderStats();
+    } catch (error) {
+      console.debug("NFiDB diagnostic sample failed", error);
+    } finally {
+      this.diagnosticCollectionActive = false;
+    }
+  }
+
+  private async readRtcStats(): Promise<RtcDiagnosticStats> {
+    let inboundVideo: Record<string, unknown> | null = null;
+    let candidatePair: Record<string, unknown> | null = null;
+    let localCandidate: Record<string, unknown> | null = null;
+    let remoteCandidate: Record<string, unknown> | null = null;
+    if (!this.peer) {
+      return { inboundVideo, candidatePair, localCandidate, remoteCandidate };
+    }
+    const reports = await this.peer.getStats();
+    for (const report of reports.values()) {
+      const record = report as unknown as Record<string, unknown>;
+      if (report.type === "inbound-rtp" && (record.kind === "video" || record.mediaType === "video")) {
+        inboundVideo = pickStats(record, INBOUND_VIDEO_STAT_KEYS);
+      } else if (report.type === "candidate-pair" && record.state === "succeeded" && record.nominated === true) {
+        candidatePair = pickStats(record, CANDIDATE_PAIR_STAT_KEYS);
+        const localId = String(record.localCandidateId ?? "");
+        const remoteId = String(record.remoteCandidateId ?? "");
+        const local = reports.get(localId) as unknown as Record<string, unknown> | undefined;
+        const remote = reports.get(remoteId) as unknown as Record<string, unknown> | undefined;
+        localCandidate = local ? pickStats(local, CANDIDATE_STAT_KEYS) : null;
+        remoteCandidate = remote ? pickStats(remote, CANDIDATE_STAT_KEYS) : null;
+      }
+    }
+    return { inboundVideo, candidatePair, localCandidate, remoteCandidate };
   }
 
   private updatePeerState(): void {
@@ -370,9 +717,32 @@ export class NfidbApp {
     }
     const metrics = this.metrics;
     this.setText("videoStats", `${metrics.output_width}×${metrics.output_height} from ${metrics.source_width}×${metrics.source_height} · ${metrics.encoded_fps.toFixed(0)} fps · ${metrics.preprocess_ms.toFixed(1)} + ${metrics.encode_ms.toFixed(1)} ms`);
-    this.setText("networkStats", `${metrics.rtt_ms.toFixed(1)} ms RTT · ${formatBytes(metrics.encoded_bytes)} sent · ${metrics.dropped_frames} stale / ${metrics.video_transport_drops} transport skips`);
-    this.setText("pencilStats", `${metrics.input_samples_per_sec.toFixed(0)} samples/s · ${metrics.input_samples} total · ${metrics.sample_sequence_gaps} gaps`);
+    const playbackStartup = this.firstVideoFrameAtMs > 0 && this.videoTrackAtMs > 0
+      ? `${(this.firstVideoFrameAtMs - this.videoTrackAtMs).toFixed(0)} ms playback`
+      : "playback pending";
+    const client = this.liveClientDiagnostic;
+    this.setText(
+      "networkStats",
+      `${(client?.network.rttMs ?? metrics.rtt_ms).toFixed(1)} ms RTT · ${(client?.network.receiveMbps ?? 0).toFixed(2)} Mbps receive · ${(client?.network.jitterMs ?? 0).toFixed(2)} ms jitter · ${client?.network.packetsLost ?? 0} lost`,
+    );
+    this.setText(
+      "playoutStats",
+      `${(client?.video.decodeFps ?? 0).toFixed(1)} decode / ${(client?.video.playbackFps ?? 0).toFixed(1)} present fps · ${(client?.video.jitterBufferMsPerFrame ?? 0).toFixed(2)} ms buffer · ${(client?.video.decodeMsPerFrame ?? 0).toFixed(2)} ms decode`,
+    );
+    this.setText(
+      "pipelineStats",
+      `${playbackStartup} · ${metrics.video_startup_wait_ms.toFixed(0)} ms IDR · ${(client?.frameTiming.captureToPresentP95Ms ?? client?.frameTiming.estimatedPipelineMs ?? 0).toFixed(1)} ms p95 measured/estimated · ${(client?.frameTiming.frameGapP95Ms ?? 0).toFixed(1)} ms frame-gap p95`,
+    );
+    this.setText("pencilStats", `${metrics.input_samples_per_sec.toFixed(0)} samples/s · ${metrics.input_arrival_ms.toFixed(2)} ms arrival estimate · ${metrics.input_inject_ms.toFixed(3)} ms inject · ${metrics.input_samples} total`);
     this.setText("pressureStats", `${metrics.pressure.toFixed(2)} · ${metrics.tilt_x.toFixed(0)}° / ${metrics.tilt_y.toFixed(0)}°`);
+    this.setText(
+      "integrityStats",
+      `${metrics.sample_sequence_gaps} input gaps · ${metrics.input_errors} input errors · ${metrics.video_transport_drops} video transport skips · ${metrics.dropped_frames} stale captures`,
+    );
+    this.setText(
+      "recorderStats",
+      `${this.diagnosticSequence} samples captured · 1 Hz · ${formatBytes(metrics.encoded_bytes)} host encoded`,
+    );
   }
 
   private setText(id: string, text: string): void {
@@ -410,12 +780,22 @@ export class NfidbApp {
   }
 
   private async disconnect(): Promise<void> {
+    this.stopDiagnosticRecording();
     this.pointerEngine?.cancelAll();
     this.pointerEngine?.dispose();
     this.channel?.close();
     this.peer?.close();
     this.socket?.close();
     this.inputTransport = null;
+    this.videoTrackAtMs = 0;
+    this.firstVideoFrameAtMs = 0;
+    const video = this.root.querySelector<HTMLVideoElement>("#remoteVideo");
+    if (video && this.videoFrameRequest > 0 && "cancelVideoFrameCallback" in video) {
+      video.cancelVideoFrameCallback(this.videoFrameRequest);
+    }
+    this.videoFrameRequest = 0;
+    this.previousRtcCounters = null;
+    this.liveClientDiagnostic = null;
     this.pendingInput.length = 0;
     try {
       await disconnect(this.token);
@@ -430,43 +810,7 @@ export class NfidbApp {
   async diagnosticSnapshot(): Promise<ClientDiagnosticSnapshot> {
     const video = this.root.querySelector<HTMLVideoElement>("#remoteVideo");
     const quality = video?.getVideoPlaybackQuality();
-    let inboundVideo: Record<string, unknown> | null = null;
-    let candidatePair: Record<string, unknown> | null = null;
-    if (this.peer) {
-      const reports = await this.peer.getStats();
-      for (const report of reports.values()) {
-        const record = report as unknown as Record<string, unknown>;
-        if (report.type === "inbound-rtp" && (record.kind === "video" || record.mediaType === "video")) {
-          inboundVideo = pickStats(record, [
-            "bytesReceived",
-            "packetsReceived",
-            "packetsLost",
-            "framesReceived",
-            "framesDecoded",
-            "framesDropped",
-            "framesPerSecond",
-            "frameWidth",
-            "frameHeight",
-            "jitter",
-            "jitterBufferDelay",
-            "jitterBufferEmittedCount",
-            "totalDecodeTime",
-            "totalInterFrameDelay",
-            "freezeCount",
-            "totalFreezesDuration",
-          ]);
-        } else if (report.type === "candidate-pair" && record.state === "succeeded" && record.nominated === true) {
-          candidatePair = pickStats(record, [
-            "currentRoundTripTime",
-            "availableIncomingBitrate",
-            "bytesReceived",
-            "bytesSent",
-            "localCandidateId",
-            "remoteCandidateId",
-          ]);
-        }
-      }
-    }
+    const rtc = await this.readRtcStats();
     return {
       connectionState: this.state,
       peerConnectionState: this.peer?.connectionState ?? "none",
@@ -480,10 +824,15 @@ export class NfidbApp {
         currentTime: video?.currentTime ?? 0,
         totalFrames: quality?.totalVideoFrames ?? 0,
         droppedFrames: quality?.droppedVideoFrames ?? 0,
+        startupMs:
+          this.firstVideoFrameAtMs > 0 && this.videoTrackAtMs > 0
+            ? this.firstVideoFrameAtMs - this.videoTrackAtMs
+            : null,
       },
-      inboundVideo,
-      candidatePair,
+      inboundVideo: rtc.inboundVideo,
+      candidatePair: rtc.candidatePair,
       host: await getMetrics(),
+      hostDiagnostics: await getDiagnosticSummary(),
     };
   }
 
@@ -541,3 +890,120 @@ function escapeHtml(value: string): string {
 function pickStats(source: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
   return Object.fromEntries(keys.filter((key) => source[key] !== undefined).map((key) => [key, source[key]]));
 }
+
+function numeric(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function finiteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function nonnegativeDelta(current: number, previous: number | undefined): number {
+  return previous === undefined ? 0 : Math.max(0, current - previous);
+}
+
+function percentile(values: readonly number[], fraction: number): number {
+  if (values.length === 0) {
+    return 0;
+  }
+  const ordered = [...values].filter(Number.isFinite).sort((left, right) => left - right);
+  if (ordered.length === 0) {
+    return 0;
+  }
+  return ordered[Math.round((ordered.length - 1) * fraction)] ?? 0;
+}
+
+function optionalPercentile(values: readonly number[], fraction: number): number | null {
+  return values.length > 0 ? percentile(values, fraction) : null;
+}
+
+function maximum(values: readonly number[]): number {
+  return values.length > 0 ? Math.max(...values) : 0;
+}
+
+function pushBounded(values: number[], value: number, limit: number): void {
+  if (!Number.isFinite(value)) {
+    return;
+  }
+  values.push(value);
+  if (values.length > limit) {
+    values.splice(0, values.length - limit);
+  }
+}
+
+function pushValidDuration(values: number[], value: number, limit: number): void {
+  if (value >= 0 && value <= 10_000) {
+    pushBounded(values, value, limit);
+  }
+}
+
+const INBOUND_VIDEO_STAT_KEYS = [
+  "timestamp",
+  "ssrc",
+  "kind",
+  "transportId",
+  "codecId",
+  "packetsReceived",
+  "packetsLost",
+  "jitter",
+  "bytesReceived",
+  "headerBytesReceived",
+  "lastPacketReceivedTimestamp",
+  "framesReceived",
+  "framesDecoded",
+  "framesDropped",
+  "framesPerSecond",
+  "frameWidth",
+  "frameHeight",
+  "keyFramesDecoded",
+  "totalDecodeTime",
+  "totalInterFrameDelay",
+  "totalSquaredInterFrameDelay",
+  "jitterBufferDelay",
+  "jitterBufferTargetDelay",
+  "jitterBufferMinimumDelay",
+  "jitterBufferEmittedCount",
+  "freezeCount",
+  "pauseCount",
+  "totalFreezesDuration",
+  "totalPausesDuration",
+  "nackCount",
+  "firCount",
+  "pliCount",
+  "qpSum",
+] as const;
+
+const CANDIDATE_PAIR_STAT_KEYS = [
+  "timestamp",
+  "state",
+  "nominated",
+  "localCandidateId",
+  "remoteCandidateId",
+  "packetsSent",
+  "packetsReceived",
+  "bytesSent",
+  "bytesReceived",
+  "lastPacketSentTimestamp",
+  "lastPacketReceivedTimestamp",
+  "totalRoundTripTime",
+  "currentRoundTripTime",
+  "availableOutgoingBitrate",
+  "availableIncomingBitrate",
+  "requestsReceived",
+  "requestsSent",
+  "responsesReceived",
+  "responsesSent",
+  "consentRequestsSent",
+] as const;
+
+const CANDIDATE_STAT_KEYS = [
+  "timestamp",
+  "candidateType",
+  "protocol",
+  "networkType",
+  "tcpType",
+  "relayProtocol",
+  "port",
+  "vpn",
+] as const;

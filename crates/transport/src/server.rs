@@ -1,7 +1,7 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -12,15 +12,18 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures_util::{SinkExt, StreamExt};
 use mdns_sd::{ServiceDaemon, ServiceInfo};
-use nfidb_core::{EncodedVideoFrame, InputSink, Metrics, SessionManager};
+use nfidb_core::{EncodedVideoFrame, InputSink, KeyframeRequest, Metrics, SessionManager};
 use nfidb_protocol::PointerBatch;
 use parking_lot::Mutex;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::trace::TraceLayer;
 
+use crate::diagnostics::{
+    ClientDiagnosticSample, DiagnosticRecorder, DiagnosticReport, DiagnosticSummary, RecordedDiagnosticSample,
+};
 use crate::webrtc_session::{ActivePeer, WebRtcOffer, accept_offer};
 
 #[derive(RustEmbed)]
@@ -48,6 +51,8 @@ pub struct ServerInfo {
 
 pub struct ServerHandle {
     pub info: ServerInfo,
+    state: Arc<AppState>,
+    command_tx: mpsc::UnboundedSender<ServerCommand>,
     shutdown: Mutex<Option<oneshot::Sender<()>>>,
     thread: Mutex<Option<JoinHandle<()>>>,
 }
@@ -59,9 +64,22 @@ impl ServerHandle {
         metrics: Arc<Metrics>,
         input: Arc<dyn InputSink>,
         video_tx: broadcast::Sender<EncodedVideoFrame>,
+        keyframe_request: KeyframeRequest,
     ) -> Result<Self, String> {
         let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        let state = Arc::new(AppState {
+            options,
+            session,
+            metrics,
+            input,
+            video_tx,
+            keyframe_request,
+            peer: ActivePeer::default(),
+            diagnostics: DiagnosticRecorder::default(),
+        });
+        let server_state = Arc::clone(&state);
         let thread = std::thread::Builder::new()
             .name("nfidb-network".to_owned())
             .spawn(move || {
@@ -77,7 +95,7 @@ impl ServerHandle {
                     }
                 };
                 runtime.block_on(async move {
-                    let result = run_server(options, session, metrics, input, video_tx, shutdown_rx, ready_tx).await;
+                    let result = run_server(server_state, command_rx, shutdown_rx, ready_tx).await;
                     if let Err(error) = result {
                         tracing::error!(%error, "LAN server stopped with an error");
                     }
@@ -89,6 +107,8 @@ impl ServerHandle {
             .map_err(|error| format!("LAN server did not start: {error}"))??;
         Ok(Self {
             info,
+            state,
+            command_tx,
             shutdown: Mutex::new(Some(shutdown_tx)),
             thread: Mutex::new(Some(thread)),
         })
@@ -101,6 +121,65 @@ impl ServerHandle {
         if let Some(thread) = self.thread.lock().take() {
             let _ = thread.join();
         }
+    }
+
+    #[must_use]
+    pub fn pairing_pin(&self) -> String {
+        self.state.session.pin()
+    }
+
+    #[must_use]
+    pub fn pairing_qr_url(&self) -> String {
+        format!("{}?qr={}", self.info.fallback_url, self.state.session.qr_secret())
+    }
+
+    #[must_use]
+    pub fn pairing_expires_in_seconds(&self) -> u64 {
+        self.state.session.expires_in_seconds()
+    }
+
+    #[must_use]
+    pub fn pairing_is_active(&self) -> bool {
+        self.state.session.is_paired()
+    }
+
+    pub fn rotate_pairing(&self) {
+        self.state.session.rotate();
+        self.close_active_peer();
+    }
+
+    pub fn rotate_pairing_if_expired(&self) -> bool {
+        if self.state.session.rotate_if_expired() {
+            self.close_active_peer();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn close_active_peer(&self) {
+        self.state.metrics.set_connected(false);
+        let _ = self.state.input.reset_all();
+        let _ = self.command_tx.send(ServerCommand::ClosePeer);
+    }
+
+    #[must_use]
+    pub fn latest_diagnostic(&self) -> Option<RecordedDiagnosticSample> {
+        self.state.diagnostics.latest()
+    }
+
+    #[must_use]
+    pub fn diagnostic_summary(&self) -> DiagnosticSummary {
+        self.state.diagnostics.summary()
+    }
+
+    #[must_use]
+    pub fn diagnostic_report(&self) -> DiagnosticReport {
+        self.state.diagnostics.report()
+    }
+
+    pub fn clear_diagnostics(&self) {
+        self.state.diagnostics.clear();
     }
 }
 
@@ -116,35 +195,38 @@ struct AppState {
     metrics: Arc<Metrics>,
     input: Arc<dyn InputSink>,
     video_tx: broadcast::Sender<EncodedVideoFrame>,
+    keyframe_request: KeyframeRequest,
     peer: ActivePeer,
+    diagnostics: DiagnosticRecorder,
+}
+
+enum ServerCommand {
+    ClosePeer,
 }
 
 async fn run_server(
-    options: ServerOptions,
-    session: Arc<SessionManager>,
-    metrics: Arc<Metrics>,
-    input: Arc<dyn InputSink>,
-    video_tx: broadcast::Sender<EncodedVideoFrame>,
+    state: Arc<AppState>,
+    mut commands: mpsc::UnboundedReceiver<ServerCommand>,
     shutdown: oneshot::Receiver<()>,
     ready: std::sync::mpsc::SyncSender<Result<ServerInfo, String>>,
 ) -> Result<(), String> {
-    let (listener, port) = bind_available(options.preferred_port).await?;
+    let (listener, port) = bind_available(state.options.preferred_port).await?;
     let local_ip = best_local_ipv4();
-    let friendly_url = format!("http://{}.local:{port}/", options.host_name);
+    let friendly_url = format!("http://{}.local:{port}/", state.options.host_name);
     let fallback_url = format!("http://{local_ip}:{port}/");
-    let qr_url = format!("{fallback_url}?qr={}", session.qr_secret());
+    let qr_url = format!("{fallback_url}?qr={}", state.session.qr_secret());
     let info = ServerInfo {
         port,
-        host_name: options.host_name.clone(),
+        host_name: state.options.host_name.clone(),
         local_ip,
         friendly_url,
         fallback_url,
         qr_url,
-        pin: session.pin(),
+        pin: state.session.pin(),
     };
 
-    let mdns = if options.mdns {
-        match advertise_mdns(&options.host_name, local_ip, port) {
+    let mdns = if state.options.mdns {
+        match advertise_mdns(&state.options.host_name, local_ip, port) {
             Ok(service) => Some(service),
             Err(error) => {
                 tracing::warn!(%error, "mDNS advertisement unavailable; numeric IP remains usable");
@@ -155,17 +237,11 @@ async fn run_server(
         None
     };
 
-    let state = Arc::new(AppState {
-        options,
-        session,
-        metrics,
-        input,
-        video_tx,
-        peer: ActivePeer::default(),
-    });
+    let command_state = Arc::clone(&state);
     let app = Router::new()
         .route("/api/status", get(status))
         .route("/api/metrics", get(metrics_handler))
+        .route("/api/diagnostics", get(diagnostics_handler))
         .route("/api/pair", post(pair))
         .route("/api/disconnect", post(disconnect))
         .route("/api/webrtc/offer", post(webrtc_offer))
@@ -174,6 +250,14 @@ async fn run_server(
         .layer(CatchPanicLayer::new())
         .layer(TraceLayer::new_for_http())
         .with_state(state);
+
+    tokio::spawn(async move {
+        while let Some(command) = commands.recv().await {
+            match command {
+                ServerCommand::ClosePeer => command_state.peer.close().await,
+            }
+        }
+    });
 
     ready.send(Ok(info)).map_err(|error| error.to_string())?;
     let result = axum::serve(listener, app)
@@ -299,6 +383,13 @@ async fn metrics_handler(State(state): State<Arc<AppState>>, headers: HeaderMap)
     Json(state.metrics.snapshot()).into_response()
 }
 
+async fn diagnostics_handler(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if !authorized_cookie(&headers, &state.session) {
+        return api_error(StatusCode::UNAUTHORIZED, "invalid session token");
+    }
+    Json(state.diagnostics.summary()).into_response()
+}
+
 #[derive(Deserialize)]
 struct TokenRequest {
     token: String,
@@ -324,6 +415,7 @@ async fn webrtc_offer(State(state): State<Arc<AppState>>, Json(offer): Json<WebR
         Arc::clone(&state.input),
         Arc::clone(&state.metrics),
         state.video_tx.subscribe(),
+        state.keyframe_request.clone(),
         &state.peer,
     )
     .await
@@ -362,6 +454,7 @@ fn cookie_value<'a>(cookies: &'a str, name: &str) -> Option<&'a str> {
 
 async fn websocket_loop(socket: WebSocket, state: Arc<AppState>) {
     let (mut sender, mut receiver) = socket.split();
+    let session_id = state.session.session_id();
     let mut interval = tokio::time::interval(Duration::from_secs(1));
     loop {
         tokio::select! {
@@ -369,13 +462,27 @@ async fn websocket_loop(socket: WebSocket, state: Arc<AppState>) {
                 match message {
                     Some(Ok(Message::Binary(bytes))) => process_input(&state, &bytes),
                     Some(Ok(Message::Text(text))) => {
-                        if let Ok(ping) = serde_json::from_str::<Ping>(&text)
-                            && ping.kind == "ping"
+                        if text.len() <= 64 * 1024
+                            && let Ok(message) = serde_json::from_str::<ClientControlMessage>(&text)
                         {
-                            let t1 = epoch_ms();
-                            let pong = serde_json::json!({ "type": "pong", "t0": ping.t0, "t1": t1, "t2": epoch_ms() });
-                            if sender.send(Message::Text(pong.to_string().into())).await.is_err() {
-                                break;
+                            match message.kind.as_str() {
+                                "ping" => {
+                                    if let Some(t0) = message.t0 {
+                                        let t1 = epoch_ms();
+                                        let pong = serde_json::json!({ "type": "pong", "t0": t0, "t1": t1, "t2": epoch_ms() });
+                                        if sender.send(Message::Text(pong.to_string().into())).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                }
+                                "client-diagnostics" => {
+                                    if let Some(sample) = message.sample {
+                                        state.metrics.set_rtt_ms(sample.network.rtt_ms);
+                                        state.metrics.set_client_clock_offset_ms(sample.network.clock_offset_ms);
+                                        state.diagnostics.record(sample, state.metrics.snapshot());
+                                    }
+                                }
+                                _ => {}
                             }
                         }
                     }
@@ -384,6 +491,9 @@ async fn websocket_loop(socket: WebSocket, state: Arc<AppState>) {
                 }
             }
             _ = interval.tick() => {
+                if state.session.session_id() != session_id {
+                    break;
+                }
                 let message = serde_json::json!({ "type": "stats", "stats": state.metrics.snapshot() }).to_string();
                 if sender.send(Message::Text(message.into())).await.is_err() {
                     break;
@@ -398,8 +508,11 @@ fn process_input(state: &AppState, bytes: &[u8]) {
     match PointerBatch::decode(bytes) {
         Ok(batch) => {
             state.metrics.input_batch(&batch);
+            let inject_started = Instant::now();
             match state.input.inject_batch(&batch) {
-                Ok(()) => state.metrics.input_injected(batch.samples.len()),
+                Ok(()) => state
+                    .metrics
+                    .input_injected(batch.samples.len(), inject_started.elapsed()),
                 Err(error) => {
                     state.metrics.input_error();
                     tracing::warn!(%error, "pointer injection failed");
@@ -411,10 +524,13 @@ fn process_input(state: &AppState, bytes: &[u8]) {
 }
 
 #[derive(Deserialize)]
-struct Ping {
+struct ClientControlMessage {
     #[serde(rename = "type")]
     kind: String,
-    t0: f64,
+    #[serde(default)]
+    t0: Option<f64>,
+    #[serde(default)]
+    sample: Option<ClientDiagnosticSample>,
 }
 
 fn epoch_ms() -> f64 {

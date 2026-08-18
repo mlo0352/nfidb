@@ -138,3 +138,43 @@ Added independent continuity/lifecycle metrics, sticky per-contact transport, bo
 ### Decision
 
 Use actual encoded-frame intervals for RTP timestamps and keep newest-frame replacement as the explicit low-latency policy. Publish software profile throughput rather than imply 60 fps at every resolution. Keep physical iPad, art-application, WAN-disconnect, and glass-to-glass latency checks as explicit unverified gates.
+
+## 2026-08-18 — Physical iPad startup-delay finding
+
+### Goal
+
+Validate the browser client on real iPad Safari and distinguish input latency from video latency.
+
+### Experiment
+
+Paired a physical iPad over the local Wi-Fi and used touch while observing the Windows host counters and remote picture. Input counters reacted immediately, but the first decodable picture arrived roughly 30 seconds later; after catching up, playback was close to real time. Inspection showed that a new peer joined the already-running H.264 broadcast on an arbitrary delta frame, with no connection-time IDR request or first-frame keyframe gate. The encoder also scheduled IDRs by requested frame count, which can become a long wall-clock interval when software encoding is overloaded.
+
+### Result
+
+**FAIL, THEN FIXED IN AUTOMATION; PHYSICAL RETEST PENDING.** The receiver now starts at the broadcast tail only after WebRTC reaches connected, requests a fresh IDR, rejects every delta frame until that IDR, and requests recovery IDRs at a one-second wall-clock interval. The client and host report browser first-frame time, IDR wait, and skipped pre-IDR frames.
+
+The release-mode 1080p Balanced regression joined an already-running encoder, skipped one pre-IDR delta frame, received the requested IDR in 69.3 ms, and rendered the first browser frame in 464.5 ms. It then completed ten seconds with 2,402/2,402 exact input samples, zero RTP loss, decoder drops, freezes, sequence gaps, or integrity mismatches.
+
+### Decision
+
+Treat first-frame latency as an explicit release gate. A receiver must never be handed an H.264 delta frame before its first IDR, and keyframe recovery must be bounded by elapsed time rather than nominal frame count.
+
+## 2026-08-18 — Real-device diagnostic console and renewable pairing
+
+### Goal
+
+Turn physical-iPad testing into captured evidence instead of transient counters, make stale QR/PIN recovery immediate, and make every desktop sidebar destination functional.
+
+### Experiment
+
+Added one-hertz authenticated browser samples covering device/viewport/orientation state, connection state, decoder and presentation counters, RTP bandwidth/loss/jitter, jitter-buffer and decode timing, selected candidate properties, frame callback percentiles, Safari frame metadata when available, input buffers, and raw RTC fields. Each sample is synchronized with host capture, encode, transport, continuity, input-arrival, and native-injection counters. The host keeps a six-hour bounded recording, renders live and percentile-processed views, and exports raw plus processed JSON locally.
+
+Moved session credentials into renewable state. Manual reset and focused-window expiry rotation now create a new session/PIN/QR secret, invalidate the old token, close the peer/socket, and release input. Replaced the decorative sidebar labels with functional Session, Source, Input, Diagnostics, and App Setup pages.
+
+### Result
+
+**PASS IN AUTOMATION; PHYSICAL DETAIL RUN IN PROGRESS.** The final v0.3.0 candidate regression retained 11/11 diagnostic samples over 10.002 seconds, with zero discarded samples, and preserved 2,402/2,402 simultaneous input samples. The new join gate produced an IDR in 63.856 ms and browser video in 92.4 ms. The run reported zero RTP loss, decode drops, freezes, input gaps, transport skips, or marker mismatches. Its p95 LAN RTT was 1.999 ms; Edge did not expose capture-time metadata, so the 92.814 ms p95 pipeline result was correctly labeled as a component estimate.
+
+### Decision
+
+Ship diagnostic reports with explicit measurement limitations and never present an estimate as physical glass-to-glass latency. Exclude startup/uninitialized zeroes from processed rate/latency distributions. Keep diagnostic data memory-bounded, local-only, and user-exported.

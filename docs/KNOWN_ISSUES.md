@@ -5,7 +5,7 @@ This file is intentionally strict: “implemented” and “verified on availabl
 ## MVP limitations
 
 - The current encoder is isolated software OpenH264. Media Foundation hardware H.264 is not implemented. The measured release build sustains roughly 51–54 fps at 720p Fast, 29–32 fps at 1080p Balanced, and 14–16 fps at 1440p Sharp on the development PC; other CPUs and real screen content will differ.
-- No physical iPad/Apple Pencil was available for this build. iPad Safari pressure, tilt, coalesced-event behavior, rotation, background/resume, and reconnect still require field validation.
+- Physical iPad Safari pairing, touch transport, and video have begun field validation. Apple Pencil pressure/tilt/coalescing, rotation, background/resume, and repeated reconnect still require complete field results.
 - Krita, Rebelle, and Photoshop compatibility has not yet been physically tested. The independent native sink proves Windows receives injected pressure and tilt, not that every application configures its brushes correctly.
 - Only whole-monitor capture is available. Window capture is planned.
 - Monitor mirroring is not a true Windows extended desktop. A virtual display driver is outside the MVP.
@@ -17,6 +17,8 @@ This file is intentionally strict: “implemented” and “verified on availabl
 - mDNS `.local` discovery depends on the router and iPad network. The numeric IPv4 URL is the fallback.
 - Some VPN and virtual adapters may add unusable WebRTC ICE candidates. Local ICE can still select the working LAN candidate, but logs may contain harmless bind warnings.
 - Changing the capture quality profile in the desktop UI is saved for the next launch; it does not rebuild the encoder mid-session.
+- Safari may omit WebRTC `captureTime`/`receiveTime` frame metadata. In that case the live/report pipeline value is explicitly a component estimate; exact Pencil-to-photon latency requires a synchronized high-speed camera.
+- Diagnostic recording is sampled once per second and retains approximately six hours in memory. It is intended for distributions and trend diagnosis, not packet-level capture.
 - There is no audio, clipboard, keyboard forwarding, file transfer, cloud relay, multi-client support, or Linux/macOS host.
 
 ## Validation still required for a public stable release

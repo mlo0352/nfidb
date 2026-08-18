@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use fast_image_resize::images::{Image, ImageRef};
 use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
-use nfidb_core::{EncodedVideoFrame, Metrics, VideoProfile};
+use nfidb_core::{EncodedVideoFrame, KeyframeRequest, Metrics, VideoProfile};
 use openh264::OpenH264API;
 use openh264::encoder::{
     BitRate, Complexity, Encoder, EncoderConfig, FrameRate, FrameType, IntraFramePeriod, Level, Profile,
@@ -185,6 +185,7 @@ pub struct CaptureManager {
     encoder_thread: Mutex<Option<JoinHandle<()>>>,
     slot: Mutex<Arc<LatestFrame>>,
     video_tx: broadcast::Sender<EncodedVideoFrame>,
+    keyframe_request: KeyframeRequest,
     metrics: Arc<Metrics>,
     profile: VideoProfile,
     max_fps: u32,
@@ -207,6 +208,7 @@ impl CaptureManager {
             encoder_thread: Mutex::new(None),
             slot: Mutex::new(Arc::new(LatestFrame::default())),
             video_tx,
+            keyframe_request: KeyframeRequest::default(),
             metrics,
             profile,
             max_fps: max_fps.clamp(1, 120),
@@ -232,7 +234,20 @@ impl CaptureManager {
         let status = Arc::clone(&self.status);
         let encoder_thread = thread::Builder::new()
             .name("nfidb-encoder".to_owned())
-            .spawn(move || encode_loop(encoder_slot, encoder_tx, encoder_metrics, profile, max_fps, status))
+            .spawn({
+                let keyframe_request = self.keyframe_request.clone();
+                move || {
+                    encode_loop(
+                        encoder_slot,
+                        encoder_tx,
+                        encoder_metrics,
+                        keyframe_request,
+                        profile,
+                        max_fps,
+                        status,
+                    )
+                }
+            })
             .map_err(|error| error.to_string())?;
 
         let settings = Settings::new(
@@ -295,7 +310,20 @@ impl CaptureManager {
         let status = Arc::clone(&self.status);
         let encoder_thread = thread::Builder::new()
             .name("nfidb-encoder".to_owned())
-            .spawn(move || encode_loop(encoder_slot, encoder_tx, encoder_metrics, profile, max_fps, status))
+            .spawn({
+                let keyframe_request = self.keyframe_request.clone();
+                move || {
+                    encode_loop(
+                        encoder_slot,
+                        encoder_tx,
+                        encoder_metrics,
+                        keyframe_request,
+                        profile,
+                        max_fps,
+                        status,
+                    )
+                }
+            })
             .map_err(|error| error.to_string())?;
         *self.encoder_thread.lock() = Some(encoder_thread);
         let pattern_slot = Arc::clone(&slot);
@@ -333,6 +361,11 @@ impl CaptureManager {
     pub fn status(&self) -> CaptureStatus {
         self.status.lock().clone()
     }
+
+    #[must_use]
+    pub fn keyframe_request(&self) -> KeyframeRequest {
+        self.keyframe_request.clone()
+    }
 }
 
 impl Drop for CaptureManager {
@@ -345,6 +378,7 @@ fn encode_loop(
     slot: Arc<LatestFrame>,
     video_tx: broadcast::Sender<EncodedVideoFrame>,
     metrics: Arc<Metrics>,
+    keyframe_request: KeyframeRequest,
     profile: VideoProfile,
     max_fps: u32,
     status: Arc<Mutex<CaptureStatus>>,
@@ -361,7 +395,9 @@ fn encode_loop(
         .scene_change_detect(true)
         .adaptive_quantization(false)
         .background_detection(false)
-        .intra_frame_period(IntraFramePeriod::from_num_frames(max_fps.max(1)))
+        // A frame-count interval turns into a very long wall-clock interval when
+        // software encoding is overloaded. IDRs are forced by elapsed time below.
+        .intra_frame_period(IntraFramePeriod::from_num_frames(0))
         .vui(VuiConfig::srgb());
     let mut encoder = match Encoder::with_api_config(OpenH264API::from_source(), config) {
         Ok(encoder) => encoder,
@@ -386,7 +422,13 @@ fn encode_loop(
     };
     let nominal_duration = Duration::from_secs_f64(1.0 / f64::from(max_fps.max(1)));
     let mut last_sent_at: Option<Instant> = None;
+    let mut last_keyframe_at: Option<Instant> = None;
     while let Some(frame) = prepared.take() {
+        let recovery_keyframe_due =
+            last_keyframe_at.is_some_and(|last_keyframe| last_keyframe.elapsed() >= Duration::from_secs(1));
+        if keyframe_request.take() || recovery_keyframe_due {
+            encoder.force_intra_frame();
+        }
         let started = Instant::now();
         match encoder.encode(&frame.yuv) {
             Ok(bitstream) if bitstream.frame_type() != FrameType::Skip => {
@@ -399,6 +441,10 @@ fn encode_loop(
                     frame.height,
                 );
                 let sent_at = Instant::now();
+                if keyframe {
+                    last_keyframe_at = Some(sent_at);
+                    metrics.encoded_keyframe();
+                }
                 let duration = last_sent_at
                     .replace(sent_at)
                     .map_or(nominal_duration, |previous| sent_at.duration_since(previous));

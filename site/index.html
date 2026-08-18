@@ -24,7 +24,7 @@
           <a class="primary" href="https://github.com/mlo0352/nfidb/releases">Download for Windows</a>
           <a class="secondary" href="https://github.com/mlo0352/nfidb#build-from-source">Build from source</a>
         </div>
-        <p class="caveat">Portable, unsigned prerelease. Physical iPad and art-app validation is still in progress.</p>
+        <p class="caveat">v0.3 portable, unsigned prerelease. Physical iPad validation is active; Apple Pencil and art-app certification is still in progress.</p>
       </section>
 
       <section class="signal" aria-label="Local connection architecture">
@@ -38,14 +38,14 @@
       <section class="features">
         <article><span>01</span><h2>Actually local</h2><p>The host serves the iPad page and connects peer-to-peer on your LAN. There is no relay backend or account to create.</p></article>
         <article><span>02</span><h2>Actual pen data</h2><p>Coalesced Pointer Events carry pressure and tilt into native Windows <code>PT_PEN</code> input. Predictions stay visual-only.</p></article>
-        <article><span>03</span><h2>Bounded latency</h2><p>The capture path keeps the newest frame and drops stale work. Live stats expose capture, encode, drops, input rate, and RTT.</p></article>
+        <article><span>03</span><h2>Evidence, not guesses</h2><p>Live stats and local JSON reports capture latency, bandwidth, frame timing, loss, input continuity, pressure, angles, and percentile trends.</p></article>
       </section>
 
       <section id="how" class="how">
         <div class="section-copy"><p class="eyebrow">Three steps</p><h2>Nothing to install on the iPad.</h2><p>NFiDB is intentionally small. Start the Windows host, pair Safari, then draw in the Windows app you already use.</p></div>
         <ol>
           <li><b>1</b><div><strong>Run NFiDB</strong><span>Choose the Windows monitor and allow Private-network access.</span></div></li>
-          <li><b>2</b><div><strong>Open the local address</strong><span>Use iPad Safari and enter the six-digit PIN or scan the QR.</span></div></li>
+          <li><b>2</b><div><strong>Open the local address</strong><span>Use iPad Safari and enter the renewable six-digit PIN or scan the QR. Nothing is installed on the iPad.</span></div></li>
           <li><b>3</b><div><strong>Draw</strong><span>Pencil input returns as native pressure and tilt; touch stays off until you enable it.</span></div></li>
         </ol>
       </section>
@@ -54,7 +54,7 @@
         <p class="eyebrow">What this MVP is</p>
         <h2>A working bridge, with visible seams.</h2>
         <div>
-          <p><strong>Included now</strong><span>Monitor capture, H.264 WebRTC, PIN/QR pairing, native pen and optional touch, coordinate modes, continuity diagnostics, portable binaries, and automated 240 Hz/4K soak tests.</span></p>
+          <p><strong>Included now</strong><span>Monitor capture, fast-start H.264 WebRTC, resettable PIN/QR pairing, native pen and optional touch, full diagnostic recording/export, portable binaries, and automated 240 Hz/4K soak tests.</span></p>
           <p><strong>Still ahead</strong><span>Media Foundation hardware encoding, window-only capture, signed installer, extended desktop, and physical iPad/Krita/Rebelle/Photoshop certification.</span></p>
         </div>
         <a href="https://github.com/mlo0352/nfidb/blob/main/docs/TEST_MATRIX.md">Read the exact test matrix →</a>

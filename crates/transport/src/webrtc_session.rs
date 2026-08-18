@@ -1,12 +1,13 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use nfidb_core::{EncodedVideoFrame, InputSink, Metrics};
+use nfidb_core::{EncodedVideoFrame, InputSink, KeyframeRequest, Metrics};
 use nfidb_protocol::PointerBatch;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 use webrtc::api::APIBuilder;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::{MIME_TYPE_H264, MediaEngine};
@@ -41,6 +42,36 @@ pub struct WebRtcAnswer {
 #[derive(Default)]
 pub struct ActivePeer(Mutex<Option<Arc<RTCPeerConnection>>>);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PeerVideoState {
+    Waiting,
+    Connected,
+    Terminal,
+}
+
+#[derive(Debug)]
+struct StartupKeyframeGate {
+    awaiting_keyframe: bool,
+}
+
+impl StartupKeyframeGate {
+    const fn new() -> Self {
+        Self {
+            awaiting_keyframe: true,
+        }
+    }
+
+    fn admit(&mut self, keyframe: bool) -> bool {
+        if self.awaiting_keyframe {
+            if !keyframe {
+                return false;
+            }
+            self.awaiting_keyframe = false;
+        }
+        true
+    }
+}
+
 impl ActivePeer {
     pub async fn replace(&self, peer: Arc<RTCPeerConnection>) {
         let previous = self.0.lock().replace(peer);
@@ -62,6 +93,7 @@ pub async fn accept_offer(
     input: Arc<dyn InputSink>,
     metrics: Arc<Metrics>,
     mut video_rx: broadcast::Receiver<EncodedVideoFrame>,
+    keyframe_request: KeyframeRequest,
     active: &ActivePeer,
 ) -> Result<WebRtcAnswer> {
     if offer.kind != "offer" {
@@ -122,8 +154,9 @@ pub async fn accept_offer(
                     match PointerBatch::decode(&message.data) {
                         Ok(batch) => {
                             metrics.input_batch(&batch);
+                            let inject_started = Instant::now();
                             match input.inject_batch(&batch) {
-                                Ok(()) => metrics.input_injected(batch.samples.len()),
+                                Ok(()) => metrics.input_injected(batch.samples.len(), inject_started.elapsed()),
                                 Err(error) => {
                                     metrics.input_error();
                                     tracing::warn!(%error, "DataChannel pointer injection failed");
@@ -144,18 +177,27 @@ pub async fn accept_offer(
         })
     }));
 
+    let (video_state_tx, mut video_state_rx) = watch::channel(PeerVideoState::Waiting);
     let state_metrics = Arc::clone(&metrics);
     let state_input = Arc::clone(&input);
+    let connected_keyframe_request = keyframe_request.clone();
     peer.on_peer_connection_state_change(Box::new(move |state: RTCPeerConnectionState| {
         let metrics = Arc::clone(&state_metrics);
         let input = Arc::clone(&state_input);
+        let video_state_tx = video_state_tx.clone();
+        let keyframe_request = connected_keyframe_request.clone();
         Box::pin(async move {
             let connected = state == RTCPeerConnectionState::Connected;
             metrics.set_connected(connected);
-            if matches!(
+            let terminal = matches!(
                 state,
                 RTCPeerConnectionState::Disconnected | RTCPeerConnectionState::Failed | RTCPeerConnectionState::Closed
-            ) {
+            );
+            if connected {
+                keyframe_request.request();
+                let _ = video_state_tx.send(PeerVideoState::Connected);
+            } else if terminal {
+                let _ = video_state_tx.send(PeerVideoState::Terminal);
                 let _ = input.reset_all();
             }
             tracing::info!(?state, "WebRTC peer state changed");
@@ -175,9 +217,33 @@ pub async fn accept_offer(
 
     let video_metrics = Arc::clone(&metrics);
     tokio::spawn(async move {
+        while *video_state_rx.borrow() == PeerVideoState::Waiting {
+            if video_state_rx.changed().await.is_err() {
+                return;
+            }
+        }
+        if *video_state_rx.borrow() != PeerVideoState::Connected {
+            return;
+        }
+
+        // Drop frames accumulated while SDP/ICE completed. Request a fresh IDR
+        // only after the peer is connected, then make that IDR the first sample
+        // ever handed to this receiver.
+        video_rx = video_rx.resubscribe();
+        keyframe_request.request();
+        let startup_started = Instant::now();
+        let mut startup_gate = StartupKeyframeGate::new();
         loop {
             match video_rx.recv().await {
                 Ok(frame) => {
+                    let first_decodable_frame = startup_gate.awaiting_keyframe;
+                    if !startup_gate.admit(frame.keyframe) {
+                        video_metrics.video_startup_delta_frame_skipped();
+                        continue;
+                    }
+                    if first_decodable_frame {
+                        video_metrics.video_started(startup_started.elapsed());
+                    }
                     let sample = Sample {
                         data: Bytes::copy_from_slice(&frame.data),
                         duration: frame.duration,
@@ -202,4 +268,18 @@ pub async fn accept_offer(
         sdp: local.sdp,
         kind: "answer".to_owned(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StartupKeyframeGate;
+
+    #[test]
+    fn startup_gate_rejects_delta_frames_until_first_keyframe() {
+        let mut gate = StartupKeyframeGate::new();
+        assert!(!gate.admit(false));
+        assert!(!gate.admit(false));
+        assert!(gate.admit(true));
+        assert!(gate.admit(false));
+    }
 }

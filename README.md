@@ -11,11 +11,12 @@
 - Apple Pencil pressure, tilt, twist, buttons, and lifecycle samples from Safari Pointer Events.
 - Native Windows `PT_PEN` injection; optional `PT_TOUCH` injection is off by default.
 - Fit, fill, and 1:1 coordinate mapping, including monitors with negative desktop coordinates.
-- Six-digit PIN or QR pairing, random per-run credentials, one active browser, and input reset on disconnect.
+- Six-digit PIN or QR pairing, focus-aware credential rotation, one active browser, and input reset on disconnect.
 - mDNS-friendly and numeric-IP URLs, with automatic port fallback.
 - Pen-display, input-only, and display-only modes.
 - A standalone browser pointer diagnostic and a native `WM_POINTER` validation sink.
-- Authenticated continuity, lifecycle, buffering, resolution, encoder, and WebRTC diagnostics.
+- Live Session, Source, Input, Diagnostics, and App Setup pages in the Windows host.
+- Authenticated raw and percentile-processed latency, bandwidth, frame-timing, input, encoder, and WebRTC diagnostics with local JSON export.
 
 The first MVP mirrors one Windows monitor. It is not an extended-desktop display driver, remote-desktop product, or internet relay. Window-only capture, hardware Media Foundation encoding, audio, multi-client sessions, and an installer are not in this release.
 
@@ -31,6 +32,8 @@ The first MVP mirrors one Windows monitor. It is not an extended-desktop display
 Nothing is installed on the iPad: the Windows host serves the complete browser client from the EXE. The Windows ZIP is portable and has only standard Windows DLL dependencies in the tested build. It is unsigned, so SmartScreen can warn, and Windows Firewall may ask once for Private-network access.
 
 Touch is deliberately disabled until enabled in both the host and browser. Use input-only mode when another screen-sharing system handles the picture, or display-only mode when you do not want remote input.
+
+If a PIN/QR has expired or Safari shows a stale-session error, use **Session → Reset PIN + QR**. This immediately invalidates the old browser session, releases injected contacts, closes its peer connection, and redraws both credentials. An expired unpaired code also rotates automatically while the desktop app is focused.
 
 ## Drawing-app setup
 
@@ -74,6 +77,10 @@ pointer-sink --self-test
 pointer-sink --stress-test --samples 14400 --rate 240 --batch-size 4
 ./scripts/benchmark.ps1 -DurationSeconds 10
 ```
+
+Run `nfidb --diagnostics` to open the diagnostic page directly, or select **DIAGNOSTICS** in the left sidebar. For a real-iPad test, reset the recording, connect in Safari, enable **Stats**, draw and move desktop content for at least 60 seconds, then export the detailed JSON. The report contains the raw one-second samples and processed count/min/mean/p50/p95/p99/max distributions; it is written under `%APPDATA%\NFiDB\diagnostics\` and never uploaded.
+
+The live iPad panel separates network RTT/bandwidth, decoder and presentation rate, RTP loss, jitter-buffer/decode cost, frame gaps, startup-to-first-frame, estimated pipeline delay, input continuity, pressure/tilt, and browser/host buffering. Safari supplies exact capture-to-presentation timing only when its WebRTC frame metadata exposes it; otherwise NFiDB labels and uses a component estimate. Exact Pencil-contact-to-Windows-photon latency still requires a synchronized high-speed camera.
 
 The host stores user settings in `%APPDATA%\NFiDB\config.toml`. Full flags are available with `nfidb --help`; release builds normally launch as a GUI application. The measured release-mode resolution and frame-rate envelope is published in [Performance notes](docs/PERFORMANCE.md).
 

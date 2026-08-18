@@ -24,13 +24,23 @@ export interface HostMetrics {
   coalesced_samples_per_sec: number;
   capture_frames: number;
   encoded_frames: number;
+  encoded_keyframes: number;
   dropped_frames: number;
   video_transport_drops: number;
+  video_startup_delta_frames: number;
+  video_startup_wait_ms: number;
   encoded_bytes: number;
   input_batches: number;
   input_samples: number;
   injected_samples: number;
   input_errors: number;
+  client_clock_offset_ms: number;
+  input_arrival_ms: number;
+  average_input_arrival_ms: number;
+  max_input_arrival_ms: number;
+  input_inject_ms: number;
+  average_input_inject_ms: number;
+  max_input_inject_ms: number;
   batch_sequence_gaps: number;
   sample_sequence_gaps: number;
   out_of_order_batches: number;
@@ -61,12 +71,22 @@ export interface HostMetrics {
   output_height: number;
 }
 
+export interface HostDiagnosticSummary {
+  sample_count: number;
+  retained_seconds: number;
+  discarded_samples: number;
+}
+
 export async function getStatus(): Promise<HostStatus> {
   return requestJson<HostStatus>("/api/status");
 }
 
 export async function getMetrics(): Promise<HostMetrics> {
   return requestJson<HostMetrics>("/api/metrics");
+}
+
+export async function getDiagnosticSummary(): Promise<HostDiagnosticSummary> {
+  return requestJson<HostDiagnosticSummary>("/api/diagnostics");
 }
 
 export async function pairWithPin(pin: string): Promise<PairResult> {

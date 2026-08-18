@@ -17,6 +17,7 @@ const UNPAIRED_TTL: Duration = Duration::from_secs(10 * 60);
 struct SessionState {
     session_id: Uuid,
     pin: String,
+    qr_secret: String,
     qr_secret_hash: [u8; 32],
     access_token_hash: Option<[u8; 32]>,
     created_at: Instant,
@@ -27,26 +28,13 @@ struct SessionState {
 #[derive(Debug)]
 pub struct SessionManager {
     state: Mutex<SessionState>,
-    qr_secret: String,
 }
 
 impl SessionManager {
     #[must_use]
     pub fn new() -> Self {
-        let mut random = rand::rng();
-        let pin = format!("{:06}", random.next_u32() % 1_000_000);
-        let qr_secret = random_token(&mut random, 32);
         Self {
-            state: Mutex::new(SessionState {
-                session_id: Uuid::new_v4(),
-                pin,
-                qr_secret_hash: hash(&qr_secret),
-                access_token_hash: None,
-                created_at: Instant::now(),
-                created_wall: Utc::now(),
-                paired: false,
-            }),
-            qr_secret,
+            state: Mutex::new(new_session_state()),
         }
     }
 
@@ -70,8 +58,42 @@ impl SessionManager {
     }
 
     #[must_use]
-    pub fn qr_secret(&self) -> &str {
-        &self.qr_secret
+    pub fn session_id(&self) -> Uuid {
+        self.state.lock().session_id
+    }
+
+    #[must_use]
+    pub fn qr_secret(&self) -> String {
+        self.state.lock().qr_secret.clone()
+    }
+
+    #[must_use]
+    pub fn expires_in_seconds(&self) -> u64 {
+        let state = self.state.lock();
+        if state.paired {
+            UNPAIRED_TTL.as_secs()
+        } else {
+            UNPAIRED_TTL.saturating_sub(state.created_at.elapsed()).as_secs()
+        }
+    }
+
+    #[must_use]
+    pub fn is_paired(&self) -> bool {
+        self.state.lock().paired
+    }
+
+    pub fn rotate(&self) {
+        *self.state.lock() = new_session_state();
+    }
+
+    pub fn rotate_if_expired(&self) -> bool {
+        let mut state = self.state.lock();
+        if !state.paired && state.created_at.elapsed() >= UNPAIRED_TTL {
+            *state = new_session_state();
+            true
+        } else {
+            false
+        }
     }
 
     pub fn pair_with_pin(&self, pin: &str) -> Result<PairResult, SessionError> {
@@ -104,6 +126,22 @@ impl SessionManager {
         let mut state = self.state.lock();
         state.access_token_hash = None;
         state.paired = false;
+    }
+}
+
+fn new_session_state() -> SessionState {
+    let mut random = rand::rng();
+    let pin = format!("{:06}", random.next_u32() % 1_000_000);
+    let qr_secret = random_token(&mut random, 32);
+    SessionState {
+        session_id: Uuid::new_v4(),
+        pin,
+        qr_secret_hash: hash(&qr_secret),
+        qr_secret,
+        access_token_hash: None,
+        created_at: Instant::now(),
+        created_wall: Utc::now(),
+        paired: false,
     }
 }
 
@@ -173,7 +211,7 @@ pub struct PublicSession {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum SessionError {
-    #[error("the pairing window expired; restart NFiDB to create a new session")]
+    #[error("the pairing code expired; reset the PIN and QR code on Windows")]
     Expired,
     #[error("invalid pairing credentials")]
     InvalidCredentials,
@@ -192,7 +230,7 @@ mod tests {
 
         let qr_session = SessionManager::new();
         let result = qr_session
-            .pair_with_qr_secret(qr_session.qr_secret())
+            .pair_with_qr_secret(&qr_session.qr_secret())
             .expect("valid QR secret");
         assert!(qr_session.authorize(&result.access_token));
     }
@@ -207,5 +245,24 @@ mod tests {
         let result = session.pair_with_pin(&session.pin()).expect("valid pin");
         session.disconnect();
         assert!(!session.authorize(&result.access_token));
+    }
+
+    #[test]
+    fn rotating_credentials_invalidates_pin_qr_and_access_token() {
+        let session = SessionManager::new();
+        let old_pin = session.pin();
+        let old_qr = session.qr_secret();
+        let result = session.pair_with_pin(&old_pin).expect("valid pin");
+        session.rotate();
+        assert!(!session.authorize(&result.access_token));
+        assert!(matches!(
+            session.pair_with_pin(&old_pin),
+            Err(SessionError::InvalidCredentials)
+        ));
+        assert!(matches!(
+            session.pair_with_qr_secret(&old_qr),
+            Err(SessionError::InvalidCredentials)
+        ));
+        assert!(session.expires_in_seconds() > 590);
     }
 }
