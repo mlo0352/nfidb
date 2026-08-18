@@ -1,18 +1,19 @@
 # Test matrix
 
-Last updated: 2026-08-18. Development host: Windows 11 Pro x64 build 22631, Intel Core i9-13900K, Rust 1.97.1 (`x86_64-pc-windows-msvc`), Node 22.22.3, npm 10.9.8, Microsoft Edge headless. Profile/soak results are release `0.2.0`; startup, diagnostics, credential rotation, navigation, browser-upgrade, and physical regressions are the `0.3.1`–`0.3.3` candidates unless stated otherwise.
+Last updated: 2026-08-18. Development host: Windows 11 Pro x64 build 22631, Intel Core i9-13900K, Rust 1.97.1 (`x86_64-pc-windows-msvc`), Node 22.22.3, npm 10.9.8, Microsoft Edge headless. Profile/soak results are release `0.2.0`; startup, diagnostics, credential rotation, navigation, browser-upgrade, and physical regressions are the `0.3.1`–`0.3.4` candidates unless stated otherwise.
 
 | Layer | Test | Result | Evidence |
 | --- | --- | --- | --- |
 | Protocol | Rust packet round trips, rejection, pressure/tilt clamps | PASS | `cargo test --workspace` |
 | Mapping | fit/fill/1:1 and negative-origin target coordinates | PASS | Rust plus 3 TypeScript geometry tests |
 | Sessions/config | PIN, QR, invalid credential, disconnect, rotation/invalidation, TOML round trip | PASS | Core unit tests plus live reset/reconnect path |
+| PIN entry | Six digits auto-submit once; paste is normalized; partial entry stays local | PASS | PIN normalization unit tests plus live-host E2E with no Connect click |
 | Browser coalescing | Use coalesced samples exactly once and in chronological order | PASS | Exact binary packet test with pressure, tilt, twist, coordinates, and sequences |
 | Browser lifecycle | Preserve exactly one primary Down/Up across fit letterboxes and unusual coalesced/duplicate events | PASS | Deterministic edge-entry, edge-exit, duplicate-Down, and coalesced-lifecycle tests |
 | Browser volume | Ten-minute 240 Hz stroke encoding | PASS | 144,002 samples generated in 0.55 s by deterministic unit test; continuous batch/sample sequences |
 | Native input quick | Inject realistic primary-contact `PT_PEN`; receive `WM_POINTER` pressure/tilt/button state | PASS | 4/4 exact events; pressure `[102, 512, 1024, 0]`; exact tilt/lifecycle; zero received barrel-flag samples |
 | Native input sustained | User32 injection, transient queue backpressure, and reverse-chronological history recovery | PASS | Exact packaged v0.3.3 primary-tip run: 14,400/14,400 samples over 59.83 s at 240.66 Hz; 5,375 coalesced samples recovered; zero missing/excess/value/barrel error; full pressure and ±60° tilt ranges; 50 ms bounded `ERROR_NOT_READY` retry |
-| Browser build | strict TypeScript + Safari 16.4 Vite target | PASS | 11 Vitest tests; typecheck and production build |
+| Browser build | strict TypeScript + Safari 16.4 Vite target | PASS | 14 Vitest tests; typecheck and production build |
 | HTTP/control | status, pairing, embedded assets, authenticated metrics/diagnostics, stats WebSocket | PASS | live and portable smoke tests |
 | Diagnostic recorder | One-hertz raw capture, host synchronization, bounded retention, processed distributions | PASS | Unit tests plus 11/11 live samples over 10.003 s, zero discarded |
 | Browser upgrades | A new EXE cannot reuse a prior immutable JavaScript/CSS payload | PASS | `index.html` is no-store and references content-hashed assets; extracted-archive smoke discovers and loads the hash |

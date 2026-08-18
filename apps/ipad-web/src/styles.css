@@ -88,6 +88,7 @@ button { -webkit-tap-highlight-color: transparent; }
   text-align: center;
 }
 .pair-panel input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(91, 224, 194, 0.1); }
+.pin-hint { margin: 7px 0 0; color: #7f8c8a; font-size: 0.7rem; }
 .form-error { min-height: 20px; margin: 7px 0 4px; color: var(--danger); font-size: 0.76rem; }
 .primary-button {
   width: 100%;

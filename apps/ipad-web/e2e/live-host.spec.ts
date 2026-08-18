@@ -26,7 +26,6 @@ test("sustains coalesced pressure/tilt input while receiving integrity-checked H
 
   await page.goto("/");
   await page.locator("#pin").fill(pin!);
-  await page.getByRole("button", { name: "Connect" }).click();
 
   await expect(page.locator("#surface")).toBeVisible();
   await expect(page.locator("#connectionState")).toContainText("Connected locally", { timeout: 20_000 });

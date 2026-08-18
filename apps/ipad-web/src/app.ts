@@ -1,5 +1,6 @@
 import { disconnect, getDiagnosticSummary, getMetrics, getStatus, pairWithPin, pairWithQr, sendOffer, type HostDiagnosticSummary, type HostMetrics, type HostStatus } from "./api";
 import type { FitMode } from "./geometry";
+import { normalizePinEntry } from "./pin-entry";
 import { PointerEngine } from "./pointer-engine";
 
 declare const __NFIDB_CLIENT_VERSION__: string;
@@ -95,6 +96,7 @@ export class NfidbApp {
   private liveClientDiagnostic: LiveClientDiagnostic | null = null;
   private rttMs = 0;
   private clockOffsetMs = 0;
+  private pairingRequestActive = false;
   private videoFrameRequest = 0;
   private frameCallbackCount = 0;
   private lastFrameCallbackAtMs = 0;
@@ -132,6 +134,7 @@ export class NfidbApp {
 
   private renderPairing(error = ""): void {
     this.state = "pairing";
+    this.pairingRequestActive = false;
     const host = escapeHtml(this.status?.host_name ?? "Windows PC");
     this.root.innerHTML = `
       <main class="pairing-shell">
@@ -141,7 +144,8 @@ export class NfidbApp {
           <h1 id="pair-title">Enter the PIN shown on Windows</h1>
           <form id="pairForm" novalidate>
             <label for="pin">Six-digit PIN</label>
-            <input id="pin" name="pin" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="000 000" aria-describedby="pairError" autofocus />
+            <input id="pin" name="pin" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="000 000" aria-describedby="pinHint pairError" autofocus />
+            <p id="pinHint" class="pin-hint">Checks automatically after the sixth digit.</p>
             <p id="pairError" class="form-error" role="alert">${escapeHtml(error)}</p>
             <button class="primary-button" type="submit">Connect locally</button>
           </form>
@@ -152,8 +156,11 @@ export class NfidbApp {
     const form = this.requiredElement<HTMLFormElement>("pairForm");
     const pin = this.requiredElement<HTMLInputElement>("pin");
     pin.addEventListener("input", () => {
-      const digits = pin.value.replace(/\D/g, "").slice(0, 6);
-      pin.value = digits.length > 3 ? `${digits.slice(0, 3)} ${digits.slice(3)}` : digits;
+      const entry = normalizePinEntry(pin.value);
+      pin.value = entry.formatted;
+      if (entry.complete && !this.pairingRequestActive) {
+        form.requestSubmit();
+      }
     });
     form.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -162,13 +169,24 @@ export class NfidbApp {
   }
 
   private async submitPin(pin: string): Promise<void> {
+    const entry = normalizePinEntry(pin);
+    if (!entry.complete || this.pairingRequestActive) {
+      if (!entry.complete) {
+        const error = this.root.querySelector<HTMLElement>("#pairError");
+        if (error) {
+          error.textContent = "Enter all six digits.";
+        }
+      }
+      return;
+    }
+    this.pairingRequestActive = true;
     const button = this.root.querySelector<HTMLButtonElement>("button[type=submit]");
     if (button) {
       button.disabled = true;
       button.textContent = "Pairing…";
     }
     try {
-      const result = await pairWithPin(pin);
+      const result = await pairWithPin(entry.digits);
       this.token = result.access_token;
       await this.connect();
     } catch (error) {

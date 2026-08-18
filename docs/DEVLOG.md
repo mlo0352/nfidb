@@ -248,3 +248,17 @@ An active stroke now clamps movement and its terminal sample to the nearest moni
 ### Decision
 
 Treat both sequence continuity and lifecycle continuity as release gates. A zero packet-gap count alone is insufficient if coordinate filtering can remove Down or Up.
+
+## 2026-08-18 — Automatic six-digit pairing
+
+### Goal
+
+Remove the extra Connect tap from the normal iPad pairing path without making partial or repeated requests.
+
+### Result
+
+Entering or pasting the sixth PIN digit now submits immediately. The client keeps the Connect button and form submission as fallbacks, rejects partial PINs locally, formats pasted input consistently, disables duplicate requests while pairing, and restores an editable form after an error. The live-host browser regression now reaches the drawing surface by filling the PIN alone.
+
+### Decision
+
+Keep PIN entry one-step: the sixth digit is explicit enough to begin a local pairing check, while QR pairing remains zero-entry.
