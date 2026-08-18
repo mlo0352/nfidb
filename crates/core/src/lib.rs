@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 pub use config::{AppConfig, CaptureMode, InputConfig, NetworkConfig, UiConfig, VideoConfig, VideoProfile};
 pub use metrics::{Metrics, MetricsSnapshot};
-use nfidb_protocol::PointerBatch;
+use nfidb_protocol::{CommandInput, KeyboardInput, PointerBatch, TextInput, WheelInput};
 pub use session::{PairMethod, PairResult, PublicSession, SessionError, SessionManager};
 
 #[derive(Debug, Clone)]
@@ -56,6 +56,10 @@ impl std::error::Error for InputError {}
 
 pub trait InputSink: Send + Sync + 'static {
     fn inject_batch(&self, batch: &PointerBatch) -> Result<(), InputError>;
+    fn inject_wheel(&self, input: &WheelInput) -> Result<(), InputError>;
+    fn inject_keyboard(&self, input: &KeyboardInput) -> Result<(), InputError>;
+    fn inject_text(&self, input: &TextInput) -> Result<(), InputError>;
+    fn inject_command(&self, input: &CommandInput) -> Result<(), InputError>;
     fn reset_all(&self) -> Result<(), InputError>;
 }
 
@@ -69,6 +73,30 @@ impl InputSink for LoggingInputSink {
             batch.batch_sequence,
             batch.samples.len()
         ));
+        Ok(())
+    }
+
+    fn inject_wheel(&self, input: &WheelInput) -> Result<(), InputError> {
+        tracing_fallback(&format!("wheel input {}", input.sequence));
+        Ok(())
+    }
+
+    fn inject_keyboard(&self, input: &KeyboardInput) -> Result<(), InputError> {
+        tracing_fallback(&format!("keyboard input {}: {}", input.sequence, input.code));
+        Ok(())
+    }
+
+    fn inject_text(&self, input: &TextInput) -> Result<(), InputError> {
+        tracing_fallback(&format!(
+            "text input {}: {} UTF-8 bytes",
+            input.sequence,
+            input.text.len()
+        ));
+        Ok(())
+    }
+
+    fn inject_command(&self, input: &CommandInput) -> Result<(), InputError> {
+        tracing_fallback(&format!("command input {}: {:?}", input.sequence, input.command));
         Ok(())
     }
 

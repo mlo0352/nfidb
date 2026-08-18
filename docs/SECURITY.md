@@ -8,7 +8,7 @@ NFiDB is designed for a trusted home or studio LAN. It is not hardened for publi
 - The six-digit PIN and 256-bit QR secret expire after ten minutes while unpaired.
 - Secrets are compared in constant time; QR secrets and access tokens are stored server-side as SHA-256 digests.
 - Access tokens are random 256-bit base64url strings. They are not placed in URLs; WebSocket authentication uses an HttpOnly `SameSite=Strict` cookie.
-- Invalid binary packets are discarded before native input injection.
+- Invalid binary packets are discarded before native input injection; key/text fields and commands are length- and enum-bounded.
 - Only one active WebRTC peer is retained. Disconnect/peer failure releases all synthetic contacts.
 - Resetting the PIN/QR invalidates the active token, closes the WebRTC peer and authenticated WebSocket, and releases all synthetic contacts.
 - The app has no account, telemetry, analytics, database, STUN/TURN service, or cloud relay.
@@ -24,7 +24,9 @@ Run NFiDB only on a Windows network marked **Private**. Allow its firewall rule 
 
 Normal logs do not print PINs, QR secrets, access tokens, request bodies, cookies, or headers. Headless diagnostic mode deliberately prints the PIN so automated tests can pair; do not publish that output while its process is running. QR URLs shown in the host UI contain the QR secret and must be treated like the PIN.
 
-Detailed diagnostic exports stay on the Windows PC under `%APPDATA%\NFiDB\diagnostics\` until the user moves or deletes them. They deliberately exclude credentials and candidate IP addresses, but they can contain browser/device strings, screen dimensions, performance measurements, LAN candidate type/protocol, configuration, and timing history. Review a report before sharing it publicly.
+Detailed diagnostic exports stay on the Windows PC under `%APPDATA%\NFiDB\diagnostics\` until the user moves or deletes them. They deliberately exclude credentials, candidate IP addresses, and typed text (only event/UTF-8-byte counts are recorded), but they can contain browser/device strings, screen dimensions, performance measurements, LAN candidate type/protocol, configuration, and timing history. Review a report before sharing it publicly.
+
+Pairing grants the browser native mouse, keyboard, text, pen/touch, and app-control authority for the selected Windows machine. Disconnect or rotate the PIN/QR immediately if the iPad is no longer trusted. Windows' secure-attention boundary remains intact: synthetic Ctrl+Alt+Delete cannot enter the protected desktop.
 
 ## Reporting
 

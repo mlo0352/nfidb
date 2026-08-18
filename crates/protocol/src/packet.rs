@@ -14,6 +14,7 @@ const MAX_SAMPLES_PER_BATCH: usize = 512;
 pub enum DeviceType {
     Pen = 1,
     Touch = 2,
+    Mouse = 3,
 }
 
 impl TryFrom<u8> for DeviceType {
@@ -23,6 +24,7 @@ impl TryFrom<u8> for DeviceType {
         match value {
             1 => Ok(Self::Pen),
             2 => Ok(Self::Touch),
+            3 => Ok(Self::Mouse),
             other => Err(ProtocolError::InvalidDevice(other)),
         }
     }
@@ -248,6 +250,16 @@ pub enum ProtocolError {
     InvalidDevice(u8),
     #[error("invalid pointer action {0}")]
     InvalidAction(u8),
+    #[error("invalid keyboard action {0}")]
+    InvalidKeyboardAction(u8),
+    #[error("invalid remote command {0}")]
+    InvalidCommand(u8),
+    #[error("keyboard code/key field is invalid")]
+    InvalidKeyField,
+    #[error("text input contains {0} UTF-8 bytes; expected 1 through 4096")]
+    InvalidTextLength(usize),
+    #[error("input packet contains invalid UTF-8")]
+    InvalidUtf8,
     #[error("pointer batch contains {0} samples; maximum is {MAX_SAMPLES_PER_BATCH}")]
     TooManySamples(usize),
     #[error("truncated packet: expected {expected} bytes, received {actual}")]

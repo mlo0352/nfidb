@@ -19,7 +19,10 @@ This file is intentionally strict: “implemented” and “verified on availabl
 - Changing the capture quality profile in the desktop UI is saved for the next launch; it does not rebuild the encoder mid-session.
 - Safari may omit WebRTC `captureTime`/`receiveTime` frame metadata. In that case the live/report pipeline value is explicitly a component estimate; exact Pencil-to-photon latency requires a synchronized high-speed camera.
 - Diagnostic recording is sampled once per second and retains approximately six hours in memory. It is intended for distributions and trend diagnosis, not packet-level capture.
-- There is no audio, clipboard, keyboard forwarding, file transfer, cloud relay, multi-client support, or Linux/macOS host.
+- iPadOS/Safari can reserve OS-level keyboard shortcuts before the page receives them. NFiDB forwards every supported event it receives and provides on-screen Alt+Tab, Alt+Shift+Tab, Task View, minimize, and special-key fallbacks.
+- NFiDB transmits Control+Option+Delete as Ctrl+Alt+Delete, but Windows intentionally rejects synthetic input at the secure-attention screen. A portable, unsigned user-mode app cannot safely bypass that boundary.
+- Physical iPad trackpad, hardware-keyboard layout/shortcut coverage, software-keyboard IME, and three-finger gesture behavior still need field validation across iPadOS versions.
+- There is no audio, clipboard synchronization, file transfer, cloud relay, multi-client support, or Linux/macOS host.
 
 ## Validation still required for a public stable release
 

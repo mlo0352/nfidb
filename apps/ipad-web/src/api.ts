@@ -8,6 +8,9 @@ export interface HostStatus {
   protocol_version: number;
   webrtc: boolean;
   touch_default: boolean;
+  mouse_enabled: boolean;
+  keyboard_enabled: boolean;
+  gestures_default: boolean;
 }
 
 export interface PairResult {
@@ -34,6 +37,12 @@ export interface HostMetrics {
   input_samples: number;
   injected_samples: number;
   input_errors: number;
+  mouse_samples: number;
+  wheel_events: number;
+  keyboard_events: number;
+  text_events: number;
+  text_bytes: number;
+  command_events: number;
   client_clock_offset_ms: number;
   input_arrival_ms: number;
   average_input_arrival_ms: number;

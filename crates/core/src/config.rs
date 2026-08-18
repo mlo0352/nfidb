@@ -83,6 +83,9 @@ impl Default for VideoConfig {
 pub struct InputConfig {
     pub pen: bool,
     pub touch: bool,
+    pub mouse: bool,
+    pub keyboard: bool,
+    pub gestures: bool,
     pub strict_palm_rejection: bool,
     pub focus_target_on_pen_down: bool,
 }
@@ -92,6 +95,9 @@ impl Default for InputConfig {
         Self {
             pen: true,
             touch: false,
+            mouse: true,
+            keyboard: true,
+            gestures: true,
             strict_palm_rejection: true,
             focus_target_on_pen_down: true,
         }
@@ -168,5 +174,20 @@ mod tests {
         assert_eq!(decoded.network.port, 47_831);
         assert_eq!(decoded.video.profile, VideoProfile::Balanced);
         assert!(!decoded.input.touch);
+    }
+
+    #[test]
+    fn older_input_config_gets_safe_remote_input_defaults() {
+        let decoded: AppConfig = toml::from_str(
+            r#"
+                [input]
+                pen = true
+                touch = false
+            "#,
+        )
+        .expect("deserialize prior config");
+        assert!(decoded.input.mouse);
+        assert!(decoded.input.keyboard);
+        assert!(decoded.input.gestures);
     }
 }

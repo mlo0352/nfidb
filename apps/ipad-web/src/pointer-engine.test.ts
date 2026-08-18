@@ -204,6 +204,29 @@ describe("PointerEngine", () => {
     expect(packets.map((packet) => decode(packet).actions)).toEqual([[PointerAction.Down], [PointerAction.Up]]);
     engine.dispose();
   });
+
+  it("forwards trackpad hover and primary clicks as mouse samples", () => {
+    const engine = new PointerEngine({
+      overlay,
+      video,
+      send: (packet) => packets.push(packet),
+      getFitMode: () => "fit",
+      getTouchEnabled: () => false,
+    });
+
+    overlay.dispatchEvent(pointer("pointermove", 0, 0, 0, 0, 500, 375, [], "mouse"));
+    overlay.dispatchEvent(pointer("pointerdown", 0.5, 0, 0, 1, 520, 380, [], "mouse"));
+    overlay.dispatchEvent(pointer("pointerup", 0, 0, 0, 0, 520, 380, [], "mouse"));
+
+    expect(packets).toHaveLength(3);
+    expect(new DataView(packets[0]!).getUint8(HEADER_BYTES)).toBe(3);
+    expect(packets.map((packet) => decode(packet).actions)).toEqual([
+      [PointerAction.Hover],
+      [PointerAction.Down],
+      [PointerAction.Up],
+    ]);
+    engine.dispose();
+  });
 });
 
 function pointer(
@@ -215,10 +238,11 @@ function pointer(
   clientX: number,
   clientY: number,
   coalesced: Event[] = [],
+  pointerType = "pen",
 ): PointerEvent {
   const event = new Event(type, { bubbles: true, cancelable: true });
   Object.defineProperties(event, {
-    pointerType: { value: "pen" },
+    pointerType: { value: pointerType },
     pointerId: { value: 17 },
     pressure: { value: pressure },
     tiltX: { value: tiltX },

@@ -5,6 +5,8 @@ NFiDB is a single-PC, single-browser, trusted-LAN bridge. The Windows executable
 ```text
 Windows monitor -> WGC newest-frame slot -> scale/YUV newest-frame slot -> H.264 -> WebRTC video -> Safari <video>
 Windows PT_PEN <- native injector <- binary batches <- DataChannel <- Safari Pointer Events
+Windows SendInput <- mouse/key/text/wheel messages <- DataChannel <- iPad trackpad/keyboard/IME
+Windows commands <- semantic gesture messages <- DataChannel <- three-finger recognizer
                                       ^ WebSocket fallback/control/1 Hz diagnostics
 ```
 
@@ -26,9 +28,11 @@ The encoder emits Annex-B H.264 access units and assigns RTP durations from the 
 
 ## Input path
 
-The browser listens only to `pointerdown`, `pointermove`, `pointerup`, and `pointercancel`. It sends all actual coalesced samples in chronological order, never predicted points. A predicted point may be drawn locally as transient feedback. A contact stays on the transport selected at pointer-down; switching DataChannel/WebSocket during a stroke is forbidden. Interrupted contacts are cancelled and blocked until lifted rather than silently split across transports.
+The drawing engine listens to `pointerdown`, `pointermove`, `pointerup`, and `pointercancel`. It sends all actual coalesced samples in chronological order, never predicted points. A predicted point may be drawn locally as transient feedback. Pen, touch, and mouse have distinct device tags; only pen data contributes to pressure/tilt ranges. A contact stays on the transport selected at pointer-down; switching DataChannel/WebSocket during a stroke is forbidden. Interrupted contacts are cancelled and blocked until lifted rather than silently split across transports.
 
-The host validates packet version, exact length, enum values, finite numbers, pressure, tilt, and sample count before injection. Normalized points are mapped against the selected monitor's physical desktop rectangle. The injector maintains pointer lifecycle state and releases every active pen/touch contact on channel close, peer failure, and application shutdown.
+A separate remote-input engine forwards mouse wheel deltas, hardware-key transitions, committed Unicode/IME text, and bounded semantic commands. Printable text uses Windows Unicode injection instead of assuming a US keyboard layout. Shortcut keys use physical DOM codes so Control/Option/Shift chords retain key-down/key-up order. Three-finger recognition runs only when native touch forwarding is off and no Pencil is active. Blur, backgrounding, disconnect, peer replacement, credential rotation, and process shutdown release every held mouse button, key, pen, and touch contact.
+
+The host validates packet version, message kind, exact/minimum length, enum values, finite numbers, pressure, tilt, UTF-8, field-size limits, and sample count before injection. Normalized points are mapped against the selected monitor's physical desktop rectangle, including negative virtual-desktop origins. Pen/touch use Windows synthetic-pointer APIs; mouse, wheel, keyboard, and text use `SendInput`; app-switch/Task View are atomic Windows chords and minimize targets the foreground window. The authenticated WebSocket accepts the same binary messages as the preferred reliable/ordered DataChannel.
 
 ## Session lifecycle
 

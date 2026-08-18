@@ -1,6 +1,6 @@
 # Pointer and signaling protocol
 
-Protocol version `1` uses little-endian binary messages. One pointer batch consists of a 16-byte header followed by 44-byte samples. The maximum batch size is 512 samples.
+Protocol version `1` uses little-endian binary messages. Every message starts with the version byte and a message-kind byte. Pointer batches remain kind `1`; version 1 receivers can now also accept wheel, keyboard, committed text, and semantic-command kinds. Input normally travels through the reliable ordered WebRTC DataChannel and uses the authenticated WebSocket as its fallback.
 
 ## Batch header
 
@@ -16,8 +16,8 @@ Protocol version `1` uses little-endian binary messages. One pointer batch consi
 
 | Offset | Type | Meaning |
 | ---: | --- | --- |
-| 0 | `u8` | device (`1` pen, `2` touch) |
-| 1 | `u8` | action (`1` down, `2` move, `3` up, `4` cancel) |
+| 0 | `u8` | device (`1` pen, `2` touch, `3` mouse) |
+| 1 | `u8` | action (`1` down, `2` move, `3` up, `4` cancel, `5` hover) |
 | 2 | `u16` | browser Pointer Events `buttons` flags: bit 0 primary tip, bit 1 secondary/barrel |
 | 4 | `u32` | pointer ID |
 | 8 | `u32` | monotonically wrapping sample sequence |
@@ -29,7 +29,66 @@ Protocol version `1` uses little-endian binary messages. One pointer batch consi
 | 32 | `f32` | twist, normalized to 0…359 degrees |
 | 36 | `f64` | browser event epoch timestamp, ms (converted from the Event Timing timebase when necessary) |
 
-Rust and TypeScript have matching golden-vector tests. A packet with unknown version/kind/device/action, a non-finite float, the wrong exact byte length, or too many samples is rejected before reaching the native sink.
+One pointer batch consists of the 16-byte header followed by zero or more 44-byte samples. The maximum batch size is 512 samples.
+
+## Wheel message (kind 2)
+
+The wheel message is exactly 32 bytes. Modifier bits are Shift `1`, Control `2`, Alt `4`, and Meta/Windows `8`.
+
+| Offset | Type | Meaning |
+| ---: | --- | --- |
+| 0 | `u8` | version (`1`) |
+| 1 | `u8` | message kind (`2`) |
+| 2 | `u16` | modifier bits |
+| 4 | `u32` | sequence |
+| 8 | `f32` | normalized X |
+| 12 | `f32` | normalized Y |
+| 16 | `f32` | horizontal pixel delta |
+| 20 | `f32` | vertical pixel delta |
+| 24 | `f64` | browser event epoch timestamp, ms |
+
+Safari line/page deltas are converted to pixels before transmission. The Windows sink retains fractional high-resolution wheel remainders and maps the position through the selected monitor and full virtual desktop.
+
+## Keyboard message (kind 3)
+
+The keyboard message has a 24-byte header followed by the UTF-8 DOM `code` bytes and UTF-8 DOM `key` bytes. The physical `code` is required, ASCII-only, and 1–64 bytes; `key` is 0–64 bytes. Action is `1` down or `2` up. Client time is rounded to a non-negative epoch millisecond `u64`.
+
+| Offset | Type | Meaning |
+| ---: | --- | --- |
+| 0 | `u8` | version (`1`) |
+| 1 | `u8` | message kind (`3`) |
+| 2 | `u8` | key action |
+| 3 | `u8` | DOM location |
+| 4 | `u16` | modifier bits |
+| 6 | `u8` | repeat flag |
+| 7 | `u8` | reserved (`0`) |
+| 8 | `u32` | sequence |
+| 12 | `u64` | browser event epoch timestamp, ms |
+| 20 | `u16` | code byte length |
+| 22 | `u16` | key byte length |
+| 24 | bytes | code, then key |
+
+The host maps standard DOM physical codes for modifiers, navigation, letters, digits, punctuation, function keys F1–F24, and numpad keys to Windows virtual keys. Physical keys outside the text-entry field retain down/up/repeat behavior for held controls and drawing-app hotkeys. Option becomes Alt, Control becomes Ctrl, Return becomes Enter, and unmodified iPad Delete becomes Backspace. Key state is tracked and released on every reset/disconnect.
+
+## Text message (kind 4)
+
+Committed hardware/software-keyboard, paste, and IME text uses Unicode injection and is independent of the Windows keyboard layout. The message is a 20-byte header followed by 1–4096 valid UTF-8 bytes. Long text is split only at Unicode character boundaries.
+
+| Offset | Type | Meaning |
+| ---: | --- | --- |
+| 0 | `u8` | version (`1`) |
+| 1 | `u8` | message kind (`4`) |
+| 2 | `u16` | reserved (`0`) |
+| 4 | `u32` | sequence |
+| 8 | `u64` | browser event epoch timestamp, ms |
+| 16 | `u32` | UTF-8 byte length |
+| 20 | bytes | committed text |
+
+## Command message (kind 5)
+
+The command message is exactly 16 bytes: version, kind, command, reserved byte, `u32` sequence, and `u64` client epoch milliseconds. Commands are `1` next app (Alt+Tab), `2` previous app (Alt+Shift+Tab), `3` minimize foreground, `4` Task View (Win+Tab), and `5` reset all held remote input. The browser produces commands through on-screen controls and three-finger gestures rather than sending platform-specific implementation details.
+
+Rust and TypeScript have matching golden-vector tests. A packet with unknown version/kind/device/action/command, malformed UTF-8, an invalid key field, a non-finite float, the wrong exact byte length, or too many samples is rejected before reaching the native sink.
 
 ## Coordinate mapping
 

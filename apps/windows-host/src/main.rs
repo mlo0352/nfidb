@@ -143,6 +143,9 @@ fn main() -> Result<()> {
             PointerInjectorOptions {
                 pen_enabled: config.input.pen,
                 touch_enabled: config.input.touch,
+                mouse_enabled: config.input.mouse,
+                keyboard_enabled: config.input.keyboard,
+                gestures_enabled: config.input.gestures,
                 strict_palm_rejection: config.input.strict_palm_rejection,
             },
         )?))
@@ -181,6 +184,10 @@ fn main() -> Result<()> {
                 host_name,
                 mode: mode_name(config.mode).to_owned(),
                 mdns: config.network.mdns,
+                touch_default: config.input.touch,
+                mouse_enabled: config.input.mouse,
+                keyboard_enabled: config.input.keyboard,
+                gestures_default: config.input.gestures,
             },
             Arc::clone(&session),
             Arc::clone(&metrics),
@@ -640,6 +647,15 @@ impl HostApp {
                 .checkbox(&mut self.config.input.touch, "Forward touch contacts")
                 .changed();
             changed |= ui
+                .checkbox(&mut self.config.input.mouse, "Forward iPad trackpad/mouse")
+                .changed();
+            changed |= ui
+                .checkbox(&mut self.config.input.keyboard, "Forward keyboard and Unicode text")
+                .changed();
+            changed |= ui
+                .checkbox(&mut self.config.input.gestures, "Allow remote shortcut gestures")
+                .changed();
+            changed |= ui
                 .checkbox(&mut self.config.input.strict_palm_rejection, "Strict palm rejection")
                 .changed();
             if changed {
@@ -647,7 +663,7 @@ impl HostApp {
             }
             ui.add_space(8.0);
             ui.label(
-                egui::RichText::new("Keep touch disabled for the first Pencil pass. Enable it only when the drawing app needs canvas gestures.")
+                egui::RichText::new("With touch forwarding off, three-finger swipes control Windows apps. Trackpad and keyboard forwarding remain independent of Pencil input.")
                     .size(10.0)
                     .color(muted()),
             );
@@ -700,6 +716,23 @@ impl HostApp {
                             metrics.sample_sequence_gaps, metrics.out_of_order_samples, metrics.lifecycle_errors
                         ),
                     );
+                    diagnostic_row(
+                        ui,
+                        "Mouse / wheel",
+                        &format!(
+                            "{} pointer samples · {} wheel events",
+                            metrics.mouse_samples, metrics.wheel_events
+                        ),
+                    );
+                    diagnostic_row(
+                        ui,
+                        "Keyboard / text",
+                        &format!(
+                            "{} key events · {} text commits / {} bytes",
+                            metrics.keyboard_events, metrics.text_events, metrics.text_bytes
+                        ),
+                    );
+                    diagnostic_row(ui, "Shortcut gestures", &format!("{} commands", metrics.command_events));
                     diagnostic_row(
                         ui,
                         "Pressure range",
@@ -1083,6 +1116,9 @@ impl HostApp {
             injector.set_options(PointerInjectorOptions {
                 pen_enabled: self.config.input.pen,
                 touch_enabled: self.config.input.touch,
+                mouse_enabled: self.config.input.mouse,
+                keyboard_enabled: self.config.input.keyboard,
+                gestures_enabled: self.config.input.gestures,
                 strict_palm_rejection: self.config.input.strict_palm_rejection,
             });
         }

@@ -4,7 +4,6 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use nfidb_core::{EncodedVideoFrame, InputSink, KeyframeRequest, Metrics};
-use nfidb_protocol::PointerBatch;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, watch};
@@ -23,6 +22,8 @@ use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::track::track_local::TrackLocal;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
+
+use crate::process_input_packet;
 
 #[derive(Debug, Deserialize)]
 pub struct WebRtcOffer {
@@ -151,20 +152,7 @@ pub async fn accept_offer(
                     if message.is_string {
                         return;
                     }
-                    match PointerBatch::decode(&message.data) {
-                        Ok(batch) => {
-                            metrics.input_batch(&batch);
-                            let inject_started = Instant::now();
-                            match input.inject_batch(&batch) {
-                                Ok(()) => metrics.input_injected(batch.samples.len(), inject_started.elapsed()),
-                                Err(error) => {
-                                    metrics.input_error();
-                                    tracing::warn!(%error, "DataChannel pointer injection failed");
-                                }
-                            }
-                        }
-                        Err(error) => tracing::warn!(%error, "invalid DataChannel pointer packet"),
-                    }
+                    process_input_packet(input.as_ref(), metrics.as_ref(), &message.data, "datachannel");
                 })
             }));
             let close_input = Arc::clone(&input);

@@ -10,6 +10,9 @@
 - Local H.264 video over a peer-to-peer WebRTC connection.
 - Apple Pencil pressure, tilt, twist, buttons, and lifecycle samples from Safari Pointer Events.
 - Native Windows `PT_PEN` injection; optional `PT_TOUCH` injection is off by default.
+- iPad trackpad/mouse movement, buttons, and high-resolution horizontal/vertical scrolling.
+- Hardware-keyboard shortcuts plus Unicode text entry from the hardware or iPad software keyboard.
+- Three-finger app switching, Task View, and foreground-window minimize gestures while touch forwarding is off.
 - Fit, fill, and 1:1 coordinate mapping, including monitors with negative desktop coordinates.
 - Six-digit PIN or QR pairing, focus-aware credential rotation, one active browser, and input reset on disconnect.
 - mDNS-friendly and numeric-IP URLs, with automatic port fallback.
@@ -32,6 +35,14 @@ The first MVP mirrors one Windows monitor. It is not an extended-desktop display
 Nothing is installed on the iPad: the Windows host serves the complete browser client from the EXE. The Windows ZIP is portable and has only standard Windows DLL dependencies in the tested build. It is unsigned, so SmartScreen can warn, and Windows Firewall may ask once for Private-network access.
 
 Touch is deliberately disabled until enabled in both the host and browser. Use input-only mode when another screen-sharing system handles the picture, or display-only mode when you do not want remote input.
+
+## iPad mouse and keyboard
+
+Connect a trackpad/mouse and keyboard to the iPad, keep Safari in the foreground, and use the remote surface normally. Pointer motion is absolute to the displayed Windows monitor, mouse buttons and wheel gestures are forwarded, and Pencil remains a separate native pen device. With the keyboard panel closed, physical key-down/key-up events are sent to Windows so drawing-app hotkeys and held keys work. Open **Keyboard** on the iPad toolbar for layout-independent Unicode typing through the hardware or software keyboard, plus Esc/Tab/Backspace/Enter and Windows shortcut buttons.
+
+The hardware mappings are **Option → Alt**, **Control → Ctrl**, **Shift → Shift**, **Return → Enter**, and an unmodified **Delete → Backspace**. Option+Tab therefore sends Alt+Tab. Control+Option+Delete sends the Ctrl+Alt+Delete key sequence, but normal unsigned applications cannot invoke the protected Windows secure-attention screen; Windows discards synthetic Ctrl+Alt+Delete there.
+
+With browser **Touch off** and **Gestures on**, swipe three fingers right/left to move to the next/previous Windows app, up for Task View, and down to minimize the foreground window. Pencil contact temporarily suppresses finger shortcuts. Turning Touch on sends fingers as native Windows touch instead. iPadOS can consume system-reserved shortcuts before Safari receives them, so the on-screen shortcut buttons remain the deterministic fallback.
 
 If a PIN/QR has expired or Safari shows a stale-session error, use **Session → Reset PIN + QR**. This immediately invalidates the old browser session, releases injected contacts, closes its peer connection, and redraws both credentials. An expired unpaired code also rotates automatically while the desktop app is focused.
 
@@ -80,7 +91,7 @@ pointer-sink --stress-test --samples 14400 --rate 240 --batch-size 4
 
 Run `nfidb --diagnostics` to open the diagnostic page directly, or select **DIAGNOSTICS** in the left sidebar. For a real-iPad test, reset the recording, connect in Safari, enable **Stats**, draw and move desktop content for at least 60 seconds, then export the detailed JSON. The report contains the raw one-second samples and processed count/min/mean/p50/p95/p99/max distributions; it is written under `%APPDATA%\NFiDB\diagnostics\` and never uploaded.
 
-The live iPad panel separates network RTT/bandwidth, decoder and presentation rate, RTP loss, jitter-buffer/decode cost, frame gaps, startup-to-first-frame, estimated pipeline delay, input continuity, pressure/tilt, and browser/host buffering. Safari supplies exact capture-to-presentation timing only when its WebRTC frame metadata exposes it; otherwise NFiDB labels and uses a component estimate. Exact Pencil-contact-to-Windows-photon latency still requires a synchronized high-speed camera.
+The live iPad panel separates network RTT/bandwidth, decoder and presentation rate, RTP loss, jitter-buffer/decode cost, frame gaps, startup-to-first-frame, estimated pipeline delay, input continuity, pressure/tilt, mouse/wheel/key/text/gesture counters, and browser/host buffering. Safari supplies exact capture-to-presentation timing only when its WebRTC frame metadata exposes it; otherwise NFiDB labels and uses a component estimate. Exact Pencil-contact-to-Windows-photon latency still requires a synchronized high-speed camera.
 
 The host stores user settings in `%APPDATA%\NFiDB\config.toml`. Full flags are available with `nfidb --help`; release builds normally launch as a GUI application. The measured release-mode resolution and frame-rate envelope is published in [Performance notes](docs/PERFORMANCE.md).
 

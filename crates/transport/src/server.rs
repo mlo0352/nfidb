@@ -1,7 +1,7 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -13,7 +13,6 @@ use axum::{Json, Router};
 use futures_util::{SinkExt, StreamExt};
 use mdns_sd::{ServiceDaemon, ServiceInfo};
 use nfidb_core::{EncodedVideoFrame, InputSink, KeyframeRequest, Metrics, SessionManager};
-use nfidb_protocol::PointerBatch;
 use parking_lot::Mutex;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
@@ -24,6 +23,7 @@ use tower_http::trace::TraceLayer;
 use crate::diagnostics::{
     ClientDiagnosticSample, DiagnosticRecorder, DiagnosticReport, DiagnosticSummary, RecordedDiagnosticSample,
 };
+use crate::process_input_packet;
 use crate::webrtc_session::{ActivePeer, WebRtcOffer, accept_offer};
 
 #[derive(RustEmbed)]
@@ -36,6 +36,10 @@ pub struct ServerOptions {
     pub host_name: String,
     pub mode: String,
     pub mdns: bool,
+    pub touch_default: bool,
+    pub mouse_enabled: bool,
+    pub keyboard_enabled: bool,
+    pub gestures_default: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -334,6 +338,9 @@ struct StatusResponse {
     protocol_version: u8,
     webrtc: bool,
     touch_default: bool,
+    mouse_enabled: bool,
+    keyboard_enabled: bool,
+    gestures_default: bool,
 }
 
 async fn status(State(state): State<Arc<AppState>>) -> Json<StatusResponse> {
@@ -343,7 +350,10 @@ async fn status(State(state): State<Arc<AppState>>) -> Json<StatusResponse> {
             .public(state.options.host_name.clone(), state.options.mode.clone()),
         protocol_version: nfidb_protocol::PROTOCOL_VERSION,
         webrtc: true,
-        touch_default: false,
+        touch_default: state.options.touch_default,
+        mouse_enabled: state.options.mouse_enabled,
+        keyboard_enabled: state.options.keyboard_enabled,
+        gestures_default: state.options.gestures_default,
     })
 }
 
@@ -460,7 +470,9 @@ async fn websocket_loop(socket: WebSocket, state: Arc<AppState>) {
         tokio::select! {
             message = receiver.next() => {
                 match message {
-                    Some(Ok(Message::Binary(bytes))) => process_input(&state, &bytes),
+                    Some(Ok(Message::Binary(bytes))) => {
+                        process_input_packet(state.input.as_ref(), state.metrics.as_ref(), &bytes, "websocket");
+                    }
                     Some(Ok(Message::Text(text))) => {
                         if text.len() <= 64 * 1024
                             && let Ok(message) = serde_json::from_str::<ClientControlMessage>(&text)
@@ -502,25 +514,6 @@ async fn websocket_loop(socket: WebSocket, state: Arc<AppState>) {
         }
     }
     let _ = state.input.reset_all();
-}
-
-fn process_input(state: &AppState, bytes: &[u8]) {
-    match PointerBatch::decode(bytes) {
-        Ok(batch) => {
-            state.metrics.input_batch(&batch);
-            let inject_started = Instant::now();
-            match state.input.inject_batch(&batch) {
-                Ok(()) => state
-                    .metrics
-                    .input_injected(batch.samples.len(), inject_started.elapsed()),
-                Err(error) => {
-                    state.metrics.input_error();
-                    tracing::warn!(%error, "pointer injection failed");
-                }
-            }
-        }
-        Err(error) => tracing::warn!(%error, "discarded invalid pointer packet"),
-    }
 }
 
 #[derive(Deserialize)]

@@ -121,7 +121,10 @@ export class PointerEngine {
   };
 
   private readonly handlePointer = (event: PointerEvent): void => {
-    if (this.disposed || (event.pointerType !== "pen" && event.pointerType !== "touch")) {
+    if (
+      this.disposed ||
+      (event.pointerType !== "pen" && event.pointerType !== "touch" && event.pointerType !== "mouse")
+    ) {
       return;
     }
     if (this.interruptedPointers.has(event.pointerId)) {
@@ -171,7 +174,7 @@ export class PointerEngine {
         for (const sample of samples.slice(1)) {
           sample.action = PointerAction.Move;
         }
-        this.activePointers.set(event.pointerId, event.pointerType === "pen" ? DeviceType.Pen : DeviceType.Touch);
+        this.activePointers.set(event.pointerId, deviceTypeFor(event.pointerType));
         try {
           this.overlay.setPointerCapture(event.pointerId);
         } catch {
@@ -199,7 +202,9 @@ export class PointerEngine {
     }
     this.eventCounter += 1;
     this.emitTelemetry(event, coalesced.length);
-    this.drawPrediction(extended);
+    if (event.pointerType === "pen") {
+      this.drawPrediction(extended);
+    }
 
     if (event.type === "pointerup" || event.type === "pointercancel") {
       this.activePointers.delete(event.pointerId);
@@ -225,7 +230,7 @@ export class PointerEngine {
     if (!point) {
       return null;
     }
-    const deviceType: DeviceTypeValue = event.pointerType === "pen" ? DeviceType.Pen : DeviceType.Touch;
+    const deviceType = deviceTypeFor(event.pointerType);
     return {
       deviceType,
       action: actionFor(sourceType, event),
@@ -324,8 +329,20 @@ function actionFor(sourceType: string, event: PointerEvent): PointerActionValue 
     case "pointercancel":
       return PointerAction.Cancel;
     default:
-      return event.pointerType === "pen" && event.pressure === 0 && event.buttons === 0
+      return (event.pointerType === "pen" || event.pointerType === "mouse") &&
+        event.pressure === 0 &&
+        event.buttons === 0
         ? PointerAction.Hover
         : PointerAction.Move;
   }
+}
+
+function deviceTypeFor(pointerType: string): DeviceTypeValue {
+  if (pointerType === "pen") {
+    return DeviceType.Pen;
+  }
+  if (pointerType === "mouse") {
+    return DeviceType.Mouse;
+  }
+  return DeviceType.Touch;
 }

@@ -31,6 +31,59 @@ test("sustains coalesced pressure/tilt input while receiving integrity-checked H
   await expect(page.locator("#connectionState")).toContainText("Connected locally", { timeout: 20_000 });
   await expect.poll(() => page.locator("video").evaluate((video) => video.videoWidth), { timeout: 30_000 }).toBeGreaterThan(0);
 
+  const remoteBefore = await snapshot(page);
+  const overlayBounds = await page.locator("#interactionOverlay").boundingBox();
+  expect(overlayBounds).not.toBeNull();
+  await page.mouse.move(overlayBounds!.x + overlayBounds!.width / 2, overlayBounds!.y + overlayBounds!.height / 2);
+  await page.mouse.down();
+  await page.mouse.up();
+  await page.mouse.wheel(8, 120);
+  await page.keyboard.down("Alt");
+  await page.keyboard.press("Tab");
+  await page.keyboard.up("Alt");
+  await page.locator("#keyboardButton").click();
+  await page.locator("#remoteTextInput").fill("NFiDB remote text");
+  await page.locator("#keyboardClose").click();
+  if ((await page.locator("#touchButton").getAttribute("aria-pressed")) === "true") {
+    await page.locator("#touchButton").click();
+  }
+  if ((await page.locator("#gestureButton").getAttribute("aria-pressed")) !== "true") {
+    await page.locator("#gestureButton").click();
+  }
+  await page.evaluate(() => {
+    const overlay = document.querySelector<HTMLCanvasElement>("#interactionOverlay")!;
+    const bounds = overlay.getBoundingClientRect();
+    const touch = (type: string, pointerId: number, x: number, y: number) =>
+      overlay.dispatchEvent(new PointerEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        pointerType: "touch",
+        pointerId,
+        clientX: bounds.left + x,
+        clientY: bounds.top + y,
+      }));
+    for (let id = 1; id <= 3; id += 1) touch("pointerdown", id, bounds.width * 0.4, bounds.height * 0.5);
+    for (let id = 1; id <= 3; id += 1) touch("pointermove", id, bounds.width * 0.55, bounds.height * 0.5);
+    for (let id = 1; id <= 3; id += 1) touch("pointerup", id, bounds.width * 0.55, bounds.height * 0.5);
+  });
+  await expect.poll(async () => Number((await snapshot(page)).host.mouse_samples), { timeout: 10_000 })
+    .toBeGreaterThan(Number(remoteBefore.host.mouse_samples));
+  await expect.poll(async () => Number((await snapshot(page)).host.wheel_events), { timeout: 10_000 })
+    .toBeGreaterThan(Number(remoteBefore.host.wheel_events));
+  await expect.poll(async () => Number((await snapshot(page)).host.keyboard_events), { timeout: 10_000 })
+    .toBeGreaterThan(Number(remoteBefore.host.keyboard_events));
+  await expect.poll(async () => Number((await snapshot(page)).host.text_events), { timeout: 10_000 })
+    .toBeGreaterThan(Number(remoteBefore.host.text_events));
+  await expect.poll(async () => Number((await snapshot(page)).host.command_events), { timeout: 10_000 })
+    .toBeGreaterThan(Number(remoteBefore.host.command_events));
+  const remoteAfter = await snapshot(page);
+  expect(Number(remoteAfter.host.mouse_samples) - Number(remoteBefore.host.mouse_samples)).toBe(3);
+  expect(Number(remoteAfter.host.wheel_events) - Number(remoteBefore.host.wheel_events)).toBe(1);
+  expect(Number(remoteAfter.host.keyboard_events) - Number(remoteBefore.host.keyboard_events)).toBe(4);
+  expect(Number(remoteAfter.host.text_events) - Number(remoteBefore.host.text_events)).toBe(1);
+  expect(Number(remoteAfter.host.text_bytes) - Number(remoteBefore.host.text_bytes)).toBe(17);
+  expect(Number(remoteAfter.host.command_events) - Number(remoteBefore.host.command_events)).toBe(1);
+
   const before = await snapshot(page);
   expect(before.peerConnectionState).toBe("connected");
   expect(before.video.startupMs).not.toBeNull();
@@ -170,7 +223,13 @@ test("sustains coalesced pressure/tilt input while receiving integrity-checked H
     writeFileSync(process.env.NFIDB_E2E_REPORT, JSON.stringify(report, null, 2));
   }
   expect(Number(after.host.injected_samples) - Number(before.host.injected_samples)).toBe(expectedSamples);
-  expect(after.host.input_samples).toBe(after.host.injected_samples);
+  expect(after.host.injected_samples).toBe(
+    Number(after.host.input_samples) +
+      Number(after.host.wheel_events) +
+      Number(after.host.keyboard_events) +
+      Number(after.host.text_events) +
+      Number(after.host.command_events),
+  );
   expect(after.host.batch_sequence_gaps).toBe(0);
   expect(after.host.sample_sequence_gaps).toBe(0);
   expect(after.host.out_of_order_batches).toBe(0);

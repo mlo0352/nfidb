@@ -27,7 +27,8 @@ body,
 }
 
 button,
-input { font: inherit; }
+input,
+textarea { font: inherit; }
 
 button { -webkit-tap-highlight-color: transparent; }
 
@@ -156,6 +157,47 @@ button { -webkit-tap-highlight-color: transparent; }
 .stats-panel b { color: #dbe1df; font-size: 0.67rem; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
 .toolbar-reveal { position: absolute; z-index: 3; top: 0; left: 50%; width: 90px; height: 22px; transform: translateX(-50%); border: 0; border-radius: 0 0 10px 10px; background: rgba(91, 224, 194, 0.18); opacity: 0.45; }
 
+.keyboard-panel {
+  position: absolute;
+  z-index: 7;
+  left: max(12px, env(safe-area-inset-left));
+  right: max(12px, env(safe-area-inset-right));
+  bottom: max(12px, env(safe-area-inset-bottom));
+  padding: 12px;
+  border: 1px solid #36514c;
+  background: rgba(9, 13, 14, 0.97);
+  box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.42);
+}
+.keyboard-panel-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 9px; }
+.keyboard-panel-header > div { display: grid; gap: 3px; }
+.keyboard-panel-header b { color: var(--accent); font-size: 0.64rem; letter-spacing: 0.12em; }
+.keyboard-panel-header small { color: var(--muted); font-size: 0.66rem; }
+#remoteTextInput {
+  display: block;
+  width: 100%;
+  min-height: 52px;
+  resize: none;
+  padding: 10px 12px;
+  border: 1px solid #344342;
+  border-radius: 2px;
+  outline: none;
+  color: #eef4f2;
+  background: #070a0b;
+  font-size: 0.9rem;
+}
+#remoteTextInput:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(91, 224, 194, 0.1); }
+.remote-key-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.remote-key-row button {
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  color: #c5cecc;
+  background: #111718;
+  font-size: 0.68rem;
+}
+.remote-key-row button:active { border-color: var(--accent); color: var(--accent); background: #10231f; }
+.keyboard-panel > p { margin: 8px 0 0; color: #73817f; font-size: 0.62rem; line-height: 1.45; }
+
 .diagnostics-page { min-height: 100%; overflow: auto; padding: 24px; background: #090b0c; }
 .diagnostics-page header { max-width: 1300px; margin: 0 auto 22px; display: flex; align-items: center; gap: 24px; }
 .diagnostics-page header h1 { margin: 3px 0 0; font-size: 1.25rem; }
@@ -180,6 +222,8 @@ button { -webkit-tap-highlight-color: transparent; }
   .toolbar-brand small { display: none; }
   .segmented { display: none; }
   .tool-button { padding: 0 8px; }
+  .toolbar-actions { gap: 4px; }
+  .keyboard-panel-header small { display: none; }
   .diagnostic-grid { height: auto; grid-template-columns: 1fr; }
   .diagnostic-surface-wrap { min-height: 55vh; border-right: 0; border-bottom: 1px solid var(--line); }
 }

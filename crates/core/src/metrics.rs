@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use nfidb_protocol::{Action, PointerBatch};
+use nfidb_protocol::{Action, DeviceType, PointerBatch, TextInput};
 use parking_lot::Mutex;
 use serde::Serialize;
 
@@ -88,6 +88,12 @@ pub struct Metrics {
     input_samples: AtomicU64,
     injected_samples: AtomicU64,
     input_errors: AtomicU64,
+    mouse_samples: AtomicU64,
+    wheel_events: AtomicU64,
+    keyboard_events: AtomicU64,
+    text_events: AtomicU64,
+    text_bytes: AtomicU64,
+    command_events: AtomicU64,
     client_clock_offset_bits: AtomicU64,
     input_arrival_micros: AtomicU64,
     input_arrival_micros_total: AtomicU64,
@@ -184,6 +190,9 @@ impl Metrics {
             &self.out_of_order_batches,
         );
         for sample in &batch.samples {
+            if sample.device_type == DeviceType::Mouse {
+                self.mouse_samples.fetch_add(1, Ordering::Relaxed);
+            }
             observe_sequence(
                 &mut state.expected_sample,
                 sample.sample_sequence,
@@ -193,18 +202,20 @@ impl Metrics {
             self.last_sample_sequence
                 .store(sample.sample_sequence, Ordering::Relaxed);
             let sample = sample.sanitized();
-            self.last_pressure_bits
-                .store(sample.pressure.to_bits(), Ordering::Relaxed);
-            self.last_tilt_x_bits
-                .store(sample.tilt_x_deg.to_bits(), Ordering::Relaxed);
-            self.last_tilt_y_bits
-                .store(sample.tilt_y_deg.to_bits(), Ordering::Relaxed);
-            state.pressure_min = state.pressure_min.min(sample.pressure);
-            state.pressure_max = state.pressure_max.max(sample.pressure);
-            state.tilt_x_min = state.tilt_x_min.min(sample.tilt_x_deg);
-            state.tilt_x_max = state.tilt_x_max.max(sample.tilt_x_deg);
-            state.tilt_y_min = state.tilt_y_min.min(sample.tilt_y_deg);
-            state.tilt_y_max = state.tilt_y_max.max(sample.tilt_y_deg);
+            if sample.device_type == DeviceType::Pen {
+                self.last_pressure_bits
+                    .store(sample.pressure.to_bits(), Ordering::Relaxed);
+                self.last_tilt_x_bits
+                    .store(sample.tilt_x_deg.to_bits(), Ordering::Relaxed);
+                self.last_tilt_y_bits
+                    .store(sample.tilt_y_deg.to_bits(), Ordering::Relaxed);
+                state.pressure_min = state.pressure_min.min(sample.pressure);
+                state.pressure_max = state.pressure_max.max(sample.pressure);
+                state.tilt_x_min = state.tilt_x_min.min(sample.tilt_x_deg);
+                state.tilt_x_max = state.tilt_x_max.max(sample.tilt_x_deg);
+                state.tilt_y_min = state.tilt_y_min.min(sample.tilt_y_deg);
+                state.tilt_y_max = state.tilt_y_max.max(sample.tilt_y_deg);
+            }
 
             let key = (sample.device_type as u8, sample.pointer_id);
             match sample.action {
@@ -239,6 +250,23 @@ impl Metrics {
 
     pub fn input_error(&self) {
         self.input_errors.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn wheel_input(&self) {
+        self.wheel_events.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn keyboard_input(&self) {
+        self.keyboard_events.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn text_input(&self, input: &TextInput) {
+        self.text_events.fetch_add(1, Ordering::Relaxed);
+        self.text_bytes.fetch_add(input.text.len() as u64, Ordering::Relaxed);
+    }
+
+    pub fn command_input(&self) {
+        self.command_events.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn reset_input_continuity(&self) {
@@ -321,6 +349,12 @@ impl Metrics {
             input_samples,
             injected_samples: self.injected_samples.load(Ordering::Relaxed),
             input_errors: self.input_errors.load(Ordering::Relaxed),
+            mouse_samples: self.mouse_samples.load(Ordering::Relaxed),
+            wheel_events: self.wheel_events.load(Ordering::Relaxed),
+            keyboard_events: self.keyboard_events.load(Ordering::Relaxed),
+            text_events: self.text_events.load(Ordering::Relaxed),
+            text_bytes: self.text_bytes.load(Ordering::Relaxed),
+            command_events: self.command_events.load(Ordering::Relaxed),
             client_clock_offset_ms: f64::from_bits(self.client_clock_offset_bits.load(Ordering::Relaxed)),
             input_arrival_ms: self.input_arrival_micros.load(Ordering::Relaxed) as f64 / 1000.0,
             average_input_arrival_ms: average_micros(
@@ -409,6 +443,12 @@ pub struct MetricsSnapshot {
     pub input_samples: u64,
     pub injected_samples: u64,
     pub input_errors: u64,
+    pub mouse_samples: u64,
+    pub wheel_events: u64,
+    pub keyboard_events: u64,
+    pub text_events: u64,
+    pub text_bytes: u64,
+    pub command_events: u64,
     pub client_clock_offset_ms: f64,
     pub input_arrival_ms: f64,
     pub average_input_arrival_ms: f64,

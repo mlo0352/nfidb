@@ -2,6 +2,8 @@ import { disconnect, getDiagnosticSummary, getMetrics, getStatus, pairWithPin, p
 import type { FitMode } from "./geometry";
 import { normalizePinEntry } from "./pin-entry";
 import { PointerEngine } from "./pointer-engine";
+import { RemoteInputEngine } from "./remote-input";
+import { RemoteCommand, type RemoteCommandValue } from "./protocol";
 
 declare const __NFIDB_CLIENT_VERSION__: string;
 
@@ -80,10 +82,12 @@ export class NfidbApp {
   private channel: RTCDataChannel | null = null;
   private socket: WebSocket | null = null;
   private pointerEngine: PointerEngine | null = null;
+  private remoteInputEngine: RemoteInputEngine | null = null;
   private inputTransport: InputTransport | null = null;
   private readonly pendingInput: ArrayBuffer[] = [];
   private fitMode: FitMode = "fit";
   private touchEnabled = false;
+  private gesturesEnabled = true;
   private metrics: HostMetrics | null = null;
   private hideToolbarTimer = 0;
   private videoTrackAtMs = 0;
@@ -114,6 +118,7 @@ export class NfidbApp {
     try {
       this.status = await getStatus();
       this.touchEnabled = this.status.touch_default;
+      this.gesturesEnabled = this.status.gestures_default;
       const qrSecret = new URLSearchParams(location.search).get("qr");
       if (qrSecret) {
         history.replaceState(null, "", location.pathname);
@@ -255,6 +260,8 @@ export class NfidbApp {
               <button data-fit="fit" class="active">Fit</button><button data-fit="fill">Fill</button><button data-fit="one-to-one">1:1</button>
             </div>
             <button id="touchButton" class="tool-button" aria-pressed="false">Touch off</button>
+            <button id="gestureButton" class="tool-button" aria-pressed="true">Gestures on</button>
+            <button id="keyboardButton" class="tool-button" aria-pressed="false">Keyboard</button>
             <button id="statsButton" class="tool-button" aria-pressed="false">Stats</button>
             <button id="fullscreenButton" class="icon-button" aria-label="Fullscreen">⛶</button>
             <button id="disconnectButton" class="icon-button danger" aria-label="Disconnect">×</button>
@@ -267,9 +274,29 @@ export class NfidbApp {
           <div><span>PIPELINE</span><b id="pipelineStats">Waiting…</b></div>
           <div><span>PENCIL</span><b id="pencilStats">Waiting…</b></div>
           <div><span>PRESSURE / TILT</span><b id="pressureStats">0.00 · 0° / 0°</b></div>
+          <div><span>REMOTE INPUT</span><b id="remoteInputStats">Waiting…</b></div>
           <div><span>INTEGRITY</span><b id="integrityStats">Waiting…</b></div>
           <div><span>RECORDER</span><b id="recorderStats">Starting…</b></div>
         </aside>
+        <section id="keyboardPanel" class="keyboard-panel" hidden aria-label="Remote keyboard">
+          <div class="keyboard-panel-header">
+            <div><b>TYPE ON WINDOWS</b><small>Option = Alt · Control = Ctrl · Return = Enter · Delete = Backspace</small></div>
+            <button id="keyboardClose" class="icon-button" aria-label="Close keyboard">×</button>
+          </div>
+          <textarea id="remoteTextInput" rows="2" inputmode="text" enterkeyhint="enter" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Tap here to use the iPad keyboard…"></textarea>
+          <div class="remote-key-row" aria-label="Special keys">
+            <button data-remote-key="Escape" data-key-label="Escape">Esc</button>
+            <button data-remote-key="Tab" data-key-label="Tab">Tab</button>
+            <button data-remote-key="Backspace" data-key-label="Backspace">⌫</button>
+            <button data-remote-key="Enter" data-key-label="Enter">Enter</button>
+            <button data-remote-command="${RemoteCommand.AppPrevious}">Alt+Shift+Tab</button>
+            <button data-remote-command="${RemoteCommand.AppNext}">Alt+Tab</button>
+            <button data-remote-command="${RemoteCommand.TaskView}">Task view</button>
+            <button data-remote-command="${RemoteCommand.MinimizeForeground}">Minimize</button>
+            <button id="secureAttentionButton">Ctrl+Alt+Del</button>
+          </div>
+          <p>Three fingers: swipe left/right to switch apps, up for Task View, down to minimize. Windows blocks synthetic Ctrl+Alt+Del on its secure screen.</p>
+        </section>
         <button id="toolbarReveal" class="toolbar-reveal" aria-label="Show controls"></button>
       </main>`;
     const overlay = this.requiredElement<HTMLCanvasElement>("interactionOverlay");
@@ -281,16 +308,42 @@ export class NfidbApp {
     };
     resize();
     window.addEventListener("resize", resize, { passive: true });
+    const inputEnabled = this.status?.mode !== "display-only";
+    this.remoteInputEngine = new RemoteInputEngine({
+      overlay,
+      video,
+      send: (packet) => this.sendInput(packet),
+      getFitMode: () => this.fitMode,
+      getTouchEnabled: () => this.touchEnabled,
+      getGesturesEnabled: () => this.gesturesEnabled,
+      inputEnabled,
+      onNotice: (message) => this.showNotice(message),
+    });
+    this.remoteInputEngine.attachTextInput(this.requiredElement<HTMLTextAreaElement>("remoteTextInput"));
     this.pointerEngine = new PointerEngine({
       overlay,
       video,
       send: (packet) => this.sendInput(packet),
       getFitMode: () => this.fitMode,
       getTouchEnabled: () => this.touchEnabled,
-      inputEnabled: this.status?.mode !== "display-only",
+      inputEnabled,
     });
     this.bindSurfaceControls();
+    this.updateRemoteControlAvailability();
     this.scheduleToolbarHide();
+  }
+
+  private updateRemoteControlAvailability(): void {
+    const touchButton = this.requiredElement<HTMLButtonElement>("touchButton");
+    touchButton.textContent = this.touchEnabled ? "Touch on" : "Touch off";
+    touchButton.setAttribute("aria-pressed", String(this.touchEnabled));
+    const gestureButton = this.requiredElement<HTMLButtonElement>("gestureButton");
+    gestureButton.disabled = this.touchEnabled;
+    gestureButton.textContent = this.touchEnabled ? "Gestures paused" : this.gesturesEnabled ? "Gestures on" : "Gestures off";
+    gestureButton.setAttribute("aria-pressed", String(this.gesturesEnabled));
+    const keyboardButton = this.requiredElement<HTMLButtonElement>("keyboardButton");
+    keyboardButton.disabled = this.status?.keyboard_enabled === false;
+    keyboardButton.title = keyboardButton.disabled ? "Keyboard forwarding is disabled on Windows" : "Open remote keyboard";
   }
 
   private markFirstVideoFrame(): void {
@@ -353,7 +406,56 @@ export class NfidbApp {
       const button = this.requiredElement<HTMLButtonElement>("touchButton");
       button.textContent = this.touchEnabled ? "Touch on" : "Touch off";
       button.setAttribute("aria-pressed", String(this.touchEnabled));
+      const gestureButton = this.requiredElement<HTMLButtonElement>("gestureButton");
+      gestureButton.disabled = this.touchEnabled;
+      gestureButton.textContent = this.touchEnabled ? "Gestures paused" : this.gesturesEnabled ? "Gestures on" : "Gestures off";
       this.scheduleToolbarHide();
+    });
+    this.requiredElement("gestureButton").addEventListener("click", () => {
+      this.gesturesEnabled = !this.gesturesEnabled;
+      const button = this.requiredElement<HTMLButtonElement>("gestureButton");
+      button.textContent = this.gesturesEnabled ? "Gestures on" : "Gestures off";
+      button.setAttribute("aria-pressed", String(this.gesturesEnabled));
+      this.scheduleToolbarHide();
+    });
+    this.requiredElement("keyboardButton").addEventListener("click", () => {
+      const panel = this.requiredElement<HTMLElement>("keyboardPanel");
+      panel.hidden = !panel.hidden;
+      this.requiredElement("keyboardButton").setAttribute("aria-pressed", String(!panel.hidden));
+      if (!panel.hidden) {
+        this.remoteInputEngine?.focusTextInput();
+      }
+      this.scheduleToolbarHide();
+    });
+    this.requiredElement("keyboardClose").addEventListener("click", () => {
+      this.requiredElement<HTMLElement>("keyboardPanel").hidden = true;
+      this.requiredElement("keyboardButton").setAttribute("aria-pressed", "false");
+      this.scheduleToolbarHide();
+    });
+    for (const button of this.root.querySelectorAll<HTMLButtonElement>("[data-remote-key]")) {
+      button.addEventListener("click", () => {
+        const code = button.dataset.remoteKey;
+        if (code) {
+          this.remoteInputEngine?.tapKey(code, button.dataset.keyLabel ?? code);
+          this.remoteInputEngine?.focusTextInput();
+        }
+      });
+    }
+    for (const button of this.root.querySelectorAll<HTMLButtonElement>("[data-remote-command]")) {
+      button.addEventListener("click", () => {
+        const command = Number(button.dataset.remoteCommand) as RemoteCommandValue;
+        this.remoteInputEngine?.sendCommand(command);
+        this.remoteInputEngine?.focusTextInput();
+      });
+    }
+    this.requiredElement("secureAttentionButton").addEventListener("click", () => {
+      this.remoteInputEngine?.sendChord([
+        { code: "ControlLeft", key: "Control" },
+        { code: "AltLeft", key: "Alt" },
+        { code: "Delete", key: "Delete" },
+      ]);
+      this.showNotice("Ctrl+Alt+Delete was forwarded; Windows blocks synthetic input on the secure screen.");
+      this.remoteInputEngine?.focusTextInput();
     });
     this.requiredElement("statsButton").addEventListener("click", () => {
       const panel = this.requiredElement<HTMLElement>("statsPanel");
@@ -419,7 +521,8 @@ export class NfidbApp {
       } else {
         this.pendingInput.length = 0;
         this.pointerEngine?.abandonAll();
-        this.showNotice("Input transport is unavailable. Lift the Pencil and reconnect before drawing.");
+        this.remoteInputEngine?.abandonAll();
+        this.showNotice("Input transport is unavailable. Release all input and reconnect before continuing.");
       }
     }
   }
@@ -448,7 +551,8 @@ export class NfidbApp {
     this.inputTransport = null;
     this.pendingInput.length = 0;
     this.pointerEngine?.abandonAll();
-    this.showNotice("Input transport changed. Lift the Pencil once before continuing.");
+    this.remoteInputEngine?.abandonAll();
+    this.showNotice("Input transport changed. Release Pencil, mouse buttons, and keys before continuing.");
   }
 
   private handleControlMessage(data: unknown): void {
@@ -779,6 +883,7 @@ export class NfidbApp {
     } else if (state === "failed" || state === "closed") {
       this.state = "input-only";
       this.pointerEngine?.cancelAll();
+      this.remoteInputEngine?.resetRemoteInput();
     }
     this.updateHud();
   }
@@ -824,6 +929,10 @@ export class NfidbApp {
     this.setText("pencilStats", `${metrics.input_samples_per_sec.toFixed(0)} samples/s · ${metrics.input_arrival_ms.toFixed(2)} ms arrival estimate · ${metrics.input_inject_ms.toFixed(3)} ms inject · ${metrics.input_samples} total`);
     this.setText("pressureStats", `${metrics.pressure.toFixed(2)} · ${metrics.tilt_x.toFixed(0)}° / ${metrics.tilt_y.toFixed(0)}°`);
     this.setText(
+      "remoteInputStats",
+      `${metrics.mouse_samples} mouse · ${metrics.wheel_events} wheel · ${metrics.keyboard_events} keys · ${metrics.text_events} text · ${metrics.command_events} gestures`,
+    );
+    this.setText(
       "integrityStats",
       `${metrics.sample_sequence_gaps} input gaps · ${metrics.input_errors} input errors · ${metrics.video_transport_drops} video transport skips · ${metrics.dropped_frames} stale captures`,
     );
@@ -861,7 +970,10 @@ export class NfidbApp {
     window.clearTimeout(this.hideToolbarTimer);
     this.requiredElement("toolbar").classList.add("visible");
     this.hideToolbarTimer = window.setTimeout(() => {
-      if (this.root.querySelector<HTMLElement>("#statsPanel")?.hidden !== false) {
+      if (
+        this.root.querySelector<HTMLElement>("#statsPanel")?.hidden !== false &&
+        this.root.querySelector<HTMLElement>("#keyboardPanel")?.hidden !== false
+      ) {
         this.root.querySelector("#toolbar")?.classList.remove("visible");
       }
     }, 2400);
@@ -871,6 +983,8 @@ export class NfidbApp {
     this.stopDiagnosticRecording();
     this.pointerEngine?.cancelAll();
     this.pointerEngine?.dispose();
+    this.remoteInputEngine?.resetRemoteInput();
+    this.remoteInputEngine?.dispose();
     this.channel?.close();
     this.peer?.close();
     this.socket?.close();

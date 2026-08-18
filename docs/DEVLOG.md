@@ -262,3 +262,23 @@ Entering or pasting the sixth PIN digit now submits immediately. The client keep
 ### Decision
 
 Keep PIN entry one-step: the sixth digit is explicit enough to begin a local pairing check, while QR pairing remains zero-entry.
+
+## 2026-08-18 — iPad trackpad, keyboard, and finger shortcuts
+
+### Goal
+
+Let an iPad trackpad/keyboard control the Windows target without compromising Pencil semantics, and turn otherwise-idle finger input into deliberate Windows app gestures.
+
+### Implementation
+
+Extended protocol version 1 with strictly bounded wheel, key-transition, committed UTF-8 text, and semantic-command messages. Safari forwards physical trackpad hover/drag/buttons and wheel deltas; hardware shortcuts retain down/up ordering; printable hardware, software-keyboard, paste, and IME commits use Windows Unicode injection. Option maps to Alt, Control to Ctrl, Shift to Shift, Return to Enter, and unmodified Delete to Backspace. Control+Option+Delete sends the Windows Delete chord while retaining Windows' protected secure-attention boundary.
+
+With native touch forwarding off, a dedicated three-finger recognizer sends next/previous app, Task View, or minimize commands. Active Pencil contact suppresses these gestures. Browser blur/background, transport replacement, disconnect, credential rotation, and host shutdown release held buttons, keys, and contacts. Diagnostics count message categories and text bytes without recording typed content.
+
+### Evidence
+
+Strict TypeScript, 22 browser tests, Rust formatting/check/Clippy, and 25 Rust tests pass. Two real-host WebRTC comparisons each delivered 1,202/1,202 sustained Pencil samples near 240 samples/s while independently verifying three mouse samples, one wheel event, four Option+Tab transitions, one 17-byte Unicode commit, and one semantic command. Both had zero input errors, sequence/lifecycle gaps, ordering faults, buffer growth, RTP loss, decoder drops, freezes, integrity mismatches, or transport drops.
+
+### Decision
+
+Keep secure-attention behavior explicit rather than claiming synthetic Ctrl+Alt+Delete can cross Windows' security desktop. Retain on-screen shortcut buttons because iPadOS can reserve hardware shortcuts before Safari. Physical iPad trackpad, keyboard-layout/IME, and gesture arbitration remain required field tests before declaring the feature stable.
