@@ -1,6 +1,6 @@
 # Test matrix
 
-Last updated: 2026-08-18. Development host: Windows 11 Pro x64 build 22631, Intel Core i9-13900K, Rust 1.97.1 (`x86_64-pc-windows-msvc`), Node 22.22.3, npm 10.9.8, Microsoft Edge headless. Profile/soak results are release `0.2.0`; startup, diagnostics, credential rotation, navigation, browser-upgrade, and physical regressions are the `0.3.1`/`0.3.2` candidates unless stated otherwise.
+Last updated: 2026-08-18. Development host: Windows 11 Pro x64 build 22631, Intel Core i9-13900K, Rust 1.97.1 (`x86_64-pc-windows-msvc`), Node 22.22.3, npm 10.9.8, Microsoft Edge headless. Profile/soak results are release `0.2.0`; startup, diagnostics, credential rotation, navigation, browser-upgrade, and physical regressions are the `0.3.1`–`0.3.3` candidates unless stated otherwise.
 
 | Layer | Test | Result | Evidence |
 | --- | --- | --- | --- |
@@ -8,15 +8,16 @@ Last updated: 2026-08-18. Development host: Windows 11 Pro x64 build 22631, Inte
 | Mapping | fit/fill/1:1 and negative-origin target coordinates | PASS | Rust plus 3 TypeScript geometry tests |
 | Sessions/config | PIN, QR, invalid credential, disconnect, rotation/invalidation, TOML round trip | PASS | Core unit tests plus live reset/reconnect path |
 | Browser coalescing | Use coalesced samples exactly once and in chronological order | PASS | Exact binary packet test with pressure, tilt, twist, coordinates, and sequences |
+| Browser lifecycle | Preserve exactly one primary Down/Up across fit letterboxes and unusual coalesced/duplicate events | PASS | Deterministic edge-entry, edge-exit, duplicate-Down, and coalesced-lifecycle tests |
 | Browser volume | Ten-minute 240 Hz stroke encoding | PASS | 144,002 samples generated in 0.55 s by deterministic unit test; continuous batch/sample sequences |
 | Native input quick | Inject realistic primary-contact `PT_PEN`; receive `WM_POINTER` pressure/tilt/button state | PASS | 4/4 exact events; pressure `[102, 512, 1024, 0]`; exact tilt/lifecycle; zero received barrel-flag samples |
-| Native input sustained | User32 injection, transient queue backpressure, and reverse-chronological history recovery | PASS | 14,400/14,400 exact samples over 59.93 s at 240.27 Hz; 4,846 coalesced samples recovered; zero missing/excess/value error; full pressure and ±60° tilt ranges; 50 ms bounded `ERROR_NOT_READY` retry |
-| Browser build | strict TypeScript + Safari 16.4 Vite target | PASS | 7 Vitest tests; typecheck and production build |
+| Native input sustained | User32 injection, transient queue backpressure, and reverse-chronological history recovery | PASS | Exact packaged v0.3.3 primary-tip run: 14,400/14,400 samples over 59.83 s at 240.66 Hz; 5,375 coalesced samples recovered; zero missing/excess/value/barrel error; full pressure and ±60° tilt ranges; 50 ms bounded `ERROR_NOT_READY` retry |
+| Browser build | strict TypeScript + Safari 16.4 Vite target | PASS | 11 Vitest tests; typecheck and production build |
 | HTTP/control | status, pairing, embedded assets, authenticated metrics/diagnostics, stats WebSocket | PASS | live and portable smoke tests |
 | Diagnostic recorder | One-hertz raw capture, host synchronization, bounded retention, processed distributions | PASS | Unit tests plus 11/11 live samples over 10.003 s, zero discarded |
 | Browser upgrades | A new EXE cannot reuse a prior immutable JavaScript/CSS payload | PASS | `index.html` is no-store and references content-hashed assets; extracted-archive smoke discovers and loads the hash |
 | Desktop navigation | Session, Source, Input, Diagnostics, and App Setup sidebar pages | PASS | Each button selects a distinct rendered page; release GUI smoke |
-| Credential reset | Manual and focused-window expiry rotation refresh PIN/QR and invalidate old session | PASS | Session unit test and transport lifecycle implementation; physical stale-QR workflow pending confirmation |
+| Credential reset | Manual and focused-window expiry rotation refresh PIN/QR and invalidate old session | PASS | Expiry unit test plus physical reset: session identity and QR bitmap changed, prior peer disconnected, and the iPad re-paired |
 | WebRTC input | Reliable ordered DataChannel under simultaneous video | PASS | Every live scenario received/injected exact 240 Hz input with zero gaps, reordering, lifecycle errors, or buffered bytes |
 | WebRTC 4K→720p | 4K source and 4K receiver viewport, Fast profile | PASS | 10 s: ~54 encoded/53 decoded fps; zero RTP loss, decoder drops, freezes, marker mismatches, or transport drops |
 | WebRTC 1080p | 1080p source/receiver, Balanced profile | PASS | 10 s: ~32 encoded/33 decoded fps; all integrity/input/network checks pass |
@@ -30,7 +31,7 @@ Last updated: 2026-08-18. Development host: Windows 11 Pro x64 build 22631, Inte
 | WGC monitor capture | Real desktop produces capture/encoded frames | PASS | Earlier debug 3840×2160 source smoke on Windows build 22631 |
 | Workspace | fmt, check all targets, Clippy `-D warnings`, all Rust tests | PASS | local Windows build and GitHub Actions |
 | iPad Safari video/touch | Real LAN pairing, touch transport, initial video | PASS | Cache-safe v0.3.2 client identified itself, recorded at 1 Hz, and started physical video in 71 ms after rejecting one pre-IDR delta |
-| iPad Safari Pencil | Real pressure/tilt/coalescing and primary-tip semantics | IN PROGRESS | Physical pressure/tilt arrived; primary tip exposed an incorrect barrel mapping, now fixed and awaiting Paint/Rebelle rerun |
+| iPad Safari Pencil | Real pressure/tilt/coalescing and primary-tip semantics | IN PROGRESS | 10,358 real samples carried pressure/tilt with zero packet gaps; barrel mapping and the observed fit-edge lifecycle defect are fixed; Paint/Rebelle behavior still needs user confirmation on v0.3.3 |
 | Krita | pressure/tilt/undo/reconnect | NOT RUN | Application/hardware unavailable |
 | Rebelle | pressure/tilt/undo/reconnect | NOT RUN | Application/hardware unavailable |
 | Photoshop | pressure/tilt/undo/reconnect | NOT RUN | Application/hardware unavailable |

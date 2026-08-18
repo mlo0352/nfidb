@@ -234,3 +234,17 @@ Transient `ERROR_NOT_READY` responses now retry for up to 50 ms with a 100-micro
 ### Decision
 
 Require both the sustained 240-sample/s native stress test and a second physical recorder pass to report zero injection errors before release.
+
+## 2026-08-18 — Pencil lifecycle at fit-mode edges
+
+### Finding
+
+A post-fix physical run delivered 10,358 real Pencil samples with zero sequence gaps or reordering and full pressure/tilt variation, but accumulated 12 lifecycle errors. The client rejected coordinates in the narrow letterbox outside the fitted monitor image. A stroke whose down or up occurred there could therefore send movement without its matching lifecycle boundary.
+
+### Fix
+
+An active stroke now clamps movement and its terminal sample to the nearest monitor edge instead of dropping them. Contact that begins outside the fitted image and then enters it is recovered with exactly one primary Down. Duplicate or browser-specific coalesced lifecycle samples are normalized to one Down, zero or more Moves, and one Up/Cancel. Deterministic regressions cover edge exit, edge entry, duplicate Down, and coalesced lifecycle lists.
+
+### Decision
+
+Treat both sequence continuity and lifecycle continuity as release gates. A zero packet-gap count alone is insufficient if coordinate filtering can remove Down or Up.

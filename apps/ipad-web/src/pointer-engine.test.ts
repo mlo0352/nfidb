@@ -120,6 +120,90 @@ describe("PointerEngine", () => {
     expect(decoded.at(-1)?.actions).toEqual([PointerAction.Up]);
     engine.dispose();
   });
+
+  it("preserves one lifecycle when Safari supplies coalesced lifecycle samples", () => {
+    const engine = new PointerEngine({
+      overlay,
+      video,
+      send: (packet) => packets.push(packet),
+      getFitMode: () => "fit",
+      getTouchEnabled: () => false,
+    });
+    const downHistory = [
+      pointer("pointermove", 0.1, 0, 0, 1, 200, 250),
+      pointer("pointermove", 0.2, 1, 2, 1, 210, 260),
+    ];
+    const upHistory = [
+      pointer("pointermove", 0.3, 3, 4, 1, 220, 270),
+      pointer("pointermove", 0, 3, 4, 0, 230, 280),
+    ];
+
+    overlay.dispatchEvent(pointer("pointerdown", 0.2, 1, 2, 1, 210, 260, downHistory));
+    overlay.dispatchEvent(pointer("pointerup", 0, 3, 4, 0, 230, 280, upHistory));
+
+    expect(decode(packets[0]!).actions).toEqual([PointerAction.Down, PointerAction.Move]);
+    expect(decode(packets[1]!).actions).toEqual([PointerAction.Move, PointerAction.Up]);
+    engine.dispose();
+  });
+
+  it("normalizes a duplicate browser down for an active pointer to movement", () => {
+    const engine = new PointerEngine({
+      overlay,
+      video,
+      send: (packet) => packets.push(packet),
+      getFitMode: () => "fit",
+      getTouchEnabled: () => false,
+    });
+
+    overlay.dispatchEvent(pointer("pointerdown", 0.2, 1, 2, 1, 200, 250));
+    overlay.dispatchEvent(pointer("pointerdown", 0.3, 3, 4, 1, 210, 260));
+    overlay.dispatchEvent(pointer("pointerup", 0, 3, 4, 0, 220, 270));
+
+    expect(packets.map((packet) => decode(packet).actions)).toEqual([
+      [PointerAction.Down],
+      [PointerAction.Move],
+      [PointerAction.Up],
+    ]);
+    engine.dispose();
+  });
+
+  it("clamps an active fit-mode stroke at the content edge so its up is never dropped", () => {
+    const engine = new PointerEngine({
+      overlay,
+      video,
+      send: (packet) => packets.push(packet),
+      getFitMode: () => "fit",
+      getTouchEnabled: () => false,
+    });
+
+    overlay.dispatchEvent(pointer("pointerdown", 0.4, 4, 5, 1, 200, 250));
+    overlay.dispatchEvent(pointer("pointermove", 0.5, 6, 7, 1, 200, 20));
+    overlay.dispatchEvent(pointer("pointerup", 0, 6, 7, 0, 200, 10));
+
+    expect(packets.map((packet) => decode(packet).actions)).toEqual([
+      [PointerAction.Down],
+      [PointerAction.Move],
+      [PointerAction.Up],
+    ]);
+    engine.dispose();
+  });
+
+  it("recovers a contact that enters fit content after beginning in the letterbox", () => {
+    const engine = new PointerEngine({
+      overlay,
+      video,
+      send: (packet) => packets.push(packet),
+      getFitMode: () => "fit",
+      getTouchEnabled: () => false,
+    });
+
+    overlay.dispatchEvent(pointer("pointerdown", 0.2, 0, 0, 1, 200, 10));
+    overlay.dispatchEvent(pointer("pointermove", 0.4, 8, 9, 1, 200, 250));
+    overlay.dispatchEvent(pointer("pointerup", 0, 8, 9, 0, 220, 260));
+
+    expect(packets.map((packet) => decode(packet).actions)).toEqual([[PointerAction.Down], [PointerAction.Up]]);
+    engine.dispose();
+  });
 });
 
 function pointer(

@@ -136,21 +136,63 @@ export class PointerEngine {
       return;
     }
     event.preventDefault();
-    if (event.type === "pointerdown") {
-      this.activePointers.set(event.pointerId, event.pointerType === "pen" ? DeviceType.Pen : DeviceType.Touch);
-      try {
-        this.overlay.setPointerCapture(event.pointerId);
-      } catch {
-        // Safari can reject capture if the pointer already ended; lifecycle packets still recover safely.
-      }
-    }
-
     const extended = event as ExtendedPointerEvent;
     const coalesced = extended.getCoalescedEvents?.() ?? [];
     const actualEvents = coalesced.length > 0 ? coalesced : [event];
+    const wasActive = this.activePointers.has(event.pointerId);
+    const isContactMove =
+      event.type === "pointermove" &&
+      (event.buttons !== 0 || event.pressure > 0) &&
+      !wasActive;
+    const preserveActiveLifecycle =
+      wasActive &&
+      (event.type === "pointerdown" ||
+        event.type === "pointermove" ||
+        event.type === "pointerup" ||
+        event.type === "pointercancel");
     const samples = actualEvents
-      .map((sampleEvent) => this.toSample(sampleEvent, event.type))
+      .map((sampleEvent) =>
+        this.toSample(
+          sampleEvent,
+          event.type === "pointerdown" || event.type === "pointerup" || event.type === "pointercancel"
+            ? "pointermove"
+            : event.type,
+          preserveActiveLifecycle,
+        ),
+      )
       .filter((sample): sample is PointerSample => sample !== null);
+
+    // Pointer Events only defines coalesced samples for pointermove, but normalizing
+    // lifecycle actions here also protects against browser-specific event lists. A
+    // batch must never contain repeated Down or Up actions.
+    if ((event.type === "pointerdown" && !wasActive) || isContactMove) {
+      if (samples.length > 0) {
+        samples[0]!.action = PointerAction.Down;
+        for (const sample of samples.slice(1)) {
+          sample.action = PointerAction.Move;
+        }
+        this.activePointers.set(event.pointerId, event.pointerType === "pen" ? DeviceType.Pen : DeviceType.Touch);
+        try {
+          this.overlay.setPointerCapture(event.pointerId);
+        } catch {
+          // Safari can reject capture if the pointer already ended; lifecycle packets still recover safely.
+        }
+      }
+    } else if (event.type === "pointerdown") {
+      for (const sample of samples) {
+        sample.action = PointerAction.Move;
+      }
+    } else if (event.type === "pointerup" || event.type === "pointercancel") {
+      if (wasActive && samples.length > 0) {
+        for (const sample of samples) {
+          sample.action = PointerAction.Move;
+        }
+        samples[samples.length - 1]!.action =
+          event.type === "pointerup" ? PointerAction.Up : PointerAction.Cancel;
+      } else {
+        samples.length = 0;
+      }
+    }
     if (samples.length > 0) {
       this.sendSamples(samples);
       this.sampleCounter += samples.length;
@@ -169,12 +211,17 @@ export class PointerEngine {
     }
   };
 
-  private toSample(event: PointerEvent, sourceType: string): PointerSample | null {
+  private toSample(event: PointerEvent, sourceType: string, preserveActiveLifecycle = false): PointerSample | null {
     const bounds = this.overlay.getBoundingClientRect();
     const sourceWidth = this.video.videoWidth || bounds.width;
     const sourceHeight = this.video.videoHeight || bounds.height;
     const rect = calculateContentRect(bounds.width, bounds.height, sourceWidth, sourceHeight, this.getFitMode());
-    const point = normalizePoint(event.clientX - bounds.left, event.clientY - bounds.top, rect, this.getFitMode() !== "fit");
+    const point = normalizePoint(
+      event.clientX - bounds.left,
+      event.clientY - bounds.top,
+      rect,
+      preserveActiveLifecycle || this.getFitMode() !== "fit",
+    );
     if (!point) {
       return null;
     }
