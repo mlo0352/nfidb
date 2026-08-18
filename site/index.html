@@ -12,55 +12,60 @@
   <body>
     <nav>
       <a class="brand" href="index.html" aria-label="NFiDB home"><b>NFi<span>DB</span></b><small>No Frills iPad Drawing Bridge</small></a>
-      <div class="nav-links"><a class="desktop-link" href="#how">How it works</a><a href="download.html">Download</a><a href="about.html">About</a><a class="desktop-link" href="https://github.com/mlo0352/nfidb">Source</a></div>
+      <div class="nav-links"><a class="desktop-link" href="#how">How it works</a><a href="download.html">Download</a><a href="about.html">About</a><a class="desktop-link" href="https://github.com/mlo0352/nfidb">Source</a><a class="support-link" href="https://ko-fi.com/arealmiown">Donate</a></div>
     </nav>
 
     <main id="top">
       <section class="hero">
-        <p class="eyebrow"><i></i> Windows 11 · local network · tested MVP</p>
         <h1>Your iPad.<br />Your Pencil.<br /><em>Your Windows canvas.</em></h1>
-        <p class="lede">Mirror a Windows monitor to Safari and send real pressure and tilt back as native Windows pen input. No iPad app, account, subscription, or cloud relay.</p>
+        <p class="lede">See your Windows screen on your iPad and draw in your favorite desktop apps with Apple Pencil pressure and tilt. No iPad app, account, subscription, or cloud service.</p>
         <div class="actions">
           <a class="primary" href="download.html">Download for Windows</a>
-          <a class="secondary" href="https://github.com/mlo0352/nfidb#build-from-source">Build from source</a>
+          <a class="secondary" href="https://ko-fi.com/arealmiown">Support on Ko-fi</a>
         </div>
-        <p class="caveat">v0.3.3 portable, unsigned prerelease. Physical iPad validation is active; Apple Pencil and art-app certification is still in progress.</p>
+        <p class="caveat">v0.3.4 · Portable for Windows 11 x64.</p>
       </section>
 
       <section class="signal" aria-label="Local connection architecture">
-        <div><span>WINDOWS</span><strong>Drawing app</strong><small>Windows Ink / Pointer</small></div>
+        <div><span>WINDOWS</span><strong>Your drawing app</strong><small>Rebelle, Krita, and more</small></div>
         <b aria-hidden="true">↔</b>
-        <div class="center"><span>NFIDB</span><strong>Private LAN bridge</strong><small>WebRTC video + pen data</small></div>
+        <div class="center"><span>NFIDB</span><strong>Private connection</strong><small>No account or cloud required</small></div>
         <b aria-hidden="true">↔</b>
-        <div><span>IPAD</span><strong>Safari + Pencil</strong><small>No App Store install</small></div>
+        <div><span>IPAD</span><strong>Safari + Pencil</strong><small>Nothing to install</small></div>
       </section>
 
       <section class="features">
-        <article><span>01</span><h2>Actually local</h2><p>The host serves the iPad page and connects peer-to-peer on your LAN. There is no relay backend or account to create.</p></article>
-        <article><span>02</span><h2>Actual pen data</h2><p>Coalesced Pointer Events carry pressure and tilt into native Windows <code>PT_PEN</code> input. Predictions stay visual-only.</p></article>
-        <article><span>03</span><h2>Evidence, not guesses</h2><p>Live stats and local JSON reports capture latency, bandwidth, frame timing, loss, input continuity, pressure, angles, and percentile trends.</p></article>
+        <article><span>01</span><h2>Actually local</h2><p>Your PC and iPad talk directly. There is no account, cloud service, or internet connection involved in a drawing session.</p></article>
+        <article><span>02</span><h2>Your Pencil still feels like one</h2><p>Pressure and tilt reach your Windows drawing app, so you can work with the tools and brushes you already know.</p></article>
+        <article><span>03</span><h2>Nothing extra to carry</h2><p>Open Safari on the iPad you already own and leave the separate graphics tablet—and another subscription—at home.</p></article>
       </section>
 
       <section id="how" class="how">
-        <div class="section-copy"><p class="eyebrow">Three steps</p><h2>Nothing to install on the iPad.</h2><p>NFiDB is intentionally small. Start the Windows host, pair Safari, then draw in the Windows app you already use.</p></div>
+        <div class="section-copy"><p class="eyebrow">Three steps</p><h2>Nothing to install on the iPad.</h2><p>Start NFiDB on Windows, connect with Safari, then draw in the app you already use.</p><button class="technical-trigger" type="button" data-panel-open>Technical details <span aria-hidden="true">→</span></button></div>
         <ol>
-          <li><b>1</b><div><strong>Run NFiDB</strong><span>Choose the Windows monitor and allow Private-network access.</span></div></li>
-          <li><b>2</b><div><strong>Open the local address</strong><span>Use iPad Safari and enter the renewable six-digit PIN or scan the QR. Nothing is installed on the iPad.</span></div></li>
-          <li><b>3</b><div><strong>Draw</strong><span>Pencil input returns as native pressure and tilt; touch stays off until you enable it.</span></div></li>
+          <li><b>1</b><div><strong>Run NFiDB</strong><span>Choose the Windows screen you want to use.</span></div></li>
+          <li><b>2</b><div><strong>Connect your iPad</strong><span>Open Safari and scan the QR code or enter the six-digit PIN.</span></div></li>
+          <li><b>3</b><div><strong>Draw</strong><span>Pick up your Pencil and get back to the app you already love.</span></div></li>
         </ol>
-      </section>
-
-      <section class="honesty">
-        <p class="eyebrow">What this MVP is</p>
-        <h2>A working bridge, with visible seams.</h2>
-        <div>
-          <p><strong>Included now</strong><span>Monitor capture, fast-start H.264 WebRTC, resettable PIN/QR pairing, native pen and optional touch, full diagnostic recording/export, portable binaries, and automated 240 Hz/4K soak tests.</span></p>
-          <p><strong>Still ahead</strong><span>Media Foundation hardware encoding, window-only capture, signed installer, extended desktop, and physical iPad/Krita/Rebelle/Photoshop certification.</span></p>
-        </div>
-        <a href="https://github.com/mlo0352/nfidb/blob/main/docs/TEST_MATRIX.md">Read the exact test matrix →</a>
       </section>
     </main>
 
-    <footer><b>NFiDB</b><span>MIT or Apache-2.0 · Built for a trusted private LAN.</span><div class="footer-links"><a href="about.html">About</a><a href="https://github.com/mlo0352/nfidb">GitHub</a></div></footer>
+    <dialog class="technical-panel" id="technical-panel" aria-labelledby="technical-title">
+      <div class="technical-panel-inner">
+        <form method="dialog"><button class="panel-close" aria-label="Close technical details">Close <span aria-hidden="true">×</span></button></form>
+        <p class="eyebrow">Technical details</p>
+        <h2 id="technical-title">Under the hood.</h2>
+        <p class="panel-intro">The short version: your Windows PC does the work and your iPad connects directly to it.</p>
+        <div class="technical-list">
+          <section><span>01</span><h3>Local video</h3><p>NFiDB serves the iPad page from the Windows host and sends H.264 video over a direct WebRTC connection. No cloud relay is involved.</p></section>
+          <section><span>02</span><h3>Native pen input</h3><p>Safari Pointer Events carry pressure and tilt back to Windows as native <code>PT_PEN</code> input. Predicted events remain visual-only.</p></section>
+          <section><span>03</span><h3>Local diagnostics</h3><p>Live stats and optional JSON reports cover latency, frame timing, bandwidth, input continuity, pressure, and tilt without sending data elsewhere.</p></section>
+        </div>
+        <div class="panel-links"><a href="https://github.com/mlo0352/nfidb#build-from-source">Build from source →</a><a href="https://github.com/mlo0352/nfidb/blob/main/docs/TEST_MATRIX.md">Read the test matrix →</a></div>
+      </div>
+    </dialog>
+
+    <footer><b>NFiDB</b><span>MIT License · Free and open source.</span><div class="footer-links"><a href="about.html">About</a><a href="https://ko-fi.com/arealmiown">Ko-fi</a><a href="https://github.com/mlo0352/nfidb">GitHub</a></div></footer>
+    <script src="site.js"></script>
   </body>
 </html>
