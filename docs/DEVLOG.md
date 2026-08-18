@@ -192,3 +192,45 @@ The production browser bundle now uses content-hashed JavaScript/CSS filenames w
 ### Decision
 
 Release the physical-Safari bootstrap correction as v0.3.1 and require a real-device sample to appear before considering the recorder validated.
+
+## 2026-08-18 — Physical iPad real-content encoder feedback
+
+### Finding
+
+The first clean v0.3.1 physical run proved the diagnostic recorder, DataChannel input, UDP host candidate, and zero-loss transport, but exposed severe video pacing under real 4K desktop content. When OpenH264 fell below ten frames per second, the one-second wall-clock recovery interval forced a full IDR every few encoded frames. Those expensive frames reduced throughput further, which made the keyframe ratio still worse. The run retained 111/111 samples and reported zero RTP packet loss, input gaps, input errors, buffered bytes, or transport skips, isolating the encoder rather than the LAN or input path.
+
+### Fix
+
+Connection startup continues to issue an immediate edge-triggered IDR and reject undecodable deltas. Periodic corruption recovery now forces an IDR every five seconds instead of every second. This bounds recovery without letting recovery frames dominate an overloaded software encoder.
+
+### Decision
+
+Re-run the same physical foreground workload before release and keep the hardware Media Foundation encoder as the principal path to true high-frame-rate 1080p/4K output.
+
+## 2026-08-18 — Pencil tip was mapped as a barrel click
+
+### Finding
+
+On the physical iPad, ordinary Pencil contact selected/resized in Paint and panned the canvas in Rebelle instead of drawing. Browser Pointer Events defines `buttons` bit 0 as the primary pen tip and bit 1 as the secondary/barrel button. The Windows injector incorrectly interpreted bit 0 as `PEN_FLAG_BARREL`, advertising every normal stroke as a right-click/barrel gesture.
+
+### Fix
+
+The host now maps only browser secondary-button bit 1 to `PEN_FLAG_BARREL`; primary tip contact continues to use `POINTER_CHANGE_FIRSTBUTTON_DOWN/UP` with no pen barrel flag. A native unit regression asserts none/primary/secondary/combined button mappings explicitly.
+
+### Decision
+
+Treat working primary Pencil ink in physical drawing applications as a release gate. Transport-only pressure/tilt tests are necessary but cannot substitute for application behavior.
+
+## 2026-08-18 — Bursty physical Pencil injection
+
+### Finding
+
+The first v0.3.2 physical report carried 10,731 Pencil samples with zero incoming sequence gaps, lifecycle errors, reordering, buffered bytes, or transport skips, but recorded four native injection errors. Each occurred during a 160–236-sample/s interval, and the recorded maximum injection call was 6.003 ms—direct evidence that the five-millisecond transient `ERROR_NOT_READY` retry expired while Windows was still draining a prior synthetic pen update.
+
+### Fix
+
+Transient `ERROR_NOT_READY` responses now retry for up to 50 ms with a 100-microsecond backoff instead of busy-spinning for five milliseconds. Other Windows errors still fail immediately. This favors line continuity during a short OS input-queue stall while preserving a finite upper latency bound.
+
+### Decision
+
+Require both the sustained 240-sample/s native stress test and a second physical recorder pass to report zero injection errors before release.

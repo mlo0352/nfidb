@@ -18,7 +18,7 @@ Protocol version `1` uses little-endian binary messages. One pointer batch consi
 | ---: | --- | --- |
 | 0 | `u8` | device (`1` pen, `2` touch) |
 | 1 | `u8` | action (`1` down, `2` move, `3` up, `4` cancel) |
-| 2 | `u16` | browser button flags |
+| 2 | `u16` | browser Pointer Events `buttons` flags: bit 0 primary tip, bit 1 secondary/barrel |
 | 4 | `u32` | pointer ID |
 | 8 | `u32` | monotonically wrapping sample sequence |
 | 12 | `f32` | normalized X |

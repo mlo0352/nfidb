@@ -10,6 +10,7 @@ interface DecodedPacket {
   sampleCount: number;
   actions: number[];
   sampleSequences: number[];
+  flags: number[];
   pressures: number[];
   tiltX: number[];
   tiltY: number[];
@@ -67,6 +68,7 @@ describe("PointerEngine", () => {
       sampleCount: 4,
       actions: [PointerAction.Move, PointerAction.Move, PointerAction.Move, PointerAction.Move],
       sampleSequences: [1, 2, 3, 4],
+      flags: [1, 1, 1, 1],
       pressures: expectCloseArray([0.2, 0.45, 0.75, 1.0]),
       tiltX: [-30, -10, 20, 60],
       tiltY: [30, 10, -20, -60],
@@ -155,6 +157,7 @@ function decode(packet: ArrayBuffer): DecodedPacket {
     sampleCount,
     actions: [],
     sampleSequences: [],
+    flags: [],
     pressures: [],
     tiltX: [],
     tiltY: [],
@@ -162,6 +165,7 @@ function decode(packet: ArrayBuffer): DecodedPacket {
   for (let index = 0; index < sampleCount; index += 1) {
     const offset = HEADER_BYTES + index * SAMPLE_BYTES;
     decoded.actions.push(view.getUint8(offset + 1));
+    decoded.flags.push(view.getUint16(offset + 2, true));
     decoded.sampleSequences.push(view.getUint32(offset + 8, true));
     decoded.pressures.push(view.getFloat32(offset + 20, true));
     decoded.tiltX.push(view.getFloat32(offset + 24, true));

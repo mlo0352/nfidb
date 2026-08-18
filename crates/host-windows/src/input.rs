@@ -24,7 +24,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 
 const MAX_TOUCH_CONTACTS: u32 = 10;
 const ERROR_NOT_READY: i32 = 21;
-const INJECTION_RETRY_LIMIT: Duration = Duration::from_millis(5);
+const INJECTION_RETRY_LIMIT: Duration = Duration::from_millis(50);
+const INJECTION_RETRY_BACKOFF: Duration = Duration::from_micros(100);
+const BROWSER_BUTTON_SECONDARY: u16 = 1 << 1;
 
 #[derive(Debug, Clone, Copy)]
 pub struct PointerInjectorOptions {
@@ -160,11 +162,7 @@ impl PointerInjector {
             Action::Up | Action::Cancel => POINTER_CHANGE_FIRSTBUTTON_UP,
             Action::Move | Action::Hover => POINTER_CHANGE_NONE,
         };
-        let pen_flags = if sample.flags & 1 != 0 {
-            PEN_FLAG_BARREL
-        } else {
-            PEN_FLAG_NONE
-        };
+        let pen_flags = pen_flags_from_browser_buttons(sample.flags);
         let pen_info = POINTER_PEN_INFO {
             pointerInfo: POINTER_INFO {
                 pointerType: PT_PEN,
@@ -359,7 +357,18 @@ fn inject_with_retry(
         if error.raw_os_error() != Some(ERROR_NOT_READY) || started.elapsed() >= INJECTION_RETRY_LIMIT {
             return Err(InputError(format!("{context} failed: {error}")));
         }
-        std::thread::yield_now();
+        std::thread::sleep(INJECTION_RETRY_BACKOFF);
+    }
+}
+
+fn pen_flags_from_browser_buttons(buttons: u16) -> u32 {
+    // Pointer Events uses bit 0 for the primary pen tip and bit 1 for the
+    // secondary/barrel button. Treating the tip bit as PEN_FLAG_BARREL turns
+    // every ordinary stroke into a Windows right-click gesture.
+    if buttons & BROWSER_BUTTON_SECONDARY != 0 {
+        PEN_FLAG_BARREL
+    } else {
+        PEN_FLAG_NONE
     }
 }
 
@@ -465,5 +474,13 @@ mod tests {
         };
         assert_eq!(sample.pressure_u32(), 768);
         assert_eq!(sample.tilt_i32(), (-30, 90));
+    }
+
+    #[test]
+    fn primary_pen_contact_never_sets_the_barrel_flag() {
+        assert_eq!(pen_flags_from_browser_buttons(0), PEN_FLAG_NONE);
+        assert_eq!(pen_flags_from_browser_buttons(1), PEN_FLAG_NONE);
+        assert_eq!(pen_flags_from_browser_buttons(2), PEN_FLAG_BARREL);
+        assert_eq!(pen_flags_from_browser_buttons(3), PEN_FLAG_BARREL);
     }
 }

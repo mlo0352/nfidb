@@ -383,6 +383,8 @@ fn encode_loop(
     max_fps: u32,
     status: Arc<Mutex<CaptureStatus>>,
 ) {
+    const RECOVERY_KEYFRAME_INTERVAL: Duration = Duration::from_secs(5);
+
     let config = EncoderConfig::new()
         .bitrate(BitRate::from_bps(profile.bitrate_bps()))
         .max_frame_rate(FrameRate::from_hz(max_fps as f32))
@@ -424,8 +426,12 @@ fn encode_loop(
     let mut last_sent_at: Option<Instant> = None;
     let mut last_keyframe_at: Option<Instant> = None;
     while let Some(frame) = prepared.take() {
+        // Connection startup has its own edge-triggered IDR request. Keep the
+        // periodic recovery IDR infrequent enough that a slow software encoder
+        // cannot enter a feedback loop where nearly every output frame is an
+        // expensive keyframe, while still bounding packet-loss recovery.
         let recovery_keyframe_due =
-            last_keyframe_at.is_some_and(|last_keyframe| last_keyframe.elapsed() >= Duration::from_secs(1));
+            last_keyframe_at.is_some_and(|last_keyframe| last_keyframe.elapsed() >= RECOVERY_KEYFRAME_INTERVAL);
         if keyframe_request.take() || recovery_keyframe_due {
             encoder.force_intra_frame();
         }

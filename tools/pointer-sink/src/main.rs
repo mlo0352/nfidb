@@ -21,10 +21,10 @@ use windows_sys::Win32::UI::Input::Pointer::{
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW,
     DispatchMessageW, GA_ROOT, GWLP_USERDATA, GetAncestor, GetClientRect, GetForegroundWindow, GetMessageW,
-    GetWindowThreadProcessId, HWND_TOPMOST, IDC_ARROW, LoadCursorW, MSG, PostMessageW, PostQuitMessage, RegisterClassW,
-    SW_SHOW, SWP_SHOWWINDOW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow,
-    TranslateMessage, WM_CLOSE, WM_DESTROY, WM_NCCREATE, WM_POINTERDOWN, WM_POINTERUP, WM_POINTERUPDATE, WNDCLASSW,
-    WS_OVERLAPPEDWINDOW, WS_VISIBLE, WindowFromPoint,
+    GetWindowThreadProcessId, HWND_TOPMOST, IDC_ARROW, LoadCursorW, MSG, PEN_FLAG_BARREL, PostMessageW,
+    PostQuitMessage, RegisterClassW, SW_SHOW, SWP_SHOWWINDOW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos,
+    SetWindowTextW, ShowWindow, TranslateMessage, WM_CLOSE, WM_DESTROY, WM_NCCREATE, WM_POINTERDOWN, WM_POINTERUP,
+    WM_POINTERUPDATE, WNDCLASSW, WS_OVERLAPPEDWINDOW, WS_VISIBLE, WindowFromPoint,
 };
 
 #[derive(Debug, Parser)]
@@ -91,6 +91,7 @@ struct SinkState {
     received: Vec<POINTER_PEN_INFO>,
     down_samples: u32,
     up_samples: u32,
+    barrel_samples: u32,
     options: Option<TestOptions>,
     complete: Arc<AtomicBool>,
     first_received: Option<Instant>,
@@ -222,6 +223,9 @@ unsafe extern "system" fn window_proc(hwnd: HWND, message: u32, wparam: WPARAM, 
                 }
                 if info.pointerInfo.pointerFlags & POINTER_FLAG_UP != 0 {
                     state.up_samples = state.up_samples.saturating_add(1);
+                }
+                if info.penFlags & PEN_FLAG_BARREL != 0 {
+                    state.barrel_samples = state.barrel_samples.saturating_add(1);
                 }
             }
             state.received.append(&mut history);
@@ -418,7 +422,14 @@ fn sample(sequence: u32, action: Action, pressure: f32, tilt_x: f32, tilt_y: f32
     PointerSample {
         device_type: DeviceType::Pen,
         action,
-        flags: 0,
+        // Safari Pointer Events sets browser button bit 0 while the Pencil tip
+        // is in contact. The native receiver must observe this as a normal tip,
+        // never as PEN_FLAG_BARREL.
+        flags: if matches!(action, Action::Down | Action::Move) {
+            1
+        } else {
+            0
+        },
         pointer_id: 7,
         sample_sequence: sequence,
         x_norm: x,
@@ -487,6 +498,7 @@ fn build_report(state: &SinkState, options: TestOptions) -> Value {
         && ranges_ok
         && state.down_samples == 1
         && state.up_samples == 1
+        && state.barrel_samples == 0
         && state.complete.load(Ordering::Acquire);
     serde_json::json!({
         "pass": pass,
@@ -502,6 +514,7 @@ fn build_report(state: &SinkState, options: TestOptions) -> Value {
         "value_mismatch_preview": value_mismatches.into_iter().take(20).collect::<Vec<_>>(),
         "down_samples": state.down_samples,
         "up_samples": state.up_samples,
+        "barrel_samples": state.barrel_samples,
         "pressure_range": [if pressure_min == u32::MAX { 0 } else { pressure_min }, pressure_max],
         "tilt_x_range": [if tilt_x_min == i32::MAX { 0 } else { tilt_x_min }, if tilt_x_max == i32::MIN { 0 } else { tilt_x_max }],
         "tilt_y_range": [if tilt_y_min == i32::MAX { 0 } else { tilt_y_min }, if tilt_y_max == i32::MIN { 0 } else { tilt_y_max }],

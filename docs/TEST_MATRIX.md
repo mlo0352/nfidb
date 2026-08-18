@@ -1,6 +1,6 @@
 # Test matrix
 
-Last updated: 2026-08-18. Development host: Windows 11 Pro x64 build 22631, Intel Core i9-13900K, Rust 1.97.1 (`x86_64-pc-windows-msvc`), Node 22.22.3, npm 10.9.8, Microsoft Edge headless. Profile/soak results are release `0.2.0`; startup, diagnostics, credential rotation, navigation, and browser-upgrade results are the `0.3.1` candidate unless stated otherwise.
+Last updated: 2026-08-18. Development host: Windows 11 Pro x64 build 22631, Intel Core i9-13900K, Rust 1.97.1 (`x86_64-pc-windows-msvc`), Node 22.22.3, npm 10.9.8, Microsoft Edge headless. Profile/soak results are release `0.2.0`; startup, diagnostics, credential rotation, navigation, browser-upgrade, and physical regressions are the `0.3.1`/`0.3.2` candidates unless stated otherwise.
 
 | Layer | Test | Result | Evidence |
 | --- | --- | --- | --- |
@@ -9,8 +9,8 @@ Last updated: 2026-08-18. Development host: Windows 11 Pro x64 build 22631, Inte
 | Sessions/config | PIN, QR, invalid credential, disconnect, rotation/invalidation, TOML round trip | PASS | Core unit tests plus live reset/reconnect path |
 | Browser coalescing | Use coalesced samples exactly once and in chronological order | PASS | Exact binary packet test with pressure, tilt, twist, coordinates, and sequences |
 | Browser volume | Ten-minute 240 Hz stroke encoding | PASS | 144,002 samples generated in 0.55 s by deterministic unit test; continuous batch/sample sequences |
-| Native input quick | Inject synthetic `PT_PEN`; receive `WM_POINTER` pressure/tilt | PASS | 4/4 exact events; pressure `[102, 512, 1024, 0]`; exact tilt and lifecycle |
-| Native input sustained | User32 injection and reverse-chronological history recovery | PASS | 14,400/14,400 exact samples over 59.93 s at 240.27 Hz; 4,846 coalesced samples recovered; zero missing/excess/value error; full pressure and ±60° tilt ranges |
+| Native input quick | Inject realistic primary-contact `PT_PEN`; receive `WM_POINTER` pressure/tilt/button state | PASS | 4/4 exact events; pressure `[102, 512, 1024, 0]`; exact tilt/lifecycle; zero received barrel-flag samples |
+| Native input sustained | User32 injection, transient queue backpressure, and reverse-chronological history recovery | PASS | 14,400/14,400 exact samples over 59.93 s at 240.27 Hz; 4,846 coalesced samples recovered; zero missing/excess/value error; full pressure and ±60° tilt ranges; 50 ms bounded `ERROR_NOT_READY` retry |
 | Browser build | strict TypeScript + Safari 16.4 Vite target | PASS | 7 Vitest tests; typecheck and production build |
 | HTTP/control | status, pairing, embedded assets, authenticated metrics/diagnostics, stats WebSocket | PASS | live and portable smoke tests |
 | Diagnostic recorder | One-hertz raw capture, host synchronization, bounded retention, processed distributions | PASS | Unit tests plus 11/11 live samples over 10.003 s, zero discarded |
@@ -24,12 +24,13 @@ Last updated: 2026-08-18. Development host: Windows 11 Pro x64 build 22631, Inte
 | WebRTC 4K→1440p | 4K source and receiver viewport, Sharp profile | PASS | 10 s: ~14 encoded/15 decoded fps; all integrity/input/network checks pass; CPU-limited |
 | Active soak | One continuous pressure/angle stroke plus 4K-source video | PASS | 600.005 s; 144,002/144,002 samples at 240.001 Hz; 30,508 decoded frames; 728 integrity checks; all gap/loss/freeze/backlog/error counters zero |
 | RTP/media clock | Frame shedding does not accumulate playback lag | PASS | Soak media time advanced 599.997 s; zero media-time regressions; max presented-frame gap 81.1 ms in headless Edge |
+| Recovery IDR under load | Bound corruption recovery without allowing keyframes to dominate an overloaded encoder | PASS | Five-second recovery cadence; repeated 4K→1080p run ~27 encoded/~25 mean decoded fps, four interval keyframes, zero freezes/loss/gaps/skips |
 | WebRTC startup | Join an already-running H.264 stream at an arbitrary frame | PASS | First pre-IDR delta rejected; requested IDR in 65.091 ms; first browser frame in 99.3 ms; automated limit 5 s |
 | Portable runtime | Extract ZIP and run with no repo assets or Node runtime | PASS | Embedded HTML/JS served and video encoded from extracted EXE; direct dependency audit found Windows system DLLs only |
 | WGC monitor capture | Real desktop produces capture/encoded frames | PASS | Earlier debug 3840×2160 source smoke on Windows build 22631 |
 | Workspace | fmt, check all targets, Clippy `-D warnings`, all Rust tests | PASS | local Windows build and GitHub Actions |
-| iPad Safari video/touch | Real LAN pairing, touch transport, initial video | PARTIAL | Input reacted immediately; initial video took ~30 s before the connection-IDR fix; cache-safe v0.3.1 diagnostic build is deployed for physical rerun |
-| iPad Safari Pencil | Real pressure/tilt/coalescing | NOT RUN | Pencil temporarily unavailable |
+| iPad Safari video/touch | Real LAN pairing, touch transport, initial video | PASS | Cache-safe v0.3.2 client identified itself, recorded at 1 Hz, and started physical video in 71 ms after rejecting one pre-IDR delta |
+| iPad Safari Pencil | Real pressure/tilt/coalescing and primary-tip semantics | IN PROGRESS | Physical pressure/tilt arrived; primary tip exposed an incorrect barrel mapping, now fixed and awaiting Paint/Rebelle rerun |
 | Krita | pressure/tilt/undo/reconnect | NOT RUN | Application/hardware unavailable |
 | Rebelle | pressure/tilt/undo/reconnect | NOT RUN | Application/hardware unavailable |
 | Photoshop | pressure/tilt/undo/reconnect | NOT RUN | Application/hardware unavailable |
