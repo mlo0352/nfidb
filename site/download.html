@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Download NFiDB for Windows and turn an iPad and Apple Pencil into a local drawing tablet—without an account or subscription." />
+    <meta name="theme-color" content="#101514" />
+    <title>Download NFiDB for Windows</title>
+    <link rel="icon" href="favicon.svg" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <nav>
+      <a class="brand" href="index.html" aria-label="NFiDB home"><b>NFi<span>DB</span></b><small>No Frills iPad Drawing Bridge</small></a>
+      <div class="nav-links"><a class="desktop-link" href="index.html#how">How it works</a><a href="download.html" aria-current="page">Download</a><a href="about.html">About</a><a class="desktop-link" href="https://github.com/mlo0352/nfidb">Source</a></div>
+    </nav>
+
+    <main>
+      <section class="page-hero download-hero">
+        <p class="eyebrow"><i></i> Available now · Windows x64</p>
+        <h1>Download NFiDB.<br /><em>Keep your canvas close.</em></h1>
+        <p class="lede">The current portable build supports 64-bit Windows 11 on Intel and AMD PCs. Linux and macOS support are planned.</p>
+        <div class="actions">
+          <a class="primary" href="https://github.com/mlo0352/nfidb/releases">View Windows downloads</a>
+          <a class="secondary" href="https://github.com/mlo0352/nfidb#build-from-source">Build from source</a>
+        </div>
+        <p class="caveat">Unsigned prerelease software. Releases and checksums are hosted on GitHub.</p>
+      </section>
+
+      <section class="platforms" aria-labelledby="platform-heading">
+        <div class="section-intro">
+          <p class="eyebrow">Platform support</p>
+          <h2 id="platform-heading">Windows first.<br />More to come.</h2>
+        </div>
+        <div class="platform-grid">
+          <article class="available">
+            <span class="status">Available</span>
+            <h3>Windows</h3>
+            <p>Portable x64 build for Windows 11 on Intel and AMD PCs. No installer is required.</p>
+            <a href="https://github.com/mlo0352/nfidb/releases">Open releases →</a>
+          </article>
+          <article>
+            <span class="status">Planned</span>
+            <h3>Linux</h3>
+            <p>Not available yet. Follow the repository for future platform updates.</p>
+          </article>
+          <article>
+            <span class="status">Planned</span>
+            <h3>macOS</h3>
+            <p>Not available yet. Follow the repository for future platform updates.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="download-steps">
+        <div class="section-copy">
+          <p class="eyebrow">Portable by design</p>
+          <h2>Unzip, run, pair.</h2>
+          <p>Nothing needs to be installed on your iPad. NFiDB serves the drawing client directly to Safari over your private local network.</p>
+        </div>
+        <ol>
+          <li><b>1</b><div><strong>Download the ZIP</strong><span>Open GitHub Releases and choose the newest <code>NFiDB-windows-x64.zip</code>. A SHA-256 checksum is provided beside it.</span></div></li>
+          <li><b>2</b><div><strong>Extract and run</strong><span>Unzip the package, start <code>nfidb.exe</code>, and allow Private-network access if Windows asks.</span></div></li>
+          <li><b>3</b><div><strong>Pair your iPad</strong><span>Open the local address in iPad Safari, enter the six-digit PIN or scan the QR code, and draw.</span></div></li>
+        </ol>
+      </section>
+
+      <aside class="notice">
+        <div><p class="eyebrow">Before you run it</p><h2>Windows may warn you.</h2></div>
+        <p>NFiDB is currently an unsigned prerelease, so Windows may show a security prompt. Download only from the official GitHub releases page and compare the published SHA-256 checksum if you want to verify the package.</p>
+      </aside>
+    </main>
+
+    <footer><b>NFiDB</b><span>MIT or Apache-2.0 · Built for a trusted private LAN.</span><div class="footer-links"><a href="about.html">About</a><a href="https://github.com/mlo0352/nfidb">GitHub</a></div></footer>
+  </body>
+</html>
