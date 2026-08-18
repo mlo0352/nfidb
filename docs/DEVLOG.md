@@ -178,3 +178,17 @@ Moved session credentials into renewable state. Manual reset and focused-window 
 ### Decision
 
 Ship diagnostic reports with explicit measurement limitations and never present an estimate as physical glass-to-glass latency. Exclude startup/uninitialized zeroes from processed rate/latency distributions. Keep diagnostic data memory-bounded, local-only, and user-exported.
+
+## 2026-08-18 — Physical Safari diagnostic bootstrap
+
+### Finding
+
+The first real-iPad diagnostic run paired and delivered pressure/tilt input, but the desktop recorder received no client samples. The browser assets had stable filenames combined with a one-year immutable cache header, so Safari could legitimately reuse the v0.2 client after the host executable changed. Safari RTC stats iteration also needed a compatibility path that did not depend on `RTCStatsReport.values()`.
+
+### Fix
+
+The production browser bundle now uses content-hashed JavaScript/CSS filenames while `index.html` remains `no-store`, guaranteeing a new executable points Safari at a new asset URL. RTC reports are collected through the broadly supported `forEach` interface, unavailable stats degrade to zero/fallback fields rather than aborting the one-second sample, and video playback-quality access is feature-tested. If any later browser API still throws, the client sends a minimal diagnostic sample containing its version and the bounded error string, so the recorder remains useful and exposes the incompatible operation. The live Stats panel identifies its client version and fallback count. The portable smoke discovers the hashed script URL from the embedded HTML instead of assuming a filename.
+
+### Decision
+
+Release the physical-Safari bootstrap correction as v0.3.1 and require a real-device sample to appear before considering the recorder validated.

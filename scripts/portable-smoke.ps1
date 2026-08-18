@@ -49,7 +49,13 @@ try {
     $session = Get-Content -Raw -LiteralPath $sessionPath | ConvertFrom-Json
     $baseUrl = "http://127.0.0.1:$($session.port)"
     $index = Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/" -TimeoutSec 5
-    $client = Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/assets/client.js" -TimeoutSec 5
+    $clientMatch = [regex]::Match($index.Content, '<script[^>]+src="([^"]+\.js)"')
+    if (-not $clientMatch.Success) {
+        throw 'Embedded iPad page did not reference its JavaScript client'
+    }
+    $clientRelativePath = $clientMatch.Groups[1].Value -replace '^\./', '/'
+    if (-not $clientRelativePath.StartsWith('/')) { $clientRelativePath = "/$clientRelativePath" }
+    $client = Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl$clientRelativePath" -TimeoutSec 5
     $status = Invoke-RestMethod -Uri "$baseUrl/api/status" -TimeoutSec 5
     if ($index.StatusCode -ne 200 -or $index.Content -notmatch 'No Frills iPad Drawing Bridge') {
         throw 'Embedded iPad page was not served correctly'

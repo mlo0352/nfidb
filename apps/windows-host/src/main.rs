@@ -869,7 +869,8 @@ impl HostApp {
                         ui,
                         "Device",
                         &format!(
-                            "{} · DPR {} · {}×{} viewport",
+                            "client {} · {} · DPR {} · {}×{} viewport",
+                            json_string(&client.device, "clientVersion"),
                             json_string(&client.device, "platform"),
                             json_number(&client.device, "devicePixelRatio"),
                             json_number(&client.device, "viewportWidth"),
@@ -877,6 +878,14 @@ impl HostApp {
                         ),
                     );
                     diagnostic_row(ui, "Browser", &json_string(&client.device, "userAgent"));
+                    if client
+                        .device
+                        .get("diagnosticFallback")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false)
+                    {
+                        diagnostic_row(ui, "Recorder fallback", &json_string(&client.device, "diagnosticError"));
+                    }
                     diagnostic_row(
                         ui,
                         "State",

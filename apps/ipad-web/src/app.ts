@@ -2,6 +2,8 @@ import { disconnect, getDiagnosticSummary, getMetrics, getStatus, pairWithPin, p
 import type { FitMode } from "./geometry";
 import { PointerEngine } from "./pointer-engine";
 
+declare const __NFIDB_CLIENT_VERSION__: string;
+
 type ConnectionState = "pairing" | "connecting" | "connected" | "input-only" | "failed";
 type InputTransport = "datachannel" | "websocket";
 
@@ -87,6 +89,7 @@ export class NfidbApp {
   private firstVideoFrameAtMs = 0;
   private diagnosticTimer = 0;
   private diagnosticSequence = 0;
+  private diagnosticFailures = 0;
   private diagnosticCollectionActive = false;
   private previousRtcCounters: PreviousRtcCounters | null = null;
   private liveClientDiagnostic: LiveClientDiagnostic | null = null;
@@ -470,6 +473,7 @@ export class NfidbApp {
     this.stopDiagnosticRecording();
     this.previousRtcCounters = null;
     this.diagnosticSequence = 0;
+    this.diagnosticFailures = 0;
     void this.captureClientDiagnostic();
     this.diagnosticTimer = window.setInterval(() => void this.captureClientDiagnostic(), 1000);
   }
@@ -491,7 +495,8 @@ export class NfidbApp {
     try {
       const rtc = await this.readRtcStats();
       const video = this.root.querySelector<HTMLVideoElement>("#remoteVideo");
-      const quality = video?.getVideoPlaybackQuality();
+      const quality =
+        video && typeof video.getVideoPlaybackQuality === "function" ? video.getVideoPlaybackQuality() : undefined;
       const inbound = rtc.inboundVideo;
       const pair = rtc.candidatePair;
       const nowMs = performance.now();
@@ -547,6 +552,7 @@ export class NfidbApp {
         clientEpochMs: Date.now(),
         sampleIntervalMs: intervalMs,
         device: {
+          clientVersion: __NFIDB_CLIENT_VERSION__,
           userAgent: navigator.userAgent,
           platform: navigator.platform,
           maxTouchPoints: navigator.maxTouchPoints,
@@ -652,9 +658,68 @@ export class NfidbApp {
       this.socket.send(JSON.stringify({ type: "client-diagnostics", sample }));
       this.renderStats();
     } catch (error) {
+      this.diagnosticFailures += 1;
       console.debug("NFiDB diagnostic sample failed", error);
+      this.sendFallbackDiagnostic(error);
     } finally {
       this.diagnosticCollectionActive = false;
+    }
+  }
+
+  private sendFallbackDiagnostic(error: unknown): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    const video = this.root.querySelector<HTMLVideoElement>("#remoteVideo");
+    const sample = {
+      sequence: this.diagnosticSequence++,
+      clientEpochMs: Date.now(),
+      sampleIntervalMs: 0,
+      device: {
+        clientVersion: __NFIDB_CLIENT_VERSION__,
+        userAgent: navigator.userAgent,
+        platform: navigator.platform,
+        maxTouchPoints: navigator.maxTouchPoints,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+        screenWidth: screen.width,
+        screenHeight: screen.height,
+        devicePixelRatio: window.devicePixelRatio,
+        visibilityState: document.visibilityState,
+        diagnosticFallback: true,
+        diagnosticError: String(error).slice(0, 512),
+      },
+      connection: {
+        appState: this.state,
+        peerConnectionState: this.peer?.connectionState ?? "none",
+        iceConnectionState: this.peer?.iceConnectionState ?? "none",
+        inputTransport: this.inputTransport ?? "pending",
+      },
+      video: {
+        width: video?.videoWidth ?? 0,
+        height: video?.videoHeight ?? 0,
+        readyState: video?.readyState ?? 0,
+        currentTimeSeconds: video?.currentTime ?? 0,
+      },
+      network: {
+        rttMs: this.rttMs,
+        clockOffsetMs: this.clockOffsetMs,
+        oneWayEstimateMs: this.rttMs / 2,
+      },
+      frameTiming: {
+        callbackCount: this.frameCallbackCount,
+      },
+      buffers: {
+        dataChannelBytes: this.channel?.bufferedAmount ?? 0,
+        webSocketBytes: this.socket.bufferedAmount,
+      },
+      rawRtc: {},
+    };
+    try {
+      this.socket.send(JSON.stringify({ type: "client-diagnostics", sample }));
+      this.renderStats();
+    } catch (sendError) {
+      console.debug("NFiDB fallback diagnostic sample failed", sendError);
     }
   }
 
@@ -666,20 +731,25 @@ export class NfidbApp {
     if (!this.peer) {
       return { inboundVideo, candidatePair, localCandidate, remoteCandidate };
     }
-    const reports = await this.peer.getStats();
-    for (const report of reports.values()) {
-      const record = report as unknown as Record<string, unknown>;
-      if (report.type === "inbound-rtp" && (record.kind === "video" || record.mediaType === "video")) {
-        inboundVideo = pickStats(record, INBOUND_VIDEO_STAT_KEYS);
-      } else if (report.type === "candidate-pair" && record.state === "succeeded" && record.nominated === true) {
-        candidatePair = pickStats(record, CANDIDATE_PAIR_STAT_KEYS);
-        const localId = String(record.localCandidateId ?? "");
-        const remoteId = String(record.remoteCandidateId ?? "");
-        const local = reports.get(localId) as unknown as Record<string, unknown> | undefined;
-        const remote = reports.get(remoteId) as unknown as Record<string, unknown> | undefined;
-        localCandidate = local ? pickStats(local, CANDIDATE_STAT_KEYS) : null;
-        remoteCandidate = remote ? pickStats(remote, CANDIDATE_STAT_KEYS) : null;
+    try {
+      const reports = await this.peer.getStats();
+      const records = new Map<string, Record<string, unknown>>();
+      reports.forEach((report) => records.set(report.id, report as unknown as Record<string, unknown>));
+      for (const record of records.values()) {
+        if (record.type === "inbound-rtp" && (record.kind === "video" || record.mediaType === "video")) {
+          inboundVideo = pickStats(record, INBOUND_VIDEO_STAT_KEYS);
+        } else if (record.type === "candidate-pair" && record.state === "succeeded" && record.nominated === true) {
+          candidatePair = pickStats(record, CANDIDATE_PAIR_STAT_KEYS);
+          const local = records.get(String(record.localCandidateId ?? ""));
+          const remote = records.get(String(record.remoteCandidateId ?? ""));
+          localCandidate = local ? pickStats(local, CANDIDATE_STAT_KEYS) : null;
+          remoteCandidate = remote ? pickStats(remote, CANDIDATE_STAT_KEYS) : null;
+        }
       }
+    } catch (error) {
+      // Safari versions expose different subsets of the RTC stats surface.
+      // A missing/failed report must not stop the one-second host recorder.
+      console.debug("NFiDB RTC stats unavailable; recording fallback metrics", error);
     }
     return { inboundVideo, candidatePair, localCandidate, remoteCandidate };
   }
@@ -741,7 +811,7 @@ export class NfidbApp {
     );
     this.setText(
       "recorderStats",
-      `${this.diagnosticSequence} samples captured · 1 Hz · ${formatBytes(metrics.encoded_bytes)} host encoded`,
+      `client ${__NFIDB_CLIENT_VERSION__} · ${this.diagnosticSequence} samples · ${this.diagnosticFailures} fallbacks · 1 Hz · ${formatBytes(metrics.encoded_bytes)} encoded`,
     );
   }
 

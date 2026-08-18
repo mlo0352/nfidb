@@ -49,7 +49,7 @@ WebRTC uses local host candidates only—there is no STUN, TURN, or relay servic
 
 ## Diagnostic control messages
 
-The authenticated WebSocket carries JSON control/telemetry in addition to binary fallback input. The browser sends a `client-diagnostics` sample at most once per second and skips it rather than growing a queue when the socket has more than 256 KiB buffered. Each sample includes device/viewport state, connection states, video frame counters and dimensions, RTP loss/jitter/throughput, selected-candidate properties, decoder/jitter-buffer costs, animation-frame timing, video-frame callback timing, browser buffer levels, and the relevant raw WebRTC statistics.
+The authenticated WebSocket carries JSON control/telemetry in addition to binary fallback input. The browser sends a `client-diagnostics` sample at most once per second and skips it rather than growing a queue when the socket has more than 256 KiB buffered. Each sample includes client version, device/viewport state, connection states, video frame counters and dimensions, RTP loss/jitter/throughput, selected-candidate properties, decoder/jitter-buffer costs, animation-frame timing, video-frame callback timing, browser buffer levels, and the relevant raw WebRTC statistics. If a Safari API throws, a minimal sample marks `diagnosticFallback` and includes a bounded error string rather than silently stopping the recorder.
 
 Ping/pong messages contain four epoch timestamps. The browser calculates NTP-style round-trip time and server/client clock offset; the host uses that offset to estimate input arrival age. These are engineering estimates on a LAN, not a substitute for an externally synchronized glass-to-glass measurement.
 
