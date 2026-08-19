@@ -2,7 +2,7 @@
 
 **No Frills iPad Drawing Bridge** turns an iPad and Apple Pencil into a local-network pen display for a Windows 11 PC. Extract one portable Windows app, open the address it shows in Safari, enter the six-digit PIN, and draw. There is no iPad app, account, subscription, cloud relay, or internet service involved in a session.
 
-> NFiDB 0.4.0 is a solid alpha. Its protocol, native input, Windows capture, browser pairing, remote-control, and WebRTC paths have automated coverage, and the iPad mouse, keyboard, and three-finger controls have passed a physical-device check. Apple Pencil behavior in individual art apps still needs field validation; see [the test matrix](docs/TEST_MATRIX.md) before relying on it for production work.
+> NFiDB 0.5.0 is a solid alpha. Its protocol, native input, Windows capture, browser pairing, remote-control, WebRTC, and bidirectional file-transfer paths have automated coverage, and the iPad mouse, keyboard, and three-finger controls have passed a physical-device check. Apple Pencil behavior in individual art apps and the new Files panel still need physical field validation; see [the test matrix](docs/TEST_MATRIX.md) before relying on it for production work.
 
 ## What works
 
@@ -13,12 +13,13 @@
 - iPad trackpad/mouse movement, buttons, and high-resolution horizontal/vertical scrolling.
 - Hardware-keyboard shortcuts plus Unicode text entry from the hardware or iPad software keyboard.
 - Three-finger app switching, Task View, and foreground-window minimize gestures while touch forwarding is off.
+- Bidirectional, paired-session file transfer with an explicit Windows Outbox, confined Inbox, verified resumable uploads, ranged downloads, progress, cancellation, rate limiting, and transfer diagnostics.
 - Fit, fill, and 1:1 coordinate mapping, including monitors with negative desktop coordinates.
 - Six-digit PIN or QR pairing, focus-aware credential rotation, one active browser, and input reset on disconnect.
 - mDNS-friendly and numeric-IP URLs, with automatic port fallback.
 - Pen-display, input-only, and display-only modes.
 - A standalone browser pointer diagnostic and a native `WM_POINTER` validation sink.
-- Live Session, Source, Input, Diagnostics, and App Setup pages in the Windows host.
+- Live Session, Source, Input, Files, Diagnostics, and App Setup pages in the Windows host.
 - Authenticated raw and percentile-processed latency, bandwidth, frame-timing, input, encoder, and WebRTC diagnostics with local JSON export.
 
 The first MVP mirrors one Windows monitor. It is not an extended-desktop display driver, remote-desktop product, or internet relay. Window-only capture, hardware Media Foundation encoding, audio, multi-client sessions, and an installer are not in this release.
@@ -45,6 +46,14 @@ The hardware mappings are **Option → Alt**, **Control → Ctrl**, **Shift → 
 With browser **Touch off** and **Gestures on**, swipe three fingers right/left to move to the next/previous Windows app, up for Task View, and down to minimize the foreground window. Pencil contact temporarily suppresses finger shortcuts. Turning Touch on sends fingers as native Windows touch instead. iPadOS can consume system-reserved shortcuts before Safari receives them, so the on-screen shortcut buttons remain the deterministic fallback.
 
 If a PIN/QR has expired or Safari shows a stale-session error, use **Session → Reset PIN + QR**. This immediately invalidates the old browser session, releases injected contacts, closes its peer connection, and redraws both credentials. An expired unpaired code also rotates automatically while the desktop app is focused.
+
+## File transfer
+
+Open **Files** on Windows and choose **Add files for iPad** to place explicit files in the temporary Outbox. On the iPad, open **Files** in the toolbar and tap **Download**; Safari’s download manager handles progress and saving to Files. Removing an Outbox item removes only the NFiDB queue entry, never the original Windows file.
+
+To send files to Windows, open the iPad Files panel, choose one or more files, and leave Safari in the foreground until the queue completes. Incoming files are written through a private staging directory and moved into `Downloads\NFiDB Inbox` only after every 1 MiB chunk and the completed file have been SHA-256 processed. Duplicate names become `name (1).ext` rather than overwriting an existing file.
+
+Transfers are capped at 10 GiB per file and 32 Mbps by default. The Windows Files page can change those limits or disable transfer. With **Pause bulk traffic while Pencil or touch is down** enabled, a long transfer yields whenever a drawing contact is active. Pairing reset/disconnect invalidates transfer access and removes unfinished uploads.
 
 ## Drawing-app setup
 
@@ -87,6 +96,7 @@ nfidb --capture test-pattern --input-sink log
 pointer-sink --self-test
 pointer-sink --stress-test --samples 14400 --rate 240 --batch-size 4
 ./scripts/benchmark.ps1 -DurationSeconds 10
+./scripts/file-transfer-smoke.ps1
 ```
 
 Run `nfidb --diagnostics` to open the diagnostic page directly, or select **DIAGNOSTICS** in the left sidebar. For a real-iPad test, reset the recording, connect in Safari, enable **Stats**, draw and move desktop content for at least 60 seconds, then export the detailed JSON. The report contains the raw one-second samples and processed count/min/mean/p50/p95/p99/max distributions; it is written under `%APPDATA%\NFiDB\diagnostics\` and never uploaded.

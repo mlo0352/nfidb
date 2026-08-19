@@ -12,7 +12,7 @@ use nfidb_host_windows::{
     CaptureManager, MonitorDescriptor, PointerInjector, PointerInjectorOptions, enumerate_monitors,
     set_per_monitor_dpi_awareness,
 };
-use nfidb_transport::{Distribution, ServerHandle, ServerOptions};
+use nfidb_transport::{Distribution, FileTransferOptions, ServerHandle, ServerOptions};
 use qrcode::QrCode;
 use qrcode::types::Color;
 use tokio::sync::broadcast;
@@ -53,6 +53,14 @@ struct Cli {
     session_info: Option<PathBuf>,
     #[arg(long, requires_all = ["headless", "run_seconds"], help = "Write final host metrics JSON for benchmarks")]
     metrics_output: Option<PathBuf>,
+    #[arg(long, requires = "headless", help = "Use this transfer Inbox for automation")]
+    file_inbox: Option<PathBuf>,
+    #[arg(
+        long,
+        requires = "headless",
+        help = "Queue a file for browser download; may be repeated"
+    )]
+    queue_file: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -80,6 +88,7 @@ enum HostPage {
     Session,
     Source,
     Input,
+    Files,
     Diagnostics,
     AppSetup,
 }
@@ -123,6 +132,9 @@ fn main() -> Result<()> {
     }
     if cli.no_mdns {
         config.network.mdns = false;
+    }
+    if let Some(inbox) = &cli.file_inbox {
+        config.file_transfer.inbox_directory = Some(inbox.clone());
     }
     let monitors = enumerate_monitors()
         .map_err(anyhow::Error::msg)
@@ -177,6 +189,17 @@ fn main() -> Result<()> {
     }
 
     let host_name = sanitized_host_name();
+    let config_directory = AppConfig::path()
+        .ok()
+        .and_then(|path| path.parent().map(PathBuf::from))
+        .unwrap_or_else(|| std::env::temp_dir().join("NFiDB"));
+    let inbox_directory = config
+        .file_transfer
+        .inbox_directory
+        .clone()
+        .or_else(|| dirs::download_dir().map(|path| path.join("NFiDB Inbox")))
+        .unwrap_or_else(|| config_directory.join("Inbox"));
+    config.file_transfer.inbox_directory = Some(inbox_directory.clone());
     let server = Arc::new(
         ServerHandle::spawn(
             ServerOptions {
@@ -188,6 +211,14 @@ fn main() -> Result<()> {
                 mouse_enabled: config.input.mouse,
                 keyboard_enabled: config.input.keyboard,
                 gestures_default: config.input.gestures,
+                file_transfer: FileTransferOptions {
+                    enabled: config.file_transfer.enabled,
+                    max_file_size_bytes: config.file_transfer.max_file_size_mib.saturating_mul(1024 * 1024),
+                    rate_limit_mbps: config.file_transfer.rate_limit_mbps,
+                    pause_while_drawing: config.file_transfer.pause_while_drawing,
+                    inbox_directory,
+                    staging_directory: config_directory.join("transfer-staging"),
+                },
             },
             Arc::clone(&session),
             Arc::clone(&metrics),
@@ -197,6 +228,12 @@ fn main() -> Result<()> {
         )
         .map_err(anyhow::Error::msg)?,
     );
+    for path in &cli.queue_file {
+        server
+            .queue_outgoing_file(path.clone())
+            .map_err(anyhow::Error::msg)
+            .with_context(|| format!("failed to queue {}", path.display()))?;
+    }
 
     if cli.headless {
         if let Some(path) = &cli.session_info {
@@ -213,6 +250,7 @@ fn main() -> Result<()> {
                     "capture": capture.status().source,
                     "profile": format!("{:?}", config.video.profile).to_ascii_lowercase(),
                     "max_fps": config.video.max_fps,
+                    "file_inbox": server.file_inbox_directory(),
                 }),
             )?;
         }
@@ -335,6 +373,7 @@ impl eframe::App for HostApp {
                     (HostPage::Session, "SESSION"),
                     (HostPage::Source, "SOURCE"),
                     (HostPage::Input, "INPUT"),
+                    (HostPage::Files, "FILES"),
                     (HostPage::Diagnostics, "DIAGNOSTICS"),
                     (HostPage::AppSetup, "APP SETUP"),
                 ] {
@@ -364,6 +403,7 @@ impl eframe::App for HostApp {
                         HostPage::Session => self.session_page(ui),
                         HostPage::Source => self.source_page(ui),
                         HostPage::Input => self.input_page(ui),
+                        HostPage::Files => self.files_page(ui),
                         HostPage::Diagnostics => self.diagnostics_page(ui),
                         HostPage::AppSetup => self.app_setup_page(ui),
                     });
@@ -417,6 +457,243 @@ impl HostApp {
         self.input_settings_card(ui);
         ui.add_space(16.0);
         self.input_diagnostics_card(ui);
+    }
+
+    fn files_page(&mut self, ui: &mut egui::Ui) {
+        page_heading(
+            ui,
+            "Files",
+            "Exchange explicitly selected files with the paired iPad without exposing either filesystem.",
+        );
+        ui.add_space(18.0);
+        self.file_transfer_actions(ui);
+        ui.add_space(16.0);
+        self.file_transfer_activity(ui);
+    }
+
+    fn file_transfer_actions(&mut self, ui: &mut egui::Ui) {
+        let snapshot = self.server.file_transfer_snapshot();
+        let mut settings_changed = false;
+        card(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Add files for iPad").clicked()
+                    && let Some(paths) = rfd::FileDialog::new().set_title("Add files for iPad").pick_files()
+                {
+                    let count = paths.len();
+                    let mut errors = Vec::new();
+                    for path in paths {
+                        if let Err(error) = self.server.queue_outgoing_file(path) {
+                            errors.push(error);
+                        }
+                    }
+                    self.last_message = Some(if errors.is_empty() {
+                        format!("Queued {count} file(s) for the paired iPad")
+                    } else {
+                        format!(
+                            "Queued {} file(s); {} failed: {}",
+                            count - errors.len(),
+                            errors.len(),
+                            errors.join(" · ")
+                        )
+                    });
+                }
+                if ui.button("Open Inbox").clicked() {
+                    self.last_message = Some(match open_in_explorer(&snapshot.inbox_directory) {
+                        Ok(()) => "Opened the NFiDB Inbox".to_owned(),
+                        Err(error) => format!("Could not open Inbox: {error}"),
+                    });
+                }
+                if ui.button("Clear iPad queue").clicked() {
+                    self.server.clear_outgoing_files();
+                    self.last_message =
+                        Some("Cleared the iPad download queue; source files were not deleted".to_owned());
+                }
+            });
+            ui.add_space(10.0);
+            ui.label(
+                egui::RichText::new(format!("INBOX  {}", snapshot.inbox_directory.display()))
+                    .size(9.0)
+                    .monospace()
+                    .color(muted()),
+            );
+            ui.separator();
+            settings_changed |= ui
+                .checkbox(
+                    &mut self.config.file_transfer.enabled,
+                    "Allow file transfer for the paired iPad",
+                )
+                .changed();
+            settings_changed |= ui
+                .checkbox(
+                    &mut self.config.file_transfer.pause_while_drawing,
+                    "Pause bulk traffic while Pencil or touch is down",
+                )
+                .changed();
+            ui.horizontal(|ui| {
+                ui.label("Transfer limit");
+                settings_changed |= ui
+                    .add(
+                        egui::DragValue::new(&mut self.config.file_transfer.rate_limit_mbps)
+                            .range(4..=500)
+                            .suffix(" Mbps"),
+                    )
+                    .changed();
+                ui.add_space(14.0);
+                ui.label("Maximum file");
+                settings_changed |= ui
+                    .add(
+                        egui::DragValue::new(&mut self.config.file_transfer.max_file_size_mib)
+                            .range(16..=102_400)
+                            .suffix(" MiB"),
+                    )
+                    .changed();
+            });
+            ui.label(
+                egui::RichText::new(
+                    "Transfers use verified HTTP chunks and never share arbitrary folders. Rate limiting keeps video and input responsive.",
+                )
+                .size(10.0)
+                .color(muted()),
+            );
+            if let Some(message) = &self.last_message {
+                ui.add_space(8.0);
+                ui.label(egui::RichText::new(message).size(10.0).color(accent()));
+            }
+        });
+        if settings_changed {
+            self.server.configure_file_transfers(
+                self.config.file_transfer.enabled,
+                self.config.file_transfer.max_file_size_mib.saturating_mul(1024 * 1024),
+                self.config.file_transfer.rate_limit_mbps,
+                self.config.file_transfer.pause_while_drawing,
+            );
+            let _ = self.config.save();
+        }
+    }
+
+    fn file_transfer_activity(&mut self, ui: &mut egui::Ui) {
+        let snapshot = self.server.file_transfer_snapshot();
+        let mut remove = None;
+        card(ui, |ui| {
+            ui.label(
+                egui::RichText::new("LIVE TRANSFER EVIDENCE")
+                    .size(9.0)
+                    .strong()
+                    .color(muted()),
+            );
+            ui.add_space(8.0);
+            egui::Grid::new("file_transfer_metrics")
+                .num_columns(2)
+                .striped(true)
+                .show(ui, |ui| {
+                    diagnostic_row(
+                        ui,
+                        "Current rate",
+                        &format!(
+                            "↑ {:.2} Mbps · ↓ {:.2} Mbps",
+                            snapshot.stats.upload_mbps, snapshot.stats.download_mbps
+                        ),
+                    );
+                    diagnostic_row(
+                        ui,
+                        "Transferred",
+                        &format!(
+                            "{} from iPad · {} to iPad",
+                            format_bytes(snapshot.stats.upload_bytes),
+                            format_bytes(snapshot.stats.download_bytes)
+                        ),
+                    );
+                    diagnostic_row(
+                        ui,
+                        "Completed",
+                        &format!(
+                            "{} received · {} sent",
+                            snapshot.stats.uploads_completed, snapshot.stats.downloads_completed
+                        ),
+                    );
+                    diagnostic_row(
+                        ui,
+                        "Active / interrupted",
+                        &format!(
+                            "{} upload · {} download · {} canceled · {} failed",
+                            snapshot.stats.active_uploads,
+                            snapshot.stats.active_downloads,
+                            snapshot.stats.canceled_transfers,
+                            snapshot.stats.failed_transfers
+                        ),
+                    );
+                });
+            ui.add_space(14.0);
+            ui.label(
+                egui::RichText::new(format!("FOR IPAD  {} QUEUED", snapshot.outbox.len()))
+                    .size(9.0)
+                    .strong()
+                    .color(muted()),
+            );
+            if snapshot.outbox.is_empty() {
+                ui.label(
+                    egui::RichText::new("No files queued. Add only the files you want Safari to download.")
+                        .color(muted()),
+                );
+            }
+            for file in &snapshot.outbox {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(&file.name).size(11.0));
+                    ui.label(egui::RichText::new(format_bytes(file.size)).size(10.0).color(muted()));
+                    if file.sha256.is_none() {
+                        ui.label(egui::RichText::new("CHECKSUM…").size(8.0).color(muted()));
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("REMOVE").clicked() {
+                            remove = Some(file.id);
+                        }
+                    });
+                });
+                ui.separator();
+            }
+            if !snapshot.active_uploads.is_empty() {
+                ui.add_space(10.0);
+                ui.label(egui::RichText::new("FROM IPAD").size(9.0).strong().color(muted()));
+                for upload in &snapshot.active_uploads {
+                    let fraction = if upload.size == 0 {
+                        1.0
+                    } else {
+                        upload.received as f32 / upload.size as f32
+                    };
+                    ui.label(format!(
+                        "{} · {} / {}",
+                        upload.name,
+                        format_bytes(upload.received),
+                        format_bytes(upload.size)
+                    ));
+                    ui.add(egui::ProgressBar::new(fraction.clamp(0.0, 1.0)).show_percentage());
+                }
+            }
+            if !snapshot.recent.is_empty() {
+                ui.add_space(12.0);
+                ui.label(egui::RichText::new("RECENT").size(9.0).strong().color(muted()));
+                for transfer in snapshot.recent.iter().take(8) {
+                    let direction = match transfer.direction {
+                        nfidb_transport::TransferDirection::IpadToWindows => "iPad → Windows",
+                        nfidb_transport::TransferDirection::WindowsToIpad => "Windows → iPad",
+                    };
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{direction} · {} · {} · {} · {:.2} Mbps",
+                            transfer.name,
+                            format_bytes(transfer.bytes),
+                            transfer.status,
+                            transfer.average_mbps
+                        ))
+                        .size(10.0)
+                        .color(muted()),
+                    );
+                }
+            }
+        });
+        if let Some(id) = remove {
+            self.server.remove_outgoing_file(id);
+        }
     }
 
     fn diagnostics_page(&mut self, ui: &mut egui::Ui) {
@@ -755,6 +1032,7 @@ impl HostApp {
     fn diagnostics_card(&self, ui: &mut egui::Ui) {
         let metrics = self.metrics.snapshot();
         let capture = self.capture.status();
+        let transfers = self.server.file_transfer_snapshot();
         egui::CollapsingHeader::new("Advanced diagnostics")
             .default_open(true)
             .show(ui, |ui| {
@@ -799,6 +1077,28 @@ impl HostApp {
                         diagnostic_row(ui, "Encoded data", &format_bytes(metrics.encoded_bytes));
                         diagnostic_row(
                             ui,
+                            "File traffic",
+                            &format!(
+                                "↑ {:.2} / ↓ {:.2} Mbps · {} received / {} sent",
+                                transfers.stats.upload_mbps,
+                                transfers.stats.download_mbps,
+                                format_bytes(transfers.stats.upload_bytes),
+                                format_bytes(transfers.stats.download_bytes)
+                            ),
+                        );
+                        diagnostic_row(
+                            ui,
+                            "File outcomes",
+                            &format!(
+                                "{} received · {} sent · {} canceled · {} failed",
+                                transfers.stats.uploads_completed,
+                                transfers.stats.downloads_completed,
+                                transfers.stats.canceled_transfers,
+                                transfers.stats.failed_transfers
+                            ),
+                        );
+                        diagnostic_row(
+                            ui,
                             "Dropped before encode",
                             &format!("{} newest-frame replacements", metrics.dropped_frames),
                         );
@@ -830,6 +1130,7 @@ impl HostApp {
                         "capture": capture.source,
                         "encoder": capture.encoder,
                         "metrics": metrics,
+                        "file_transfers": transfers,
                     });
                     ui.ctx().copy_text(
                         serde_json::to_string_pretty(&report)
@@ -1084,6 +1385,7 @@ impl HostApp {
             "encoder": capture.encoder,
             "configuration": &self.config,
             "current_host_metrics": self.metrics.snapshot(),
+            "file_transfers": self.server.file_transfer_snapshot(),
             "diagnostics": self.server.diagnostic_report(),
         });
         write_json(&path, &report)?;
@@ -1258,11 +1560,24 @@ fn json_number(value: &serde_json::Value, key: &str) -> String {
 }
 
 fn format_bytes(bytes: u64) -> String {
-    if bytes < 1024 * 1024 {
+    if bytes < 1024 {
+        format!("{bytes} B")
+    } else if bytes < 1024 * 1024 {
         format!("{:.1} KiB", bytes as f64 / 1024.0)
-    } else {
+    } else if bytes < 1024 * 1024 * 1024 {
         format!("{:.2} MiB", bytes as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{:.2} GiB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
     }
+}
+
+fn open_in_explorer(path: &std::path::Path) -> Result<()> {
+    fs::create_dir_all(path).with_context(|| format!("failed to create {}", path.display()))?;
+    std::process::Command::new("explorer.exe")
+        .arg(path)
+        .spawn()
+        .with_context(|| format!("failed to open {}", path.display()))?;
+    Ok(())
 }
 
 fn format_pin(pin: &str) -> String {

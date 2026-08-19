@@ -1,4 +1,7 @@
-param([switch] $SkipTests)
+param(
+    [switch] $SkipTests,
+    [switch] $SkipFrontend
+)
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -9,15 +12,17 @@ if (-not $SkipTests) {
     if ($LASTEXITCODE -ne 0) { throw 'test suite failed' }
 }
 
-Push-Location (Join-Path $repoRoot 'apps\ipad-web')
-try {
-    npm ci
-    if ($LASTEXITCODE -ne 0) { throw 'npm ci failed' }
-    npm run build
-    if ($LASTEXITCODE -ne 0) { throw 'frontend build failed' }
-}
-finally {
-    Pop-Location
+if (-not $SkipFrontend) {
+    Push-Location (Join-Path $repoRoot 'apps\ipad-web')
+    try {
+        npm ci
+        if ($LASTEXITCODE -ne 0) { throw 'npm ci failed' }
+        npm run build
+        if ($LASTEXITCODE -ne 0) { throw 'frontend build failed' }
+    }
+    finally {
+        Pop-Location
+    }
 }
 
 Push-Location $repoRoot

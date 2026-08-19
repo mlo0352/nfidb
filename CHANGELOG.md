@@ -2,6 +2,29 @@
 
 NFiDB is pre-release software. Releases remain GitHub prereleases until the physical drawing-app matrix, longer stability run, and hardware-encoding work are complete.
 
+## 0.5.0 — 2026-08-19 — Alpha
+
+### Added
+
+- Bidirectional file transfer between the paired iPad and Windows without an iPad app, cloud service, or shared filesystem.
+- A Windows Files page with an explicit outbound queue, Inbox access, enable/rate/size controls, live bandwidth, progress, outcome counters, and bounded recent history.
+- An iPad Files panel with multi-file upload queueing, progress, cancel/retry, native Safari downloads, queue removal, checksums, and recent activity.
+- One-MiB upload chunks with independent SHA-256 verification, offset reconciliation, retry, temporary staging, full-file hashing, and collision-safe final names.
+- Streaming Windows-to-iPad downloads with single-range resume support and no whole-file browser or host buffering.
+- `scripts/file-transfer-smoke.ps1`, covering authenticated listing, upload, cancellation cleanup, full download, byte-range download, and end-to-end checksums against a real headless host.
+
+### Safety and performance
+
+- Only explicitly queued Windows files are downloadable; Safari cannot browse the Windows filesystem. Incoming files are confined to the configured NFiDB Inbox with path and Windows reserved-name sanitization.
+- Pairing rotation or disconnect cancels partial uploads and prevents an active download from continuing under the old session.
+- Bulk traffic is rate-limited separately from input/video and pauses by default while a Pencil or touch contact is active.
+- Transfer history is bounded to 100 records, active uploads to 32, the outbound queue to 1,000 entries, and the default per-file limit to 10 GiB.
+
+### Automated evidence
+
+- The packaged-release smoke transferred a 3,146,237-byte upload at 29.170 Mbps and a 5,243,017-byte download at 16.747 Mbps under the default 32 Mbps limiter; idempotent retry, complete/ranged SHA-256, cancellation, and authentication checks passed with zero failed transfers.
+- Strict browser tests now total 30 across seven files. Rust coverage includes verified/out-of-order chunks, idempotent recovery, filename confinement, collision handling, ranges, queue path privacy, and origin enforcement.
+
 ## 0.4.0 — 2026-08-18 — Alpha
 
 ### Added

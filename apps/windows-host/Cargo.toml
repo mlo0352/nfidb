@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+dirs.workspace = true
 eframe.workspace = true
 hostname.workspace = true
 nfidb-core.workspace = true
@@ -16,6 +17,7 @@ nfidb-host-windows.workspace = true
 nfidb-protocol.workspace = true
 nfidb-transport.workspace = true
 qrcode.workspace = true
+rfd.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

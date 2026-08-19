@@ -165,10 +165,13 @@ pub async fn accept_offer(
                 })
             }));
             let close_input = Arc::clone(&input);
+            let close_metrics = Arc::clone(&metrics);
             channel.on_close(Box::new(move || {
                 let input = Arc::clone(&close_input);
+                let metrics = Arc::clone(&close_metrics);
                 Box::pin(async move {
                     let _ = input.reset_all();
+                    metrics.reset_input_continuity();
                 })
             }));
         })
@@ -196,6 +199,7 @@ pub async fn accept_offer(
             } else if terminal {
                 let _ = video_state_tx.send(PeerVideoState::Terminal);
                 let _ = input.reset_all();
+                metrics.reset_input_continuity();
             }
             tracing::info!(?state, "WebRTC peer state changed");
         })

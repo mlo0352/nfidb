@@ -12,6 +12,7 @@ From a clean Windows checkout with the documented toolchain:
 .\scripts\test.ps1
 .\scripts\build-release.ps1
 .\scripts\portable-smoke.ps1
+.\scripts\file-transfer-smoke.ps1 -SkipBuild -ExecutablePath .\build\packages\NFiDB-windows-x64\nfidb.exe
 ```
 
 The build script creates `build\packages\NFiDB-windows-x64.zip` and a sibling `.sha256` file. It contains the GUI host, pointer sink, README, changelog, licenses, third-party notice, and operating documentation. An installer is explicitly deferred; the ZIP is portable and unsigned.

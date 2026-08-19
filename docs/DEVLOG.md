@@ -1,5 +1,25 @@
 # Engineering devlog
 
+## 2026-08-19 — Paired bidirectional file transfer
+
+### Goal
+
+Move explicitly selected files in either direction without an iPad app, cloud relay, arbitrary filesystem access, or interference with the drawing input queue.
+
+### Implementation
+
+Added a session-authenticated HTTP transfer manager beside WebRTC rather than putting bulk bytes on the reliable input DataChannel. iPad uploads use sequential 1 MiB chunks, per-chunk SHA-256, authoritative offsets, bounded retries, idempotent browser-generated tickets/finalization, private `.part` staging, full-file hashing, collision-safe final names, progress, cancellation, and cleanup. Cross-volume Inbox moves copy to an owned temporary leaf and rename locally before exposing the final name. Windows downloads expose only regular files chosen into an in-memory Outbox, revalidate the source before streaming, support one byte range, and use Safari's native download manager. Windows source paths never enter the browser response.
+
+The Files pages on both devices show queues, rates, outcomes, checksums, and bounded history. Default bulk throughput is capped at 32 Mbps and the pacer waits during an active pointer contact. Pairing reset/disconnect removes unfinished uploads and invalidates in-flight streaming at the next block. Limits bound individual files, active uploads, Outbox entries, recent records, upload request memory, and download buffers.
+
+### Evidence
+
+**PASS IN AUTOMATION; PHYSICAL IPAD FILE UI PENDING.** Manager and browser tests cover SHA vectors, sequential/corrupt/stale chunks, lost-response recovery, retry/cancel behavior, leaf/reserved-name handling, duplicate names, path privacy, ranges, and drawing-contact pacing. The packaged-release smoke rejected an unauthenticated listing, uploaded 3,146,237 bytes with matching source/server/destination SHA-256, repeated creation/completion without a duplicate, canceled and removed a partial upload, downloaded 5,243,017 bytes with a matching SHA-256, and matched a separate 1,024-byte range. Final server counters reported zero failures or active transfers.
+
+### Decision
+
+Ship the pipeline in v0.5.0 alpha, while explicitly keeping physical iPad Files/Photos selection, Safari downloads, foreground/background interruption, and very-large-file behavior as field-validation items. Preserve HTTP as the bulk path and real-time channels as bounded control/input paths.
+
 ## 2026-08-18 — Physical iPad remote-control acceptance
 
 ### Goal

@@ -281,6 +281,11 @@ impl Metrics {
         state.active_pointers.clear();
     }
 
+    #[must_use]
+    pub fn has_active_pointers(&self) -> bool {
+        !self.input_continuity.lock().active_pointers.is_empty()
+    }
+
     pub fn set_rtt_ms(&self, rtt_ms: f64) {
         self.rtt_micros
             .store((rtt_ms.max(0.0) * 1000.0) as u64, Ordering::Relaxed);

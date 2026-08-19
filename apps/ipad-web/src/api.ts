@@ -11,6 +11,7 @@ export interface HostStatus {
   mouse_enabled: boolean;
   keyboard_enabled: boolean;
   gestures_default: boolean;
+  file_transfer_enabled: boolean;
 }
 
 export interface PairResult {
