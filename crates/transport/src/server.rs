@@ -3,12 +3,12 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use axum::body::Body;
+use axum::body::{Body, to_bytes};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{OriginalUri, State};
+use axum::extract::{OriginalUri, Path, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use futures_util::{SinkExt, StreamExt};
 use mdns_sd::{ServiceDaemon, ServiceInfo};
@@ -22,6 +22,10 @@ use tower_http::trace::TraceLayer;
 
 use crate::diagnostics::{
     ClientDiagnosticSample, DiagnosticRecorder, DiagnosticReport, DiagnosticSummary, RecordedDiagnosticSample,
+};
+use crate::file_transfer::{
+    FileTransferError, FileTransferErrorKind, FileTransferManager, FileTransferOptions, UPLOAD_CHUNK_SIZE,
+    content_disposition,
 };
 use crate::process_input_packet;
 use crate::webrtc_session::{ActivePeer, WebRtcOffer, accept_offer};
@@ -40,6 +44,7 @@ pub struct ServerOptions {
     pub mouse_enabled: bool,
     pub keyboard_enabled: bool,
     pub gestures_default: bool,
+    pub file_transfer: FileTransferOptions,
 }
 
 #[derive(Debug, Clone)]
@@ -73,6 +78,11 @@ impl ServerHandle {
         let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let (command_tx, command_rx) = mpsc::unbounded_channel();
+        let file_transfers = FileTransferManager::new(
+            options.file_transfer.clone(),
+            Arc::clone(&session),
+            Arc::clone(&metrics),
+        )?;
         let state = Arc::new(AppState {
             options,
             session,
@@ -82,6 +92,7 @@ impl ServerHandle {
             keyframe_request,
             peer: ActivePeer::default(),
             diagnostics: DiagnosticRecorder::default(),
+            file_transfers,
         });
         let server_state = Arc::clone(&state);
         let thread = std::thread::Builder::new()
@@ -148,12 +159,16 @@ impl ServerHandle {
     }
 
     pub fn rotate_pairing(&self) {
+        let session_id = self.state.session.session_id();
+        self.state.file_transfers.cancel_session_uploads(&session_id);
         self.state.session.rotate();
         self.close_active_peer();
     }
 
     pub fn rotate_pairing_if_expired(&self) -> bool {
+        let session_id = self.state.session.session_id();
         if self.state.session.rotate_if_expired() {
+            self.state.file_transfers.cancel_session_uploads(&session_id);
             self.close_active_peer();
             true
         } else {
@@ -163,6 +178,7 @@ impl ServerHandle {
 
     fn close_active_peer(&self) {
         self.state.metrics.set_connected(false);
+        self.state.metrics.reset_input_continuity();
         let _ = self.state.input.reset_all();
         let _ = self.command_tx.send(ServerCommand::ClosePeer);
     }
@@ -185,6 +201,34 @@ impl ServerHandle {
     pub fn clear_diagnostics(&self) {
         self.state.diagnostics.clear();
     }
+
+    #[must_use]
+    pub fn file_transfer_snapshot(&self) -> crate::FileTransferSnapshot {
+        self.state.file_transfers.snapshot()
+    }
+
+    pub fn queue_outgoing_file(&self, path: std::path::PathBuf) -> Result<crate::OutgoingFile, String> {
+        self.state.file_transfers.queue_outgoing(path)
+    }
+
+    pub fn remove_outgoing_file(&self, id: uuid::Uuid) -> bool {
+        self.state.file_transfers.remove_outgoing(id)
+    }
+
+    pub fn clear_outgoing_files(&self) {
+        self.state.file_transfers.clear_outgoing();
+    }
+
+    pub fn configure_file_transfers(&self, enabled: bool, max_size_bytes: u64, rate_mbps: u32, pause: bool) {
+        self.state
+            .file_transfers
+            .configure(enabled, max_size_bytes, rate_mbps, pause);
+    }
+
+    #[must_use]
+    pub fn file_inbox_directory(&self) -> std::path::PathBuf {
+        self.state.file_transfers.inbox_directory()
+    }
 }
 
 impl Drop for ServerHandle {
@@ -202,6 +246,7 @@ struct AppState {
     keyframe_request: KeyframeRequest,
     peer: ActivePeer,
     diagnostics: DiagnosticRecorder,
+    file_transfers: FileTransferManager,
 }
 
 enum ServerCommand {
@@ -246,6 +291,15 @@ async fn run_server(
         .route("/api/status", get(status))
         .route("/api/metrics", get(metrics_handler))
         .route("/api/diagnostics", get(diagnostics_handler))
+        .route("/api/files", get(files_handler))
+        .route("/api/files/uploads", post(create_upload))
+        .route(
+            "/api/files/uploads/{id}",
+            get(upload_status).put(write_upload_chunk).delete(cancel_upload),
+        )
+        .route("/api/files/uploads/{id}/complete", post(complete_upload))
+        .route("/api/files/outbox/{id}", delete(remove_outbox_file))
+        .route("/api/files/outbox/{id}/download", get(download_outbox_file))
         .route("/api/pair", post(pair))
         .route("/api/disconnect", post(disconnect))
         .route("/api/webrtc/offer", post(webrtc_offer))
@@ -341,6 +395,7 @@ struct StatusResponse {
     mouse_enabled: bool,
     keyboard_enabled: bool,
     gestures_default: bool,
+    file_transfer_enabled: bool,
 }
 
 async fn status(State(state): State<Arc<AppState>>) -> Json<StatusResponse> {
@@ -354,6 +409,7 @@ async fn status(State(state): State<Arc<AppState>>) -> Json<StatusResponse> {
         mouse_enabled: state.options.mouse_enabled,
         keyboard_enabled: state.options.keyboard_enabled,
         gestures_default: state.options.gestures_default,
+        file_transfer_enabled: state.file_transfers.snapshot().enabled,
     })
 }
 
@@ -400,6 +456,183 @@ async fn diagnostics_handler(State(state): State<Arc<AppState>>, headers: Header
     Json(state.diagnostics.summary()).into_response()
 }
 
+async fn files_handler(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    let Some(session_id) = authorized_session(&headers, &state.session) else {
+        return api_error(StatusCode::UNAUTHORIZED, "invalid session token");
+    };
+    Json(state.file_transfers.browser_listing(&session_id)).into_response()
+}
+
+#[derive(Deserialize)]
+struct CreateUploadRequest {
+    #[serde(default)]
+    upload_id: Option<uuid::Uuid>,
+    name: String,
+    #[serde(default)]
+    mime: String,
+    size: u64,
+}
+
+async fn create_upload(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(request): Json<CreateUploadRequest>,
+) -> Response {
+    let Some(session_id) = authorize_mutation(&headers, &state.session) else {
+        return api_error(StatusCode::UNAUTHORIZED, "invalid session token or request origin");
+    };
+    match state
+        .file_transfers
+        .create_upload(
+            session_id,
+            request.upload_id,
+            &request.name,
+            &request.mime,
+            request.size,
+        )
+        .await
+    {
+        Ok(ticket) => (StatusCode::CREATED, Json(ticket)).into_response(),
+        Err(error) => file_error_response(error),
+    }
+}
+
+async fn upload_status(State(state): State<Arc<AppState>>, Path(id): Path<uuid::Uuid>, headers: HeaderMap) -> Response {
+    let Some(session_id) = authorized_session(&headers, &state.session) else {
+        return api_error(StatusCode::UNAUTHORIZED, "invalid session token");
+    };
+    match state.file_transfers.upload_progress(id, &session_id) {
+        Ok(progress) => Json(progress).into_response(),
+        Err(error) => file_error_response(error),
+    }
+}
+
+async fn write_upload_chunk(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<uuid::Uuid>,
+    headers: HeaderMap,
+    body: Body,
+) -> Response {
+    let Some(session_id) = authorize_mutation(&headers, &state.session) else {
+        return api_error(StatusCode::UNAUTHORIZED, "invalid session token or request origin");
+    };
+    let offset = match header_u64(&headers, "x-nfidb-offset") {
+        Ok(value) => value,
+        Err(message) => return api_error(StatusCode::BAD_REQUEST, message),
+    };
+    let Some(checksum) = headers
+        .get("x-nfidb-chunk-sha256")
+        .and_then(|value| value.to_str().ok())
+    else {
+        return api_error(StatusCode::BAD_REQUEST, "x-nfidb-chunk-sha256 is required");
+    };
+    let bytes = match to_bytes(body, UPLOAD_CHUNK_SIZE as usize + 1).await {
+        Ok(bytes) => bytes,
+        Err(_) => return api_error(StatusCode::PAYLOAD_TOO_LARGE, "upload chunk exceeds the 1 MiB limit"),
+    };
+    match state
+        .file_transfers
+        .write_upload_chunk(id, &session_id, offset, bytes, checksum)
+        .await
+    {
+        Ok(progress) => Json(progress).into_response(),
+        Err(error) => file_error_response(error),
+    }
+}
+
+async fn complete_upload(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<uuid::Uuid>,
+    headers: HeaderMap,
+) -> Response {
+    let Some(session_id) = authorize_mutation(&headers, &state.session) else {
+        return api_error(StatusCode::UNAUTHORIZED, "invalid session token or request origin");
+    };
+    match state.file_transfers.complete_upload(id, &session_id).await {
+        Ok(complete) => Json(complete).into_response(),
+        Err(error) => file_error_response(error),
+    }
+}
+
+async fn cancel_upload(State(state): State<Arc<AppState>>, Path(id): Path<uuid::Uuid>, headers: HeaderMap) -> Response {
+    let Some(session_id) = authorize_mutation(&headers, &state.session) else {
+        return api_error(StatusCode::UNAUTHORIZED, "invalid session token or request origin");
+    };
+    match state.file_transfers.cancel_upload(id, &session_id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => file_error_response(error),
+    }
+}
+
+async fn remove_outbox_file(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<uuid::Uuid>,
+    headers: HeaderMap,
+) -> Response {
+    if authorize_mutation(&headers, &state.session).is_none() {
+        return api_error(StatusCode::UNAUTHORIZED, "invalid session token or request origin");
+    }
+    if state.file_transfers.remove_outgoing(id) {
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        api_error(StatusCode::NOT_FOUND, "file is no longer queued")
+    }
+}
+
+async fn download_outbox_file(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<uuid::Uuid>,
+    headers: HeaderMap,
+) -> Response {
+    let Some(session_id) = authorized_session(&headers, &state.session) else {
+        return api_error(StatusCode::UNAUTHORIZED, "invalid session token");
+    };
+    let range_header = headers.get(header::RANGE).and_then(|value| value.to_str().ok());
+    match state.file_transfers.open_download(id, session_id, range_header).await {
+        Ok(download) => {
+            let size = if download.file.size == 0 {
+                0
+            } else if download.partial {
+                download.range.len()
+            } else {
+                download.file.size
+            };
+            let mut response = Response::new(download.body);
+            *response.status_mut() = if download.partial {
+                StatusCode::PARTIAL_CONTENT
+            } else {
+                StatusCode::OK
+            };
+            let headers = response.headers_mut();
+            insert_header(headers, header::CONTENT_TYPE, &download.file.mime);
+            insert_header(
+                headers,
+                header::CONTENT_DISPOSITION,
+                &content_disposition(&download.file.name),
+            );
+            insert_header(headers, header::CONTENT_LENGTH, &size.to_string());
+            headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+            headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+            headers.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
+            if download.partial {
+                insert_header(
+                    headers,
+                    header::CONTENT_RANGE,
+                    &format!(
+                        "bytes {}-{}/{}",
+                        download.range.start, download.range.end, download.file.size
+                    ),
+                );
+            }
+            if let Some(checksum) = download.file.sha256 {
+                insert_header(headers, "x-nfidb-sha256", &checksum);
+            }
+            response
+        }
+        Err(error) => file_error_response(error),
+    }
+}
+
 #[derive(Deserialize)]
 struct TokenRequest {
     token: String,
@@ -410,8 +643,11 @@ async fn disconnect(State(state): State<Arc<AppState>>, Json(request): Json<Toke
         return api_error(StatusCode::UNAUTHORIZED, "invalid session token");
     }
     state.peer.close().await;
+    let session_id = state.session.session_id();
+    state.file_transfers.cancel_session_uploads(&session_id);
     let _ = state.input.reset_all();
     state.metrics.set_connected(false);
+    state.metrics.reset_input_continuity();
     state.session.disconnect();
     StatusCode::NO_CONTENT.into_response()
 }
@@ -448,11 +684,32 @@ async fn websocket(State(state): State<Arc<AppState>>, headers: HeaderMap, upgra
 }
 
 fn authorized_cookie(headers: &HeaderMap, session: &SessionManager) -> bool {
+    authorized_session(headers, session).is_some()
+}
+
+fn authorized_session(headers: &HeaderMap, session: &SessionManager) -> Option<uuid::Uuid> {
     headers
         .get(header::COOKIE)
         .and_then(|value| value.to_str().ok())
         .and_then(|cookies| cookie_value(cookies, "nfidb_token"))
-        .is_some_and(|token| session.authorize(token))
+        .filter(|token| session.authorize(token))
+        .map(|_| session.session_id())
+}
+
+fn authorize_mutation(headers: &HeaderMap, session: &SessionManager) -> Option<uuid::Uuid> {
+    same_origin(headers)
+        .then(|| authorized_session(headers, session))
+        .flatten()
+}
+
+fn same_origin(headers: &HeaderMap) -> bool {
+    let Some(origin) = headers.get(header::ORIGIN).and_then(|value| value.to_str().ok()) else {
+        return true;
+    };
+    let Some(host) = headers.get(header::HOST).and_then(|value| value.to_str().ok()) else {
+        return false;
+    };
+    origin.eq_ignore_ascii_case(&format!("http://{host}")) || origin.eq_ignore_ascii_case(&format!("https://{host}"))
 }
 
 fn cookie_value<'a>(cookies: &'a str, name: &str) -> Option<&'a str> {
@@ -519,6 +776,7 @@ async fn websocket_loop(socket: WebSocket, state: Arc<AppState>) {
         }
     }
     let _ = state.input.reset_all();
+    state.metrics.reset_input_continuity();
 }
 
 #[derive(Deserialize)]
@@ -576,14 +834,61 @@ fn api_error(status: StatusCode, message: &str) -> Response {
     (status, Json(serde_json::json!({ "error": message }))).into_response()
 }
 
+fn file_error_response(error: FileTransferError) -> Response {
+    let status = match error.kind {
+        FileTransferErrorKind::Disabled => StatusCode::SERVICE_UNAVAILABLE,
+        FileTransferErrorKind::Unauthorized => StatusCode::UNAUTHORIZED,
+        FileTransferErrorKind::NotFound => StatusCode::NOT_FOUND,
+        FileTransferErrorKind::Invalid => StatusCode::BAD_REQUEST,
+        FileTransferErrorKind::TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+        FileTransferErrorKind::Conflict => StatusCode::CONFLICT,
+        FileTransferErrorKind::Range => StatusCode::RANGE_NOT_SATISFIABLE,
+        FileTransferErrorKind::Io => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    (
+        status,
+        Json(serde_json::json!({
+            "error": error.message,
+            "expected_offset": error.expected_offset,
+        })),
+    )
+        .into_response()
+}
+
+fn header_u64(headers: &HeaderMap, name: &'static str) -> Result<u64, &'static str> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse().ok())
+        .ok_or("x-nfidb-offset must be an unsigned integer")
+}
+
+fn insert_header(headers: &mut HeaderMap, name: impl header::IntoHeaderName, value: &str) {
+    if let Ok(value) = HeaderValue::from_str(value) {
+        headers.insert(name, value);
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::cookie_value;
+    use axum::http::{HeaderMap, HeaderValue, header};
+
+    use super::{cookie_value, same_origin};
 
     #[test]
     fn extracts_exact_cookie_without_prefix_confusion() {
         let cookies = "theme=dark; nfidb_token=correct-token; nfidb_token_old=wrong";
         assert_eq!(cookie_value(cookies, "nfidb_token"), Some("correct-token"));
         assert_eq!(cookie_value(cookies, "missing"), None);
+    }
+
+    #[test]
+    fn accepts_only_matching_mutation_origins_when_origin_is_present() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::HOST, HeaderValue::from_static("192.168.1.10:47831"));
+        headers.insert(header::ORIGIN, HeaderValue::from_static("http://192.168.1.10:47831"));
+        assert!(same_origin(&headers));
+        headers.insert(header::ORIGIN, HeaderValue::from_static("http://attacker.test"));
+        assert!(!same_origin(&headers));
     }
 }

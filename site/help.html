@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="A concise guide to NFiDB pairing, Apple Pencil, iPad mouse and keyboard control, gestures, video controls, and troubleshooting." />
+    <meta name="description" content="A concise guide to NFiDB pairing, Apple Pencil, iPad mouse and keyboard control, gestures, file transfer, video controls, and troubleshooting." />
     <meta name="theme-color" content="#101514" />
     <title>NFiDB Help</title>
     <link rel="icon" href="favicon.svg" />
@@ -17,11 +17,11 @@
 
     <main>
       <section class="page-hero help-hero">
-        <p class="eyebrow"><i></i> v0.4.0 Alpha guide</p>
-        <h1>One surface.<br /><em>Four ways to work.</em></h1>
-        <p class="lede">Draw with Apple Pencil, navigate with your fingers, use an iPad trackpad or mouse, and type into Windows—all from the same local Safari session.</p>
+        <p class="eyebrow"><i></i> v0.5.0 Alpha guide</p>
+        <h1>One surface.<br /><em>Five ways to work.</em></h1>
+        <p class="lede">Draw, navigate, point, type, and exchange files with Windows—all from the same local Safari session.</p>
         <div class="help-jump" aria-label="Help topics">
-          <a href="#start">Start</a><a href="#input">Input</a><a href="#gestures">Gestures</a><a href="#controls">Controls</a><a href="#fixes">Troubleshooting</a>
+          <a href="#start">Start</a><a href="#input">Input</a><a href="#gestures">Gestures</a><a href="#files">Files</a><a href="#controls">Controls</a><a href="#fixes">Troubleshooting</a>
         </div>
       </section>
 
@@ -30,6 +30,7 @@
         <article><span>02</span><h2>Fingers</h2><p>Windows touch or three-finger app controls.</p></article>
         <article><span>03</span><h2>Pointer</h2><p>Trackpad or mouse movement, clicks, and scrolling.</p></article>
         <article><span>04</span><h2>Keyboard</h2><p>Shortcuts, held keys, symbols, and Unicode text.</p></article>
+        <article><span>05</span><h2>Files</h2><p>Explicit, paired transfers in either direction.</p></article>
       </section>
 
       <section id="start" class="help-section split-help">
@@ -97,6 +98,19 @@
         </div>
       </section>
 
+      <section id="files" class="help-section split-help">
+        <div class="section-copy">
+          <p class="eyebrow">Files in either direction</p>
+          <h2>Choose what moves.<br />Nothing else is shared.</h2>
+          <p>Open <strong>Files</strong> on Windows to queue downloads for the iPad. Open <strong>Files</strong> in the iPad toolbar to choose uploads or download those queued items.</p>
+        </div>
+        <div class="fix-list">
+          <details open><summary>Send to Windows</summary><p>Choose one or more iPad files. Progress, cancel, and retry stay in the panel. Completed files appear in <strong>Downloads\NFiDB Inbox</strong> by default.</p></details>
+          <details><summary>Send to iPad</summary><p>Use <strong>Add files for iPad</strong> on Windows. Safari's normal download manager handles progress and saving to Files.</p></details>
+          <details><summary>Safety and drawing</summary><p>Only explicit files are exposed. Duplicate uploads do not overwrite. Transfers are rate-limited and pause by default while Pencil or touch is down.</p></details>
+        </div>
+      </section>
+
       <section id="controls" class="help-section">
         <div class="section-heading">
           <div><p class="eyebrow">The iPad toolbar</p><h2>Everything in the top strip.</h2></div>
@@ -109,6 +123,7 @@
           <div><strong>Touch</strong><span>Forwards finger contact as native Windows touch. This pauses three-finger gestures.</span></div>
           <div><strong>Gestures</strong><span>Enables or disables the three-finger Windows commands.</span></div>
           <div><strong>Keyboard</strong><span>Opens text entry plus Esc, Tab, Backspace, Enter, app, Task View, and minimize buttons.</span></div>
+          <div><strong>Files</strong><span>Opens upload/download queues, progress, cancellation, checksums, and recent transfer results.</span></div>
           <div><strong>Stats</strong><span>Shows video, bandwidth, latency, loss, frame timing, pressure, tilt, and input integrity.</span></div>
           <div><strong>Fullscreen</strong><span>Requests browser fullscreen. Add to Home Screen gives Safari the least chrome.</span></div>
           <div><strong>×</strong><span>Disconnects, releases held input, and returns to pairing.</span></div>
@@ -127,13 +142,14 @@
           <details><summary>Connected but no picture</summary><p>NFiDB now requests fresh video keyframes until Safari presents a frame. Give it a few seconds; if it still does not appear, reload the page and pair again.</p></details>
           <details><summary>No pressure in a drawing app</summary><p>Enable the app's Windows Ink/pointer input option. Run <code>pointer-sink.exe --self-test</code> to verify the native pen path independently.</p></details>
           <details><summary>Need measurements</summary><p>Open <strong>Stats</strong> on the iPad or <strong>Diagnostics</strong> on Windows. Reports stay local unless you export them.</p></details>
+          <details><summary>A file transfer stopped</summary><p>Keep Safari in the foreground for uploads, then choose Retry. Safari downloads continue in its native download manager. Pairing reset intentionally cancels unfinished transfers.</p></details>
         </div>
       </section>
 
       <section class="help-cta">
         <p class="eyebrow">Trusted LAN only · no account · no cloud relay</p>
         <h2>Ready to draw?</h2>
-        <div class="actions"><a class="primary" href="download.html">Download v0.4.0 Alpha</a><a class="secondary" href="https://github.com/mlo0352/nfidb/blob/main/docs/TEST_MATRIX.md">Read the test matrix</a></div>
+        <div class="actions"><a class="primary" href="download.html">Download v0.5.0 Alpha</a><a class="secondary" href="https://github.com/mlo0352/nfidb/blob/main/docs/TEST_MATRIX.md">Read the test matrix</a></div>
       </section>
     </main>
 

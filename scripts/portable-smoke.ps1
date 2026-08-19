@@ -69,6 +69,9 @@ try {
     if (-not $status.mouse_enabled -or -not $status.keyboard_enabled -or -not $status.gestures_default) {
         throw 'Portable host did not advertise the default remote mouse, keyboard, and gesture capabilities'
     }
+    if (-not $status.file_transfer_enabled -or $client.Content -notmatch 'SEND TO WINDOWS') {
+        throw 'Portable host did not embed and advertise the bidirectional file-transfer client'
+    }
     Wait-Process -Id $process.Id -Timeout 20
     if ($process.ExitCode -ne 0) { throw "Portable host exited with code $($process.ExitCode)" }
     $metrics = Get-Content -Raw -LiteralPath $metricsPath | ConvertFrom-Json

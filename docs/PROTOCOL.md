@@ -102,7 +102,17 @@ The client computes the displayed video rectangle for fit, fill, or 1:1 mode, th
 - `GET /api/ws`: authenticated WebSocket control/input fallback using the pairing cookie.
 - `GET /api/metrics`: authenticated current host counters.
 - `GET /api/diagnostics`: authenticated processed summary of the bounded diagnostic recording.
+- `GET /api/files`: authenticated Outbox, current-session uploads, bounded recent history, limits, rates, and counters. Windows source paths are never serialized.
+- `POST /api/files/uploads`: creates a current-session staged upload from `{upload_id, name, mime, size}` and returns its UUID, verified offset, and 1 MiB chunk size. Retrying the same browser-generated UUID returns the same ticket.
+- `GET /api/files/uploads/{id}`: returns the authoritative received offset for interruption recovery.
+- `PUT /api/files/uploads/{id}`: accepts one raw chunk with `x-nfidb-offset` and `x-nfidb-chunk-sha256`; stale or corrupt chunks return `409` and `expected_offset`.
+- `POST /api/files/uploads/{id}/complete`: requires the declared size, computes the complete SHA-256, and atomically publishes the file in the Inbox. Repeating completion after a lost response returns the same result without creating a duplicate.
+- `DELETE /api/files/uploads/{id}`: cancels the upload and removes its owned partial file.
+- `GET /api/files/outbox/{id}/download`: streams an explicitly queued Windows file with attachment headers and single-range support.
+- `DELETE /api/files/outbox/{id}`: removes the queue entry without deleting the Windows source file.
 - `POST /api/disconnect`: closes the peer, resets native input, and invalidates the token.
+
+File mutations additionally reject a present `Origin` header unless it exactly matches the request host. Upload names are leaf-only, Windows-reserved/invalid characters are neutralized, files never overwrite an Inbox entry, and active transfer requests recheck the session during pacing. Bulk payloads are HTTP-only; WebRTC DataChannel and WebSocket queues remain reserved for bounded input/control messages.
 
 WebRTC uses local host candidates only—there is no STUN, TURN, or relay service. Video is H.264; input uses a reliable ordered DataChannel named `nfidb-input`.
 

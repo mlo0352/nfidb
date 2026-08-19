@@ -8,7 +8,9 @@ use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-pub use config::{AppConfig, CaptureMode, InputConfig, NetworkConfig, UiConfig, VideoConfig, VideoProfile};
+pub use config::{
+    AppConfig, CaptureMode, FileTransferConfig, InputConfig, NetworkConfig, UiConfig, VideoConfig, VideoProfile,
+};
 pub use metrics::{Metrics, MetricsSnapshot};
 use nfidb_protocol::{CommandInput, KeyboardInput, PointerBatch, TextInput, WheelInput};
 pub use session::{PairMethod, PairResult, PublicSession, SessionError, SessionManager};

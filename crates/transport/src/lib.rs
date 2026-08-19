@@ -6,11 +6,16 @@ use nfidb_core::{InputSink, Metrics};
 use nfidb_protocol::InputMessage;
 
 mod diagnostics;
+mod file_transfer;
 mod server;
 mod webrtc_session;
 
 pub use diagnostics::{
     ClientDiagnosticSample, DiagnosticReport, DiagnosticSummary, Distribution, RecordedDiagnosticSample,
+};
+pub use file_transfer::{
+    ActiveUpload, BrowserFileListing, CompletedTransfer, FileTransferManager, FileTransferOptions,
+    FileTransferSnapshot, OutgoingFile, TransferDirection, TransferStats,
 };
 pub use server::{ServerHandle, ServerInfo, ServerOptions};
 

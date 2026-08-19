@@ -112,12 +112,35 @@ pub struct UiConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
+pub struct FileTransferConfig {
+    pub enabled: bool,
+    pub max_file_size_mib: u64,
+    pub rate_limit_mbps: u32,
+    pub pause_while_drawing: bool,
+    pub inbox_directory: Option<PathBuf>,
+}
+
+impl Default for FileTransferConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_file_size_mib: 10 * 1024,
+            rate_limit_mbps: 32,
+            pause_while_drawing: true,
+            inbox_directory: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AppConfig {
     pub mode: CaptureMode,
     pub monitor_index: usize,
     pub network: NetworkConfig,
     pub video: VideoConfig,
     pub input: InputConfig,
+    pub file_transfer: FileTransferConfig,
     pub ui: UiConfig,
 }
 
@@ -129,6 +152,7 @@ impl Default for AppConfig {
             network: NetworkConfig::default(),
             video: VideoConfig::default(),
             input: InputConfig::default(),
+            file_transfer: FileTransferConfig::default(),
             ui: UiConfig::default(),
         }
     }
@@ -174,6 +198,8 @@ mod tests {
         assert_eq!(decoded.network.port, 47_831);
         assert_eq!(decoded.video.profile, VideoProfile::Balanced);
         assert!(!decoded.input.touch);
+        assert!(decoded.file_transfer.enabled);
+        assert_eq!(decoded.file_transfer.max_file_size_mib, 10 * 1024);
     }
 
     #[test]
@@ -189,5 +215,6 @@ mod tests {
         assert!(decoded.input.mouse);
         assert!(decoded.input.keyboard);
         assert!(decoded.input.gestures);
+        assert!(decoded.file_transfer.enabled);
     }
 }

@@ -1,4 +1,11 @@
 import { disconnect, getDiagnosticSummary, getMetrics, getStatus, pairWithPin, pairWithQr, sendOffer, type HostDiagnosticSummary, type HostMetrics, type HostStatus } from "./api";
+import {
+  getFileListing,
+  outgoingDownloadUrl,
+  removeOutgoingFile,
+  uploadFile,
+  type FileListing,
+} from "./file-transfer";
 import type { FitMode } from "./geometry";
 import { normalizePinEntry } from "./pin-entry";
 import { PointerEngine } from "./pointer-engine";
@@ -50,6 +57,15 @@ interface LiveClientDiagnostic {
     captureToPresentP95Ms: number | null;
     estimatedPipelineMs: number;
   };
+}
+
+interface QueuedUpload {
+  localId: number;
+  file: File;
+  uploaded: number;
+  state: "queued" | "uploading" | "completed" | "canceled" | "failed";
+  message: string;
+  retries: number;
 }
 
 export interface ClientDiagnosticSnapshot {
@@ -110,6 +126,14 @@ export class NfidbApp {
   private readonly captureToPresentMs: number[] = [];
   private readonly receiveToPresentMs: number[] = [];
   private readonly frameProcessingMs: number[] = [];
+  private fileListing: FileListing | null = null;
+  private fileRefreshTimer = 0;
+  private fileRefreshActive = false;
+  private readonly uploadQueue: QueuedUpload[] = [];
+  private uploadQueueActive = false;
+  private activeUploadId = 0;
+  private activeUploadAbort: AbortController | null = null;
+  private nextUploadId = 1;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -265,6 +289,7 @@ export class NfidbApp {
             <button id="touchButton" class="tool-button" aria-pressed="false">Touch off</button>
             <button id="gestureButton" class="tool-button" aria-pressed="true">Gestures on</button>
             <button id="keyboardButton" class="tool-button" aria-pressed="false">Keyboard</button>
+            <button id="filesButton" class="tool-button" aria-pressed="false">Files</button>
             <button id="statsButton" class="tool-button" aria-pressed="false">Stats</button>
             <button id="fullscreenButton" class="icon-button" aria-label="Fullscreen">⛶</button>
             <button id="disconnectButton" class="icon-button danger" aria-label="Disconnect">×</button>
@@ -280,6 +305,10 @@ export class NfidbApp {
           <div><span>REMOTE INPUT</span><b id="remoteInputStats">Waiting…</b></div>
           <div><span>INTEGRITY</span><b id="integrityStats">Waiting…</b></div>
           <div><span>RECORDER</span><b id="recorderStats">Starting…</b></div>
+        </aside>
+        <aside id="filesPanel" class="files-panel" hidden aria-label="File transfer">
+          <div class="panel-header"><div><b>FILES</b><small>Paired session only</small></div><button id="filesClose" class="icon-button" aria-label="Close files">×</button></div>
+          <div id="filesContent" class="files-content"><p class="panel-empty">Loading transfer queue…</p></div>
         </aside>
         <section id="keyboardPanel" class="keyboard-panel" hidden aria-label="Remote keyboard">
           <div class="keyboard-panel-header">
@@ -347,6 +376,9 @@ export class NfidbApp {
     const keyboardButton = this.requiredElement<HTMLButtonElement>("keyboardButton");
     keyboardButton.disabled = this.status?.keyboard_enabled === false;
     keyboardButton.title = keyboardButton.disabled ? "Keyboard forwarding is disabled on Windows" : "Open remote keyboard";
+    const filesButton = this.requiredElement<HTMLButtonElement>("filesButton");
+    filesButton.disabled = this.status?.file_transfer_enabled === false;
+    filesButton.title = filesButton.disabled ? "File transfer is disabled on Windows" : "Exchange files with Windows";
   }
 
   private markFirstVideoFrame(): void {
@@ -473,6 +505,15 @@ export class NfidbApp {
       this.requiredElement("keyboardButton").setAttribute("aria-pressed", "false");
       this.scheduleToolbarHide();
     });
+    this.requiredElement("filesButton").addEventListener("click", () => {
+      const panel = this.requiredElement<HTMLElement>("filesPanel");
+      if (panel.hidden) {
+        this.openFilesPanel();
+      } else {
+        this.closeFilesPanel();
+      }
+    });
+    this.requiredElement("filesClose").addEventListener("click", () => this.closeFilesPanel());
     for (const button of this.root.querySelectorAll<HTMLButtonElement>("[data-remote-key]")) {
       button.addEventListener("click", () => {
         const code = button.dataset.remoteKey;
@@ -515,6 +556,249 @@ export class NfidbApp {
     this.requiredElement("disconnectButton").addEventListener("click", () => void this.disconnect());
     this.requiredElement("toolbarReveal").addEventListener("pointerdown", () => this.showToolbar());
     this.requiredElement("surface").addEventListener("pointerdown", () => this.scheduleToolbarHide(), { passive: true });
+  }
+
+  private openFilesPanel(): void {
+    const panel = this.requiredElement<HTMLElement>("filesPanel");
+    panel.hidden = false;
+    this.requiredElement("filesButton").setAttribute("aria-pressed", "true");
+    this.renderFilesContent();
+    void this.refreshFileListing();
+    window.clearInterval(this.fileRefreshTimer);
+    this.fileRefreshTimer = window.setInterval(() => void this.refreshFileListing(), 1500);
+    this.scheduleToolbarHide();
+  }
+
+  private closeFilesPanel(): void {
+    this.requiredElement<HTMLElement>("filesPanel").hidden = true;
+    this.requiredElement("filesButton").setAttribute("aria-pressed", "false");
+    window.clearInterval(this.fileRefreshTimer);
+    this.fileRefreshTimer = 0;
+    this.scheduleToolbarHide();
+  }
+
+  private async refreshFileListing(): Promise<void> {
+    if (this.fileRefreshActive) {
+      return;
+    }
+    this.fileRefreshActive = true;
+    try {
+      this.fileListing = await getFileListing();
+      this.renderFilesContent();
+    } catch (error) {
+      const content = this.root.querySelector<HTMLElement>("#filesContent");
+      if (content) {
+        content.innerHTML = `<p class="transfer-error">${escapeHtml(error instanceof Error ? error.message : String(error))}</p>`;
+      }
+    } finally {
+      this.fileRefreshActive = false;
+    }
+  }
+
+  private renderFilesContent(): void {
+    const content = this.root.querySelector<HTMLElement>("#filesContent");
+    if (!content) {
+      return;
+    }
+    const listing = this.fileListing;
+    const queued = this.uploadQueue;
+    const uploadRows = queued.length === 0
+      ? `<p class="panel-empty">Nothing queued from this iPad.</p>`
+      : queued.map((item) => {
+          const percent = item.file.size === 0 ? 100 : Math.min(100, item.uploaded / item.file.size * 100);
+          const action = item.state === "queued" || item.state === "uploading"
+            ? `<button data-cancel-upload="${item.localId}">Cancel</button>`
+            : item.state === "failed" || item.state === "canceled"
+              ? `<div class="transfer-actions"><button data-retry-upload="${item.localId}">Retry</button><button data-dismiss-upload="${item.localId}">Remove</button></div>`
+              : `<button data-dismiss-upload="${item.localId}">Dismiss</button>`;
+          const detail = item.message || `${formatBytes(item.uploaded)} / ${formatBytes(item.file.size)}`;
+          return `<div class="transfer-row upload-row" data-state="${item.state}">
+            <div><b>${escapeHtml(item.file.name)}</b><small>${escapeHtml(detail)}</small></div>${action}
+            <i><span style="width:${percent.toFixed(2)}%"></span></i>
+          </div>`;
+        }).join("");
+    const outboxRows = !listing || listing.outbox.length === 0
+      ? `<p class="panel-empty">No Windows files are queued for this iPad.</p>`
+      : listing.outbox.map((file) => `<div class="transfer-row">
+          <div><b>${escapeHtml(file.name)}</b><small>${formatBytes(file.size)} · ${escapeHtml(file.mime)}${file.sha256 ? ` · SHA-256 ${file.sha256.slice(0, 12)}…` : " · checksum pending"}</small></div>
+          <div class="transfer-actions"><a data-download-id="${file.id}" href="${outgoingDownloadUrl(file.id)}" download="${escapeHtml(file.name)}">Download</a><button data-remove-outgoing="${file.id}">Remove</button></div>
+        </div>`).join("");
+    const recentRows = !listing || listing.recent.length === 0
+      ? `<p class="panel-empty">No transfers completed in this run.</p>`
+      : listing.recent.slice(0, 6).map((transfer) => `<div class="recent-transfer">
+          <span>${transfer.direction === "ipad-to-windows" ? "iPad → Windows" : "Windows → iPad"}</span>
+          <b>${escapeHtml(transfer.name)}</b><small>${formatBytes(transfer.bytes)} · ${escapeHtml(transfer.status)} · ${transfer.average_mbps.toFixed(2)} Mbps</small>
+        </div>`).join("");
+    const stats = listing?.stats;
+    content.innerHTML = `
+      <div class="transfer-summary">
+        <span>↑ ${stats?.upload_mbps.toFixed(2) ?? "0.00"} Mbps</span><span>↓ ${stats?.download_mbps.toFixed(2) ?? "0.00"} Mbps</span><span>${listing?.rate_limit_mbps ?? 0} Mbps limit</span>
+      </div>
+      <section class="file-section">
+        <div class="file-section-heading"><div><b>SEND TO WINDOWS</b><small>${listing ? `Saves to ${escapeHtml(listing.inbox_name)}` : "Verified 1 MiB chunks"}</small></div><button id="chooseFilesButton" class="file-primary" ${listing?.enabled === false ? "disabled" : ""}>Choose files</button></div>
+        <input id="filePicker" type="file" multiple hidden />
+        ${uploadRows}
+      </section>
+      <section class="file-section">
+        <div class="file-section-heading"><div><b>FROM WINDOWS</b><small>Only files queued in the desktop app</small></div></div>
+        ${outboxRows}
+      </section>
+      <section class="file-section recent-section">
+        <div class="file-section-heading"><div><b>RECENT</b><small>Local session history</small></div></div>
+        ${recentRows}
+      </section>
+      <p class="file-safety">Bulk traffic is rate-limited${listing?.pause_while_drawing ? " and pauses while Pencil or touch is down" : ""}. Safari’s download manager shows download progress.</p>`;
+    this.bindFileControls();
+  }
+
+  private bindFileControls(): void {
+    const picker = this.root.querySelector<HTMLInputElement>("#filePicker");
+    this.root.querySelector("#chooseFilesButton")?.addEventListener("click", () => picker?.click());
+    picker?.addEventListener("change", () => {
+      this.queueUploads(Array.from(picker.files ?? []));
+      picker.value = "";
+    });
+    for (const button of this.root.querySelectorAll<HTMLButtonElement>("[data-cancel-upload]")) {
+      button.addEventListener("click", () => this.cancelQueuedUpload(Number(button.dataset.cancelUpload)));
+    }
+    for (const button of this.root.querySelectorAll<HTMLButtonElement>("[data-retry-upload]")) {
+      button.addEventListener("click", () => {
+        const item = this.uploadQueue.find((candidate) => candidate.localId === Number(button.dataset.retryUpload));
+        if (item) {
+          item.uploaded = 0;
+          item.retries = 0;
+          item.message = "Waiting…";
+          item.state = "queued";
+          void this.processUploadQueue();
+          this.renderFilesContent();
+        }
+      });
+    }
+    for (const button of this.root.querySelectorAll<HTMLButtonElement>("[data-dismiss-upload]")) {
+      button.addEventListener("click", () => {
+        const index = this.uploadQueue.findIndex((candidate) => candidate.localId === Number(button.dataset.dismissUpload));
+        if (index >= 0) {
+          this.uploadQueue.splice(index, 1);
+          this.renderFilesContent();
+        }
+      });
+    }
+    for (const button of this.root.querySelectorAll<HTMLButtonElement>("[data-remove-outgoing]")) {
+      button.addEventListener("click", async () => {
+        const id = button.dataset.removeOutgoing;
+        if (!id) {
+          return;
+        }
+        button.disabled = true;
+        try {
+          await removeOutgoingFile(id);
+          await this.refreshFileListing();
+        } catch (error) {
+          this.showNotice(error instanceof Error ? error.message : String(error));
+        }
+      });
+    }
+    for (const link of this.root.querySelectorAll<HTMLAnchorElement>("[data-download-id]")) {
+      link.addEventListener("click", () => {
+        this.showNotice("Download handed to Safari. Use Safari’s download button to view progress or save to Files.");
+      });
+    }
+  }
+
+  private queueUploads(files: File[]): void {
+    const maximum = this.fileListing?.max_file_size_bytes ?? Number.MAX_SAFE_INTEGER;
+    let rejected = 0;
+    for (const file of files) {
+      if (file.size > maximum) {
+        rejected += 1;
+        continue;
+      }
+      this.uploadQueue.push({
+        localId: this.nextUploadId++,
+        file,
+        uploaded: 0,
+        state: "queued",
+        message: "Waiting…",
+        retries: 0,
+      });
+    }
+    if (rejected > 0) {
+      this.showNotice(`${rejected} file(s) exceeded the Windows file-size limit.`);
+    }
+    this.renderFilesContent();
+    void this.processUploadQueue();
+  }
+
+  private async processUploadQueue(): Promise<void> {
+    if (this.uploadQueueActive) {
+      return;
+    }
+    this.uploadQueueActive = true;
+    try {
+      for (;;) {
+        const item = this.uploadQueue.find((candidate) => candidate.state === "queued");
+        if (!item) {
+          break;
+        }
+        item.state = "uploading";
+        item.message = "Starting…";
+        this.activeUploadId = item.localId;
+        this.activeUploadAbort = new AbortController();
+        this.renderFilesContent();
+        try {
+          const complete = await uploadFile(
+            item.file,
+            {
+              onProgress: (uploaded, total) => {
+                item.uploaded = uploaded;
+                item.message = uploaded >= total
+                  ? "Verifying on Windows…"
+                  : `${formatBytes(uploaded)} / ${formatBytes(total)}`;
+                this.renderFilesContent();
+              },
+              onRetry: (attempt) => {
+                item.retries += 1;
+                item.message = `Connection retry ${attempt}…`;
+                this.renderFilesContent();
+              },
+            },
+            this.activeUploadAbort.signal,
+          );
+          item.uploaded = item.file.size;
+          item.state = "completed";
+          item.message = `Saved as ${complete.name} · SHA-256 ${complete.sha256.slice(0, 12)}…`;
+        } catch (error) {
+          if (error instanceof DOMException && error.name === "AbortError") {
+            item.state = "canceled";
+            item.message = "Canceled; partial data removed";
+          } else {
+            item.state = "failed";
+            item.message = error instanceof Error ? error.message : String(error);
+          }
+        } finally {
+          this.activeUploadAbort = null;
+          this.activeUploadId = 0;
+          this.renderFilesContent();
+          await this.refreshFileListing();
+        }
+      }
+    } finally {
+      this.uploadQueueActive = false;
+    }
+  }
+
+  private cancelQueuedUpload(localId: number): void {
+    const item = this.uploadQueue.find((candidate) => candidate.localId === localId);
+    if (!item) {
+      return;
+    }
+    if (this.activeUploadId === localId) {
+      this.activeUploadAbort?.abort();
+    } else if (item.state === "queued") {
+      item.state = "canceled";
+      item.message = "Canceled before upload";
+      this.renderFilesContent();
+    }
   }
 
   private openControlSocket(): void {
@@ -1013,7 +1297,8 @@ export class NfidbApp {
     this.hideToolbarTimer = window.setTimeout(() => {
       if (
         this.root.querySelector<HTMLElement>("#statsPanel")?.hidden !== false &&
-        this.root.querySelector<HTMLElement>("#keyboardPanel")?.hidden !== false
+        this.root.querySelector<HTMLElement>("#keyboardPanel")?.hidden !== false &&
+        this.root.querySelector<HTMLElement>("#filesPanel")?.hidden !== false
       ) {
         this.root.querySelector("#toolbar")?.classList.remove("visible");
       }
@@ -1021,6 +1306,10 @@ export class NfidbApp {
   }
 
   private async disconnect(): Promise<void> {
+    window.clearInterval(this.fileRefreshTimer);
+    this.fileRefreshTimer = 0;
+    this.activeUploadAbort?.abort();
+    this.activeUploadAbort = null;
     this.stopDiagnosticRecording();
     this.stopVideoRecovery();
     this.pointerEngine?.cancelAll();
@@ -1119,10 +1408,16 @@ async function waitForIceGathering(peer: RTCPeerConnection, timeoutMs: number): 
 }
 
 function formatBytes(bytes: number): string {
-  if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(0)} KiB`;
+  if (bytes < 1024) {
+    return `${bytes.toFixed(0)} B`;
   }
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KiB`;
+  }
+  if (bytes < 1024 * 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+  }
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GiB`;
 }
 
 function escapeHtml(value: string): string {

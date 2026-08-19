@@ -8,6 +8,8 @@ Windows PT_PEN <- native injector <- binary batches <- DataChannel <- Safari Poi
 Windows SendInput <- mouse/key/text/wheel messages <- DataChannel <- iPad trackpad/keyboard/IME
 Windows commands <- semantic gesture messages <- DataChannel <- three-finger recognizer
                                       ^ WebSocket fallback/control/1 Hz diagnostics
+iPad Files picker -> verified HTTP chunks -> private staging -> NFiDB Inbox on Windows
+iPad Files/Safari <- ranged HTTP stream <- explicit NFiDB Outbox <- Windows file picker
 ```
 
 ## Workspace boundaries
@@ -15,7 +17,7 @@ Windows commands <- semantic gesture messages <- DataChannel <- three-finger rec
 - `crates/protocol`: fixed binary pointer packets and source-to-target mapping. It has no UI or transport knowledge.
 - `crates/core`: configuration, session credentials, metrics, and the abstract `InputSink`.
 - `crates/host-windows`: monitor enumeration, Windows Graphics Capture, H.264 encoding, and `PT_PEN`/`PT_TOUCH` injection.
-- `crates/transport`: embedded static assets, HTTP pairing, WebSocket control, mDNS, and WebRTC signaling/media.
+- `crates/transport`: embedded static assets, HTTP pairing/file transfer, WebSocket control, mDNS, and WebRTC signaling/media.
 - `apps/windows-host`: CLI, egui shell, mode selection, QR display, and subsystem lifecycle.
 - `apps/ipad-web`: Safari UI, Pointer Events sampling, coordinate mapping, diagnostics, and the WebRTC initiator.
 - `tools/pointer-sink`: an independent `WM_POINTER` receiver and deterministic synthetic-pen self-test.
@@ -37,6 +39,16 @@ The host validates packet version, message kind, exact/minimum length, enum valu
 ## Session lifecycle
 
 Each process run or credential rotation creates a UUID, random six-digit PIN, random 256-bit QR secret, and no access token. A correct PIN or QR secret issues a random 256-bit token, stored server-side only as SHA-256. The WebSocket receives it through an HttpOnly same-site cookie so access tokens do not appear in URLs or request logs. One `ActivePeer` replaces and closes any prior WebRTC peer. Manual reset and focused-window expiry rotation invalidate the old token and signal every active transport to close.
+
+## File-transfer path
+
+Bulk files deliberately do not use the reliable real-time DataChannel. The authenticated HTTP path keeps large transfers out of the input queue, supports browser-native download streaming/ranges, and bounds upload memory to one 1 MiB chunk per request. The file manager owns no general filesystem browser: Windows exposes only canonical regular files explicitly chosen into an in-memory Outbox, while iPad uploads can end only in a host-selected Inbox.
+
+Safari creates an upload ticket containing a sanitized leaf name and declared size, then sends sequential chunks with an exact offset and a SHA-256 digest. The host verifies each digest before writing, rejects stale/out-of-order offsets with the authoritative resume point, and holds partial data in `%APPDATA%\NFiDB\transfer-staging`. Completion requires the declared byte count, hashes the complete staged file, selects a collision-free Inbox name, then atomically renames it. Cancel, disconnect, credential rotation, or the next process start removes owned `.part` files.
+
+Downloads reopen and revalidate the queued file's size/modification timestamp, support one byte range, emit `Content-Disposition` and `Accept-Ranges`, and stream fixed 64 KiB buffers. Queue metadata contains no source path. A single checksum worker prevents a large selection from spawning unbounded hashing threads. Transfer rate/history state is bounded, and each streamed block checks that the paired session is still current.
+
+The transfer pacer is independent of WebRTC. It uses a configurable throughput ceiling and, by default, waits while host metrics report any active pointer contact. This is application-level prioritization rather than network QoS, but prevents the file path from intentionally filling the real-time input channel or consuming unbounded RAM.
 
 ## Diagnostic recorder
 

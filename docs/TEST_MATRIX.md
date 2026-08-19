@@ -1,6 +1,6 @@
 # Test matrix
 
-Last updated: 2026-08-18. Development host: Windows 11 Pro x64 build 22631, Intel Core i9-13900K, Rust 1.97.1 (`x86_64-pc-windows-msvc`), Node 22.22.3, npm 10.9.8, Microsoft Edge headless. Profile/soak results are release `0.2.0`; startup, diagnostics, credential rotation, navigation, browser-upgrade, and physical regressions are the `0.3.1`–`0.3.4` candidates. Remote-input rows and the five-second comparison runs are the `0.4.0` alpha.
+Last updated: 2026-08-19. Development host: Windows 11 Pro x64 build 22631, Intel Core i9-13900K, Rust 1.97.1 (`x86_64-pc-windows-msvc`), Node 22.22.3, npm 10.9.8, Microsoft Edge headless. Profile/soak results are release `0.2.0`; startup, diagnostics, credential rotation, navigation, browser-upgrade, and physical regressions are the `0.3.1`–`0.3.4` candidates. Remote-input rows and the five-second comparison runs are the `0.4.0` alpha. File-transfer rows are the `0.5.0` alpha candidate.
 
 | Layer | Test | Result | Evidence |
 | --- | --- | --- | --- |
@@ -16,11 +16,16 @@ Last updated: 2026-08-18. Development host: Windows 11 Pro x64 build 22631, Inte
 | Native input sustained | User32 injection, transient queue backpressure, and reverse-chronological history recovery | PASS | Exact packaged v0.3.3 primary-tip run: 14,400/14,400 samples over 59.83 s at 240.66 Hz; 5,375 coalesced samples recovered; zero missing/excess/value/barrel error; full pressure and ±60° tilt ranges; 50 ms bounded `ERROR_NOT_READY` retry |
 | Browser remote input | Option+Tab ordering, Delete/Backspace and Ctrl+Option+Delete distinction, Unicode text, normalized wheel, three-finger command, mouse hover/click | PASS | deterministic browser event tests |
 | Native remote mapping | DOM key rows/modifiers/navigation/F1–F24/numpad, virtual-desktop mouse buttons, fractional wheel accumulation, held-state reset construction | PASS | Rust host unit tests |
-| Browser build | strict TypeScript + Safari 16.4 Vite target | PASS | 24 Vitest tests across 6 files; typecheck and production build |
+| Browser build | strict TypeScript + Safari 16.4 Vite target | PASS | 30 Vitest tests across 7 files; typecheck and production build |
 | HTTP/control | status, pairing, embedded assets, authenticated metrics/diagnostics, stats WebSocket | PASS | live and portable smoke tests |
+| File upload core | leaf-name confinement, reserved names, chunk SHA-256, stale offsets, lost-response idempotency, collision-safe finalization, cancellation | PASS | Rust manager tests plus browser SHA/chunk/retry/cancel tests |
+| File download core | Explicit canonical Outbox file, no path serialization, complete and suffix/open/fixed byte ranges | PASS | Rust queue/range tests plus real-host full/range checksum smoke |
+| File HTTP/auth | Paired listing, mutation origin, unauthorized rejection, idempotent upload/finalize, cancel/download APIs | PASS | Packaged-release `scripts/file-transfer-smoke.ps1`; 3,146,237-byte upload and 5,243,017-byte download, zero failures |
+| File QoS | Configured rate ceiling and drawing-contact pause | PASS | Default-limited real-host throughput plus deterministic active-Pen pacing test |
+| File transfer on iPad Safari | Files picker, foreground/background behavior, Safari native download, cancel/retry | NOT RUN | Browser logic is deterministic; physical iPad Files/Photos and Safari download-manager check remains |
 | Diagnostic recorder | One-hertz raw capture, host synchronization, bounded retention, processed distributions | PASS | Unit tests plus 11/11 live samples over 10.003 s, zero discarded |
 | Browser upgrades | A new EXE cannot reuse a prior immutable JavaScript/CSS payload | PASS | `index.html` is no-store and references content-hashed assets; extracted-archive smoke discovers and loads the hash |
-| Desktop navigation | Session, Source, Input, Diagnostics, and App Setup sidebar pages | PASS | Each button selects a distinct rendered page; release GUI smoke |
+| Desktop navigation | Session, Source, Input, Files, Diagnostics, and App Setup sidebar pages | PASS | Each button selects a distinct rendered page; release GUI smoke |
 | Credential reset | Manual and focused-window expiry rotation refresh PIN/QR and invalidate old session | PASS | Expiry unit test plus physical reset: session identity and QR bitmap changed, prior peer disconnected, and the iPad re-paired |
 | WebRTC input | Reliable ordered DataChannel under simultaneous video | PASS | Every live scenario received/injected exact 240 Hz input with zero gaps, reordering, lifecycle errors, or buffered bytes |
 | WebRTC mixed input | Mouse pointer, high-resolution wheel, Option+Tab key transitions, 17-byte Unicode commit, and three-finger semantic command beside a 240 Hz Pencil stream | PASS | Both `0.4.0` live comparisons observed exact counter deltas, zero input errors/backlog, and 1,202/1,202 sustained Pencil samples |
@@ -52,6 +57,7 @@ Host `dropped_frames` means a stale capture/preprocess frame was intentionally r
 
 ```powershell
 .\scripts\test.ps1
+.\scripts\file-transfer-smoke.ps1
 .\target\release\pointer-sink.exe --self-test
 .\target\release\pointer-sink.exe --stress-test --samples 14400 --rate 240 --batch-size 4 --json-output .\build\pointer-stress-60s.json
 ```

@@ -47,6 +47,12 @@ The 10-minute 4K→720p Fast soak delivered 144,002 exact input samples at 240.0
 
 NFiDB therefore makes no “zero latency,” guaranteed 60/120 fps, color-accuracy, or native-Pencil-latency claim. Actual performance depends on PC CPU, source motion, Wi-Fi, iPad, and drawing app. Moving the isolated encoder layer to Media Foundation hardware encoding remains the main performance milestone.
 
+## File-transfer smoke
+
+The v0.5.0 packaged-release smoke used the normal 32 Mbps bulk limiter and temporary files outside the repository. A 3,146,237-byte iPad-shaped upload completed in 0.863 s (29.170 Mbps including four request/verification turns). A 5,243,017-byte streamed download completed in 2.505 s (16.747 Mbps), and a separate 1,024-byte range exactly matched source bytes 1,024–2,047. Full upload and download SHA-256 values matched, cancel removed its partial upload, unauthenticated listing was rejected, and repeated create/finalize requests returned the same result without a duplicate. Final server counters reported one completed upload, two completed download responses, one intentional cancellation, and zero failed or active transfers.
+
+These are localhost protocol/flow-control measurements from the packaged release EXE, not Wi-Fi or physical Safari throughput claims. The transfer ceiling is intentionally conservative so a bulk copy does not dominate video. Upload memory is bounded to one 1 MiB request body plus hashing buffers; download streaming uses 64 KiB blocks rather than reading an entire file into RAM. The default drawing-priority option was separately tested to keep pacing blocked during Pen Down and resume after Pen Up.
+
 ## Measurement procedure
 
 1. Run `./scripts/benchmark.ps1 -DurationSeconds 10` for the four generated-pattern scenarios. Use `-ScenarioName 4k-to-720p-fast -DurationSeconds 600` for the soak.

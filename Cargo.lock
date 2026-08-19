@@ -1212,6 +1212,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e0e367e4e7da84520dedcac1901e4da967309406d1e51017ae1abfb97adbd38"
 dependencies = [
  "bitflags 2.13.1",
+ "block2 0.6.2",
+ "libc",
  "objc2 0.6.4",
 ]
 
@@ -2893,10 +2895,11 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "nfidb"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "clap",
+ "dirs",
  "eframe",
  "hostname",
  "nfidb-core",
@@ -2904,6 +2907,7 @@ dependencies = [
  "nfidb-protocol",
  "nfidb-transport",
  "qrcode",
+ "rfd",
  "serde",
  "serde_json",
  "tokio",
@@ -2914,7 +2918,7 @@ dependencies = [
 
 [[package]]
 name = "nfidb-core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "base64",
  "chrono",
@@ -2932,7 +2936,7 @@ dependencies = [
 
 [[package]]
 name = "nfidb-host-windows"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "fast_image_resize",
  "nfidb-core",
@@ -2948,7 +2952,7 @@ dependencies = [
 
 [[package]]
 name = "nfidb-protocol"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "approx",
  "serde",
@@ -2957,7 +2961,7 @@ dependencies = [
 
 [[package]]
 name = "nfidb-transport"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2972,9 +2976,12 @@ dependencies = [
  "rust-embed",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
  "tokio",
  "tower-http",
  "tracing",
+ "uuid",
  "webrtc",
 ]
 
@@ -3177,6 +3184,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d49e936b501e5c5bf01fda3a9452ff86dc3ea98ad5f283e1455153142d97518c"
 dependencies = [
  "bitflags 2.13.1",
+ "block2 0.6.2",
  "objc2 0.6.4",
  "objc2-core-foundation",
  "objc2-core-graphics",
@@ -3643,7 +3651,7 @@ dependencies = [
 
 [[package]]
 name = "pointer-sink"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "clap",
  "nfidb-core",
@@ -4131,6 +4139,29 @@ checksum = "f8dd2a808d456c4a54e300a23e9f5a67e122c3024119acbfd73e3bf664491cb2"
 dependencies = [
  "hmac",
  "subtle",
+]
+
+[[package]]
+name = "rfd"
+version = "0.17.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "20dafead71c16a34e1ff357ddefc8afc11e7d51d6d2b9fbd07eaa48e3e540220"
+dependencies = [
+ "block2 0.6.2",
+ "dispatch2",
+ "js-sys",
+ "libc",
+ "log",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+ "percent-encoding",
+ "raw-window-handle",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4830,6 +4861,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "tempfile"
+version = "3.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
+dependencies = [
+ "fastrand",
+ "getrandom 0.4.3",
+ "once_cell",
+ "rustix 1.1.4",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
