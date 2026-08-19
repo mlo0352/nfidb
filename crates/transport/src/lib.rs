@@ -17,7 +17,7 @@ pub use file_transfer::{
     ActiveUpload, BrowserFileListing, CompletedTransfer, FileTransferManager, FileTransferOptions,
     FileTransferSnapshot, OutgoingFile, TransferDirection, TransferStats,
 };
-pub use server::{ServerHandle, ServerInfo, ServerOptions};
+pub use server::{ServerHandle, ServerInfo, ServerOptions, VideoControlState};
 
 pub(crate) fn process_input_packet(input: &dyn InputSink, metrics: &Metrics, bytes: &[u8], source: &str) {
     let message = match InputMessage::decode(bytes) {

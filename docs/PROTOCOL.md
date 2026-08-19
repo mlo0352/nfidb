@@ -102,6 +102,12 @@ The client computes the displayed video rectangle for fit, fill, or 1:1 mode, th
 - `GET /api/ws`: authenticated WebSocket control/input fallback using the pairing cookie.
 - `GET /api/metrics`: authenticated current host counters.
 - `GET /api/diagnostics`: authenticated processed summary of the bounded diagnostic recording.
+- `GET /api/video`: authenticated versioned video settings, host encoder capabilities, browser capability stages, combined compatibility, active implementation, and learned Auto results.
+- `PUT /api/video`: applies validated host-authoritative settings from `{base_revision, settings}`. A stale revision is rejected; accepted changes are persisted and applied live.
+- `POST /api/video/capabilities`: records receiver-reported H.264/HEVC/AV1 capabilities and codec-preference support. A reported codec is not treated as playback proof.
+- `POST /api/video/presented`: records the negotiated codec and first successfully presented keyframe/frame for the current receiver.
+- `POST /api/video/benchmark-result`: validates and stores an end-to-end observation keyed to the current encoder, receiver, version, profile, width, and FPS.
+- `DELETE /api/video/benchmark-results`: clears local learned compatibility/results so Auto returns to its conservative provisional policy.
 - `GET /api/files`: authenticated Outbox, current-session uploads, bounded recent history, limits, rates, and counters. Windows source paths are never serialized.
 - `POST /api/files/uploads`: creates a current-session staged upload from `{upload_id, name, mime, size}` and returns its UUID, verified offset, and 1 MiB chunk size. Retrying the same browser-generated UUID returns the same ticket.
 - `GET /api/files/uploads/{id}`: returns the authoritative received offset for interruption recovery.
@@ -114,7 +120,7 @@ The client computes the displayed video rectangle for fit, fill, or 1:1 mode, th
 
 File mutations additionally reject a present `Origin` header unless it exactly matches the request host. Upload names are leaf-only, Windows-reserved/invalid characters are neutralized, files never overwrite an Inbox entry, and active transfer requests recheck the session during pacing. Bulk payloads are HTTP-only; WebRTC DataChannel and WebSocket queues remain reserved for bounded input/control messages.
 
-WebRTC uses local host candidates only—there is no STUN, TURN, or relay service. Video is H.264; input uses a reliable ordered DataChannel named `nfidb-input`.
+WebRTC uses local host candidates only—there is no STUN, TURN, or relay service. Video uses the actually negotiated H.264, H.265, or AV1 codec and the matching packetizer in the pinned `webrtc-rs` dependency. Input uses a reliable ordered DataChannel named `nfidb-input`; authenticated WebSocket remains its transition/failure fallback.
 
 ## Diagnostic control messages
 

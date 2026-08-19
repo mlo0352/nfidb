@@ -1,15 +1,14 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use fast_image_resize::images::{Image, ImageRef};
 use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
-use nfidb_core::{EncodedVideoFrame, KeyframeRequest, Metrics, VideoProfile};
-use openh264::OpenH264API;
-use openh264::encoder::{
-    BitRate, Complexity, Encoder, EncoderConfig, FrameRate, FrameType, IntraFramePeriod, Level, Profile,
-    RateControlMode, UsageType, VuiConfig,
+use nfidb_core::{
+    AutoBenchmarkObservation, BrowserVideoCapabilities, EncodedVideoFrame, EncoderBackend, EncoderCapability,
+    EncoderMode, KeyframeRequest, Metrics, PipelineMemoryMode, VideoCodec, VideoConfig, VideoRuntimeStatus,
+    VideoSettingsRuntime, score_auto_candidate,
 };
 use openh264::formats::{BgraSliceU8, YUVBuffer};
 use parking_lot::{Condvar, Mutex};
@@ -23,6 +22,8 @@ use windows_capture::settings::{
     SecondaryWindowSettings, Settings,
 };
 
+use crate::{VideoEncoderConfig, VideoFrame, create_video_encoder};
+
 #[derive(Debug, Clone)]
 pub struct CaptureStatus {
     pub running: bool,
@@ -31,12 +32,18 @@ pub struct CaptureStatus {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+enum CaptureSource {
+    Monitor(usize),
+    TestPattern,
+}
+
 impl Default for CaptureStatus {
     fn default() -> Self {
         Self {
             running: false,
             source: "None".to_owned(),
-            encoder: "OpenH264 software (Media Foundation hardware path planned)".to_owned(),
+            encoder: "No encoder active".to_owned(),
             error: None,
         }
     }
@@ -119,7 +126,7 @@ impl LatestPreparedFrame {
 struct CaptureFlags {
     slot: Arc<LatestFrame>,
     metrics: Arc<Metrics>,
-    max_fps: u32,
+    max_fps: Arc<AtomicU32>,
 }
 
 struct ScreenCapture {
@@ -145,7 +152,7 @@ impl GraphicsCaptureApiHandler for ScreenCapture {
         frame: &mut Frame,
         _capture_control: InternalCaptureControl,
     ) -> Result<(), Self::Error> {
-        let min_interval = Duration::from_secs_f64(1.0 / f64::from(self.flags.max_fps.max(1)));
+        let min_interval = Duration::from_secs_f64(1.0 / f64::from(self.flags.max_fps.load(Ordering::Relaxed).max(1)));
         if self.last_frame.elapsed() < min_interval {
             return Ok(());
         }
@@ -179,6 +186,13 @@ impl GraphicsCaptureApiHandler for ScreenCapture {
 
 type Control = CaptureControl<ScreenCapture, String>;
 
+#[derive(Clone)]
+struct PipelineSelection {
+    generation: u64,
+    video: VideoConfig,
+    active_mode: EncoderMode,
+}
+
 pub struct CaptureManager {
     control: Mutex<Option<Control>>,
     producer_thread: Mutex<Option<JoinHandle<()>>>,
@@ -187,9 +201,15 @@ pub struct CaptureManager {
     video_tx: broadcast::Sender<EncodedVideoFrame>,
     keyframe_request: KeyframeRequest,
     metrics: Arc<Metrics>,
-    profile: VideoProfile,
-    max_fps: u32,
-    cursor: bool,
+    video: Mutex<VideoConfig>,
+    browser: Mutex<BrowserVideoCapabilities>,
+    capabilities: Vec<EncoderCapability>,
+    learned: Mutex<Vec<AutoBenchmarkObservation>>,
+    runtime: Mutex<VideoRuntimeStatus>,
+    pipeline: Arc<Mutex<PipelineSelection>>,
+    live_max_fps: Arc<AtomicU32>,
+    live_max_width: Arc<AtomicU32>,
+    source: Mutex<Option<CaptureSource>>,
     status: Arc<Mutex<CaptureStatus>>,
 }
 
@@ -198,10 +218,23 @@ impl CaptureManager {
     pub fn new(
         video_tx: broadcast::Sender<EncodedVideoFrame>,
         metrics: Arc<Metrics>,
-        profile: VideoProfile,
-        max_fps: u32,
-        cursor: bool,
+        video: VideoConfig,
+        capabilities: Vec<EncoderCapability>,
     ) -> Self {
+        let learned = crate::learned::load();
+        let (active_mode, reason, encoder_name) =
+            select_encoder(&video, &BrowserVideoCapabilities::default(), &capabilities, &learned).unwrap_or((
+                EncoderMode::H264Software,
+                "hardware discovery did not produce a functional candidate; using compatibility fallback".to_owned(),
+                "OpenH264 software encoder".to_owned(),
+            ));
+        let preset = video.active_preset();
+        let codec = active_mode.codec().unwrap_or(VideoCodec::H264);
+        let pipeline = Arc::new(Mutex::new(PipelineSelection {
+            generation: 0,
+            video: video.clone(),
+            active_mode,
+        }));
         Self {
             control: Mutex::new(None),
             producer_thread: Mutex::new(None),
@@ -210,15 +243,42 @@ impl CaptureManager {
             video_tx,
             keyframe_request: KeyframeRequest::default(),
             metrics,
-            profile,
-            max_fps: max_fps.clamp(1, 120),
-            cursor,
+            video: Mutex::new(video.clone()),
+            browser: Mutex::new(BrowserVideoCapabilities::default()),
+            capabilities,
+            learned: Mutex::new(learned),
+            runtime: Mutex::new(VideoRuntimeStatus {
+                requested_mode: video.encoder,
+                active_mode,
+                codec,
+                backend: if active_mode == EncoderMode::H264Software {
+                    EncoderBackend::OpenH264Software
+                } else {
+                    EncoderBackend::MediaFoundationHardware
+                },
+                encoder_name,
+                hardware: active_mode != EncoderMode::H264Software,
+                pipeline_memory_mode: PipelineMemoryMode::CpuPreprocessing,
+                output_width: 0,
+                output_height: 0,
+                target_fps: preset.max_fps,
+                target_bitrate_bps: preset.bitrate_bps(codec),
+                restart_count: 0,
+                switching: false,
+                auto_selection_reason: reason,
+                last_error: None,
+            }),
+            pipeline,
+            live_max_fps: Arc::new(AtomicU32::new(preset.max_fps)),
+            live_max_width: Arc::new(AtomicU32::new(preset.max_width)),
+            source: Mutex::new(None),
             status: Arc::new(Mutex::new(CaptureStatus::default())),
         }
     }
 
     pub fn start_monitor(&self, index: usize) -> Result<(), String> {
         self.stop();
+        *self.source.lock() = Some(CaptureSource::Monitor(index));
         let monitor = Monitor::from_index(index).map_err(|error| error.to_string())?;
         let width = monitor.width().map_err(|error| error.to_string())?;
         let height = monitor.height().map_err(|error| error.to_string())?;
@@ -229,8 +289,8 @@ impl CaptureManager {
         let encoder_slot = Arc::clone(&slot);
         let encoder_tx = self.video_tx.clone();
         let encoder_metrics = Arc::clone(&self.metrics);
-        let profile = self.profile;
-        let max_fps = self.max_fps;
+        let pipeline = Arc::clone(&self.pipeline);
+        let max_width = Arc::clone(&self.live_max_width);
         let status = Arc::clone(&self.status);
         let encoder_thread = thread::Builder::new()
             .name("nfidb-encoder".to_owned())
@@ -242,8 +302,8 @@ impl CaptureManager {
                         encoder_tx,
                         encoder_metrics,
                         keyframe_request,
-                        profile,
-                        max_fps,
+                        pipeline,
+                        max_width,
                         status,
                     )
                 }
@@ -252,7 +312,7 @@ impl CaptureManager {
 
         let settings = Settings::new(
             monitor,
-            if self.cursor {
+            if self.video.lock().cursor {
                 CursorCaptureSettings::WithCursor
             } else {
                 CursorCaptureSettings::WithoutCursor
@@ -268,7 +328,7 @@ impl CaptureManager {
             CaptureFlags {
                 slot,
                 metrics: Arc::clone(&self.metrics),
-                max_fps: self.max_fps,
+                max_fps: Arc::clone(&self.live_max_fps),
             },
         );
         match ScreenCapture::start_free_threaded(settings) {
@@ -278,7 +338,8 @@ impl CaptureManager {
                 *self.status.lock() = CaptureStatus {
                     running: true,
                     source: format!("{source} ({width}×{height})"),
-                    ..CaptureStatus::default()
+                    encoder: self.runtime.lock().encoder_name.clone(),
+                    error: None,
                 };
                 Ok(())
             }
@@ -300,13 +361,14 @@ impl CaptureManager {
         self.stop();
         let width = width.clamp(320, 3840) & !1;
         let height = height.clamp(180, 2160) & !1;
+        *self.source.lock() = Some(CaptureSource::TestPattern);
         let slot = Arc::new(LatestFrame::default());
         *self.slot.lock() = Arc::clone(&slot);
         let encoder_slot = Arc::clone(&slot);
         let encoder_tx = self.video_tx.clone();
         let encoder_metrics = Arc::clone(&self.metrics);
-        let profile = self.profile;
-        let max_fps = self.max_fps;
+        let pipeline = Arc::clone(&self.pipeline);
+        let max_width = Arc::clone(&self.live_max_width);
         let status = Arc::clone(&self.status);
         let encoder_thread = thread::Builder::new()
             .name("nfidb-encoder".to_owned())
@@ -318,8 +380,8 @@ impl CaptureManager {
                         encoder_tx,
                         encoder_metrics,
                         keyframe_request,
-                        profile,
-                        max_fps,
+                        pipeline,
+                        max_width,
                         status,
                     )
                 }
@@ -330,13 +392,17 @@ impl CaptureManager {
         let pattern_metrics = Arc::clone(&self.metrics);
         let producer_thread = thread::Builder::new()
             .name("nfidb-test-pattern".to_owned())
-            .spawn(move || test_pattern_loop(pattern_slot, pattern_metrics, max_fps, width, height))
+            .spawn({
+                let max_fps = Arc::clone(&self.live_max_fps);
+                move || test_pattern_loop(pattern_slot, pattern_metrics, max_fps, width, height)
+            })
             .map_err(|error| error.to_string())?;
         *self.producer_thread.lock() = Some(producer_thread);
         *self.status.lock() = CaptureStatus {
             running: true,
             source: format!("Generated integrity test pattern ({width}×{height})"),
-            ..CaptureStatus::default()
+            encoder: self.runtime.lock().encoder_name.clone(),
+            error: None,
         };
         Ok(())
     }
@@ -368,6 +434,345 @@ impl CaptureManager {
     }
 }
 
+impl VideoSettingsRuntime for CaptureManager {
+    fn apply_video_settings(
+        &self,
+        settings: &VideoConfig,
+        browser: &BrowserVideoCapabilities,
+    ) -> Result<VideoRuntimeStatus, String> {
+        settings.validate()?;
+        let (mut active_mode, mut reason, mut encoder_name) =
+            select_encoder(settings, browser, &self.capabilities, &self.learned.lock())?;
+        let preset = settings.active_preset();
+        if *self.video.lock() == *settings && self.runtime.lock().active_mode == active_mode {
+            *self.browser.lock() = browser.clone();
+            let mut runtime = self.runtime.lock();
+            runtime.auto_selection_reason = reason;
+            runtime.encoder_name = encoder_name;
+            return Ok(runtime.clone());
+        }
+        let source = self.source.lock().clone();
+        if source.is_some() {
+            let snapshot = self.metrics.snapshot();
+            let source_width = snapshot.source_width.max(preset.max_width.min(1920));
+            let source_height = snapshot.source_height.max((source_width * 9 / 16).max(2));
+            if let Err(error) = preflight_encoder(settings, active_mode, source_width, source_height) {
+                if settings.encoder != EncoderMode::Auto {
+                    return Err(format!(
+                        "{} initialization failed; the existing video path was kept: {error}",
+                        active_mode.label()
+                    ));
+                }
+                let mut fallback = None;
+                for mode in [EncoderMode::H264Hardware, EncoderMode::H264Software] {
+                    if mode == active_mode
+                        || !self
+                            .capabilities
+                            .iter()
+                            .any(|candidate| candidate.mode() == mode && candidate.state.is_usable())
+                    {
+                        continue;
+                    }
+                    if preflight_encoder(settings, mode, source_width, source_height).is_ok() {
+                        fallback = self
+                            .capabilities
+                            .iter()
+                            .find(|candidate| candidate.mode() == mode && candidate.state.is_usable())
+                            .map(|candidate| (mode, candidate.encoder_name.clone()));
+                        break;
+                    }
+                }
+                let Some((fallback_mode, fallback_name)) = fallback else {
+                    return Err(format!(
+                        "{} initialization failed and no compatibility fallback initialized: {error}",
+                        active_mode.label()
+                    ));
+                };
+                reason = format!(
+                    "{} failed its live initialization test ({error}); Auto returned to {}",
+                    active_mode.label(),
+                    fallback_mode.label()
+                );
+                active_mode = fallback_mode;
+                encoder_name = fallback_name;
+            }
+        }
+        let codec = active_mode.codec().unwrap_or(VideoCodec::H264);
+        let cursor_changed = self.video.lock().cursor != settings.cursor;
+        self.metrics.reset_video_latency_samples();
+        let restart_count = self.runtime.lock().restart_count.saturating_add(1);
+        *self.video.lock() = settings.clone();
+        *self.browser.lock() = browser.clone();
+        self.live_max_fps.store(preset.max_fps, Ordering::Relaxed);
+        self.live_max_width.store(preset.max_width, Ordering::Relaxed);
+        {
+            let mut pipeline = self.pipeline.lock();
+            pipeline.generation = pipeline.generation.wrapping_add(1);
+            pipeline.video = settings.clone();
+            pipeline.active_mode = active_mode;
+        }
+        *self.runtime.lock() = VideoRuntimeStatus {
+            requested_mode: settings.encoder,
+            active_mode,
+            codec,
+            backend: if active_mode == EncoderMode::H264Software {
+                EncoderBackend::OpenH264Software
+            } else {
+                EncoderBackend::MediaFoundationHardware
+            },
+            encoder_name,
+            hardware: active_mode != EncoderMode::H264Software,
+            pipeline_memory_mode: PipelineMemoryMode::CpuPreprocessing,
+            output_width: 0,
+            output_height: 0,
+            target_fps: preset.max_fps,
+            target_bitrate_bps: preset.bitrate_bps(codec),
+            restart_count,
+            switching: source.is_some(),
+            auto_selection_reason: reason,
+            last_error: None,
+        };
+        // Cursor inclusion is a WGC session property. Every encoder/quality
+        // setting is consumed by the running pipeline without restarting WGC.
+        if cursor_changed
+            && let Some(CaptureSource::Monitor(index)) = source
+            && let Err(error) = self.start_monitor(index)
+        {
+            let mut runtime = self.runtime.lock();
+            runtime.switching = false;
+            runtime.last_error = Some(error.clone());
+            return Err(error);
+        }
+        self.status.lock().encoder = format!("Switching to {}", active_mode.label());
+        self.keyframe_request.request();
+        let mut runtime = self.runtime.lock();
+        runtime.switching = false;
+        Ok(runtime.clone())
+    }
+
+    fn video_runtime_status(&self) -> VideoRuntimeStatus {
+        let mut runtime = self.runtime.lock().clone();
+        let snapshot = self.metrics.snapshot();
+        runtime.output_width = snapshot.output_width;
+        runtime.output_height = snapshot.output_height;
+        runtime
+    }
+
+    fn encoder_capabilities(&self) -> Vec<EncoderCapability> {
+        self.capabilities.clone()
+    }
+
+    fn request_video_keyframe(&self) {
+        self.keyframe_request.request();
+    }
+
+    fn record_auto_benchmark(&self, mut observation: AutoBenchmarkObservation) -> Result<(), String> {
+        if observation.mode == EncoderMode::Auto {
+            return Err("benchmark observations must identify an actual encoder mode".to_owned());
+        }
+        let browser = self.browser.lock();
+        if browser.user_agent.is_empty() || observation.receiver_runtime != browser.user_agent {
+            return Err("benchmark receiver identity does not match the paired browser".to_owned());
+        }
+        let codec = observation
+            .mode
+            .codec()
+            .ok_or_else(|| "benchmark mode does not have a codec".to_owned())?;
+        if !browser.get(codec).presented || !observation.end_to_end_verified {
+            return Err("an end-to-end benchmark requires verified decoded presentation".to_owned());
+        }
+        let candidate = self
+            .capabilities
+            .iter()
+            .find(|candidate| candidate.id == observation.encoder_id && candidate.mode() == observation.mode)
+            .ok_or_else(|| "benchmark encoder identity is not present on this PC".to_owned())?;
+        if !candidate.state.is_usable() {
+            return Err("benchmark encoder is not functional".to_owned());
+        }
+        if observation.metrics.requested_fps <= 0.0
+            || observation.metrics.requested_fps > 120.0
+            || observation.max_width > 7680
+            || observation.max_width < 320
+            || [
+                observation.metrics.encoded_fps,
+                observation.metrics.encode_mean_ms,
+                observation.metrics.encode_p95_ms,
+                observation.metrics.preprocess_mean_ms,
+                observation.metrics.preprocess_p95_ms,
+                observation.metrics.actual_mbps,
+                observation.metrics.drop_percent,
+            ]
+            .into_iter()
+            .any(|value| !value.is_finite() || value < 0.0)
+        {
+            return Err("benchmark observation contains invalid metrics".to_owned());
+        }
+        observation.schema_version = 1;
+        observation.nfidb_version = env!("CARGO_PKG_VERSION").to_owned();
+        observation.score = score_auto_candidate(observation.mode, &observation.metrics);
+        let mut learned = self.learned.lock();
+        learned.retain(|current| {
+            !(current.receiver_runtime == observation.receiver_runtime
+                && current.encoder_id == observation.encoder_id
+                && current.profile == observation.profile
+                && current.max_width == observation.max_width
+                && current.requested_fps == observation.requested_fps)
+        });
+        learned.push(observation);
+        if learned.len() > 128 {
+            let remove = learned.len() - 128;
+            learned.drain(..remove);
+        }
+        crate::learned::save(&learned)
+    }
+
+    fn clear_auto_benchmarks(&self) -> Result<(), String> {
+        self.learned.lock().clear();
+        crate::learned::save(&[])
+    }
+
+    fn auto_benchmark_results(&self) -> Vec<AutoBenchmarkObservation> {
+        self.learned.lock().clone()
+    }
+}
+
+fn preflight_encoder(
+    settings: &VideoConfig,
+    mode: EncoderMode,
+    source_width: u32,
+    source_height: u32,
+) -> Result<(), String> {
+    let codec = mode
+        .codec()
+        .ok_or_else(|| "Auto is not a concrete encoder".to_owned())?;
+    let preset = settings.active_preset();
+    let (width, height) = output_dimensions(source_width, source_height, preset.max_width);
+    let mut encoder = create_video_encoder(VideoEncoderConfig {
+        codec,
+        mode,
+        width,
+        height,
+        max_fps: preset.max_fps,
+        bitrate_bps: preset.bitrate_bps(codec),
+    })?;
+    encoder.request_keyframe()?;
+    let yuv = YUVBuffer::new(width as usize, height as usize);
+    let result = encoder.encode(VideoFrame {
+        width,
+        height,
+        yuv: &yuv,
+    });
+    encoder.shutdown();
+    match result? {
+        Some(packet) if !packet.data.is_empty() => Ok(()),
+        _ => Err(format!("{} returned no encoded preflight frame", mode.label())),
+    }
+}
+
+fn output_dimensions(source_width: u32, source_height: u32, max_width: u32) -> (u32, u32) {
+    let source_width = source_width.max(2) & !1;
+    let source_height = source_height.max(2) & !1;
+    if source_width <= max_width {
+        return (source_width, source_height);
+    }
+    let width = max_width.max(2) & !1;
+    let height = (((u64::from(source_height) * u64::from(width)) / u64::from(source_width)) as u32).max(2) & !1;
+    (width, height)
+}
+
+fn select_encoder(
+    settings: &VideoConfig,
+    browser: &BrowserVideoCapabilities,
+    capabilities: &[EncoderCapability],
+    learned: &[AutoBenchmarkObservation],
+) -> Result<(EncoderMode, String, String), String> {
+    let functional = |mode| {
+        capabilities
+            .iter()
+            .find(|candidate| candidate.mode() == mode && candidate.state.is_usable())
+    };
+    let measured = if settings.encoder == EncoderMode::Auto && !browser.user_agent.is_empty() {
+        capabilities
+            .iter()
+            .filter(|candidate| candidate.state.is_usable() && browser.get(candidate.codec).reported)
+            .filter_map(|candidate| {
+                learned
+                    .iter()
+                    .filter(|result| {
+                        result.schema_version == 1
+                            && result.nfidb_version == env!("CARGO_PKG_VERSION")
+                            && result.receiver_runtime == browser.user_agent
+                            && result.encoder_id == candidate.id
+                            && result.profile == settings.profile
+                            && result.max_width == settings.active_preset().max_width
+                            && result.requested_fps == settings.active_preset().max_fps
+                            && result.end_to_end_verified
+                            && result.score.passed_gates
+                    })
+                    .max_by(|left, right| {
+                        left.score
+                            .score
+                            .unwrap_or_default()
+                            .total_cmp(&right.score.score.unwrap_or_default())
+                    })
+                    .map(|result| (candidate, result))
+            })
+            .max_by(|(_, left), (_, right)| {
+                left.score
+                    .score
+                    .unwrap_or_default()
+                    .total_cmp(&right.score.score.unwrap_or_default())
+            })
+    } else {
+        None
+    };
+    let selected = if settings.encoder != EncoderMode::Auto {
+        let codec = settings.encoder.codec().expect("manual mode has a codec");
+        if !browser.user_agent.is_empty() && !browser.get(codec).reported {
+            return Err(format!(
+                "{} cannot be selected because the paired browser did not report {} receive support",
+                settings.encoder.label(),
+                codec.label()
+            ));
+        }
+        functional(settings.encoder).ok_or_else(|| {
+            capabilities
+                .iter()
+                .find(|candidate| candidate.mode() == settings.encoder)
+                .and_then(|candidate| candidate.failure_reason.clone())
+                .unwrap_or_else(|| format!("{} is unavailable on this PC", settings.encoder.label()))
+        })?
+    } else if let Some((candidate, _)) = measured {
+        candidate
+    } else if browser.hevc.reported {
+        functional(EncoderMode::HevcHardware)
+            .or_else(|| functional(EncoderMode::H264Hardware))
+            .or_else(|| functional(EncoderMode::H264Software))
+            .ok_or_else(|| "no functional video encoder is available".to_owned())?
+    } else {
+        functional(EncoderMode::H264Hardware)
+            .or_else(|| functional(EncoderMode::H264Software))
+            .ok_or_else(|| "no functional H.264 encoder is available".to_owned())?
+    };
+    let mode = selected.mode();
+    let reason = if settings.encoder != EncoderMode::Auto {
+        format!("{} was selected manually and is mutually supported", mode.label())
+    } else if let Some((_, result)) = measured {
+        format!(
+            "{} won the verified Auto benchmark with score {:.1}; it passed latency, frame-rate, reliability, and presentation gates",
+            mode.label(),
+            result.score.score.unwrap_or_default()
+        )
+    } else if mode == EncoderMode::HevcHardware {
+        "HEVC hardware is functional and the receiver reports HEVC; Auto will verify presentation before learning this path".to_owned()
+    } else if mode == EncoderMode::H264Hardware {
+        "H.264 hardware is the safe accelerated provisional path before an end-to-end benchmark".to_owned()
+    } else {
+        "hardware encoding is unavailable; OpenH264 is the universal compatibility fallback".to_owned()
+    };
+    Ok((mode, reason, selected.encoder_name.clone()))
+}
+
 impl Drop for CaptureManager {
     fn drop(&mut self) {
         self.stop();
@@ -379,111 +784,159 @@ fn encode_loop(
     video_tx: broadcast::Sender<EncodedVideoFrame>,
     metrics: Arc<Metrics>,
     keyframe_request: KeyframeRequest,
-    profile: VideoProfile,
-    max_fps: u32,
+    pipeline: Arc<Mutex<PipelineSelection>>,
+    max_width: Arc<AtomicU32>,
     status: Arc<Mutex<CaptureStatus>>,
 ) {
-    const RECOVERY_KEYFRAME_INTERVAL: Duration = Duration::from_secs(5);
-
-    let config = EncoderConfig::new()
-        .bitrate(BitRate::from_bps(profile.bitrate_bps()))
-        .max_frame_rate(FrameRate::from_hz(max_fps as f32))
-        .rate_control_mode(RateControlMode::Bitrate)
-        .usage_type(UsageType::ScreenContentRealTime)
-        .profile(Profile::Baseline)
-        .level(Level::Level_4_1)
-        .complexity(Complexity::Low)
-        .skip_frames(true)
-        .scene_change_detect(true)
-        .adaptive_quantization(false)
-        .background_detection(false)
-        // A frame-count interval turns into a very long wall-clock interval when
-        // software encoding is overloaded. IDRs are forced by elapsed time below.
-        .intra_frame_period(IntraFramePeriod::from_num_frames(0))
-        .vui(VuiConfig::srgb());
-    let mut encoder = match Encoder::with_api_config(OpenH264API::from_source(), config) {
-        Ok(encoder) => encoder,
-        Err(error) => {
-            status.lock().error = Some(format!("H.264 encoder initialization failed: {error}"));
-            return;
-        }
-    };
     let prepared = Arc::new(LatestPreparedFrame::default());
     let preprocess_output = Arc::clone(&prepared);
     let preprocess_metrics = Arc::clone(&metrics);
     let preprocess_status = Arc::clone(&status);
     let preprocess_thread = match thread::Builder::new()
         .name("nfidb-preprocess".to_owned())
-        .spawn(move || preprocess_loop(slot, preprocess_output, preprocess_metrics, profile, preprocess_status))
-    {
+        .spawn(move || {
+            preprocess_loop(
+                slot,
+                preprocess_output,
+                preprocess_metrics,
+                max_width,
+                preprocess_status,
+            )
+        }) {
         Ok(thread) => thread,
         Err(error) => {
             status.lock().error = Some(format!("video preprocessing thread failed: {error}"));
             return;
         }
     };
-    let nominal_duration = Duration::from_secs_f64(1.0 / f64::from(max_fps.max(1)));
+    encode_video_loop(
+        Arc::clone(&prepared),
+        video_tx,
+        metrics,
+        keyframe_request,
+        pipeline,
+        status,
+    );
+    let _ = preprocess_thread.join();
+}
+
+fn encode_video_loop(
+    prepared: Arc<LatestPreparedFrame>,
+    video_tx: broadcast::Sender<EncodedVideoFrame>,
+    metrics: Arc<Metrics>,
+    keyframe_request: KeyframeRequest,
+    pipeline: Arc<Mutex<PipelineSelection>>,
+    status: Arc<Mutex<CaptureStatus>>,
+) {
+    const RECOVERY_KEYFRAME_INTERVAL: Duration = Duration::from_secs(5);
+    let mut encoder: Option<Box<dyn crate::VideoEncoder>> = None;
+    let mut generation = u64::MAX;
     let mut last_sent_at: Option<Instant> = None;
     let mut last_keyframe_at: Option<Instant> = None;
     while let Some(frame) = prepared.take() {
-        // Connection startup has its own edge-triggered IDR request. Keep the
-        // periodic recovery IDR infrequent enough that a slow software encoder
-        // cannot enter a feedback loop where nearly every output frame is an
-        // expensive keyframe, while still bounding packet-loss recovery.
-        let recovery_keyframe_due =
-            last_keyframe_at.is_some_and(|last_keyframe| last_keyframe.elapsed() >= RECOVERY_KEYFRAME_INTERVAL);
-        if keyframe_request.take() || recovery_keyframe_due {
-            encoder.force_intra_frame();
+        let selection = pipeline.lock().clone();
+        let mode = selection.active_mode;
+        let codec = mode.codec().unwrap_or(VideoCodec::H264);
+        let preset = selection.video.active_preset();
+        let max_fps = preset.max_fps;
+        let bitrate_bps = preset.bitrate_bps(codec);
+        if selection.generation != generation {
+            if let Some(mut previous) = encoder.take() {
+                previous.shutdown();
+            }
+            generation = selection.generation;
+            last_sent_at = None;
+            last_keyframe_at = None;
+        }
+        if encoder.is_none() {
+            match create_video_encoder(VideoEncoderConfig {
+                codec,
+                mode,
+                width: frame.width,
+                height: frame.height,
+                max_fps,
+                bitrate_bps,
+            }) {
+                Ok(created) => {
+                    status.lock().encoder = created.name().to_owned();
+                    encoder = Some(created);
+                }
+                Err(error) => {
+                    status.lock().error = Some(format!("{} initialization failed: {error}", mode.label()));
+                    continue;
+                }
+            }
+        }
+        // The connection requests its own startup IDR. Software H.264 also gets
+        // an infrequent recovery IDR; hardware paths are rebuilt only on an
+        // explicit receiver request to avoid needless vendor-MFT churn.
+        let recovery_keyframe_due = mode == EncoderMode::H264Software
+            && last_keyframe_at.is_some_and(|last_keyframe| last_keyframe.elapsed() >= RECOVERY_KEYFRAME_INTERVAL);
+        if (keyframe_request.take() || recovery_keyframe_due)
+            && let Err(error) = encoder.as_mut().expect("encoder initialized").request_keyframe()
+        {
+            status.lock().error = Some(format!("{} keyframe request failed: {error}", mode.label()));
         }
         let started = Instant::now();
-        match encoder.encode(&frame.yuv) {
-            Ok(bitstream) if bitstream.frame_type() != FrameType::Skip => {
-                let keyframe = matches!(bitstream.frame_type(), FrameType::IDR | FrameType::I);
-                let bytes = bitstream.to_vec();
+        match encoder.as_mut().expect("encoder initialized").encode(VideoFrame {
+            width: frame.width,
+            height: frame.height,
+            yuv: &frame.yuv,
+        }) {
+            Ok(Some(packet)) => {
                 metrics.encoded(
-                    bytes.len(),
+                    packet.data.len(),
                     started.elapsed().as_micros() as u64,
                     frame.width,
                     frame.height,
                 );
                 let sent_at = Instant::now();
-                if keyframe {
+                if packet.keyframe {
                     last_keyframe_at = Some(sent_at);
                     metrics.encoded_keyframe();
                 }
+                let nominal_duration = Duration::from_secs_f64(1.0 / f64::from(max_fps.max(1)));
                 let duration = last_sent_at
                     .replace(sent_at)
                     .map_or(nominal_duration, |previous| sent_at.duration_since(previous));
                 let _ = video_tx.send(EncodedVideoFrame {
-                    data: Arc::from(bytes),
+                    data: Arc::from(packet.data),
+                    codec,
                     // RTP timestamps must follow the frames we actually encode. When the
                     // bounded latest-frame queue sheds work, using the requested frame
                     // rate here would make media time run behind wall time and grow lag.
                     duration,
                     width: frame.width,
                     height: frame.height,
-                    keyframe,
+                    keyframe: packet.keyframe,
                 });
             }
-            Ok(_) => {}
-            Err(error) => status.lock().error = Some(format!("H.264 encode failed: {error}")),
+            Ok(None) => {}
+            Err(error) => {
+                status.lock().error = Some(format!("{} encode failed: {error}", mode.label()));
+                encoder.as_mut().expect("encoder initialized").shutdown();
+                encoder = None;
+            }
         }
     }
-    let _ = preprocess_thread.join();
+    if let Some(mut encoder) = encoder {
+        encoder.shutdown();
+    }
 }
 
 fn preprocess_loop(
     slot: Arc<LatestFrame>,
     output: Arc<LatestPreparedFrame>,
     metrics: Arc<Metrics>,
-    profile: VideoProfile,
+    max_width: Arc<AtomicU32>,
     status: Arc<Mutex<CaptureStatus>>,
 ) {
     let options = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::Bilinear));
     let mut resizer = Resizer::new();
     while let Some(frame) = slot.take() {
         let started = Instant::now();
-        let (bgra, width, height) = match resize_frame(frame, profile.max_width(), &mut resizer, &options) {
+        let (bgra, width, height) = match resize_frame(frame, max_width.load(Ordering::Relaxed), &mut resizer, &options)
+        {
             Ok(frame) => frame,
             Err(error) => {
                 status.lock().error = Some(error);
@@ -518,8 +971,7 @@ fn resize_frame(
     Ok((output.into_vec(), width, height))
 }
 
-fn test_pattern_loop(slot: Arc<LatestFrame>, metrics: Arc<Metrics>, max_fps: u32, width: u32, height: u32) {
-    let period = Duration::from_secs_f64(1.0 / f64::from(max_fps.max(1)));
+fn test_pattern_loop(slot: Arc<LatestFrame>, metrics: Arc<Metrics>, max_fps: Arc<AtomicU32>, width: u32, height: u32) {
     let mut frame_number = 0_u64;
     let mut background = vec![0_u8; width as usize * height as usize * 4];
     for y in 0..height {
@@ -533,6 +985,7 @@ fn test_pattern_loop(slot: Arc<LatestFrame>, metrics: Arc<Metrics>, max_fps: u32
     }
     while !slot.stopped.load(Ordering::Acquire) {
         let started = Instant::now();
+        let period = Duration::from_secs_f64(1.0 / f64::from(max_fps.load(Ordering::Relaxed).max(1)));
         let mut bgra = background.clone();
         let bar = (frame_number % u64::from(width)) as u32;
         for y in 0..height {
@@ -578,5 +1031,160 @@ fn paint_block(frame: &mut [u8], width: u32, height: u32, x: u32, y: u32, size: 
             let offset = (row as usize * width as usize + column as usize) * 4;
             frame[offset..offset + 4].copy_from_slice(&color);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nfidb_core::{BenchmarkMetrics, CapabilityState, VideoProfile};
+
+    fn capability(mode: EncoderMode) -> EncoderCapability {
+        EncoderCapability {
+            id: format!("id-{:?}", mode),
+            codec: mode.codec().unwrap(),
+            backend: if mode == EncoderMode::H264Software {
+                EncoderBackend::OpenH264Software
+            } else {
+                EncoderBackend::MediaFoundationHardware
+            },
+            hardware: mode.requires_hardware(),
+            encoder_name: mode.label().to_owned(),
+            adapter_name: None,
+            adapter_luid: None,
+            vendor: None,
+            driver_version: None,
+            input_formats: vec!["NV12".to_owned()],
+            profiles: Vec::new(),
+            low_latency: Some(true),
+            rate_control: vec!["mean-bitrate".to_owned()],
+            maximum_tested_width: Some(1920),
+            maximum_tested_height: Some(1080),
+            maximum_tested_fps: Some(60),
+            state: CapabilityState::Functional,
+            failure_reason: None,
+        }
+    }
+
+    fn observation(mode: EncoderMode, metrics: BenchmarkMetrics) -> AutoBenchmarkObservation {
+        AutoBenchmarkObservation {
+            schema_version: 1,
+            nfidb_version: env!("CARGO_PKG_VERSION").to_owned(),
+            receiver_runtime: "test-browser".to_owned(),
+            encoder_id: format!("id-{:?}", mode),
+            mode,
+            profile: VideoProfile::Balanced,
+            max_width: 1920,
+            requested_fps: 60,
+            end_to_end_verified: true,
+            recorded_unix_ms: 1,
+            score: score_auto_candidate(mode, &metrics),
+            metrics,
+        }
+    }
+
+    fn healthy(actual_mbps: f64, encode_p95_ms: f64) -> BenchmarkMetrics {
+        BenchmarkMetrics {
+            requested_fps: 60.0,
+            encoded_fps: 60.0,
+            presented_fps: Some(60.0),
+            encode_mean_ms: 2.0,
+            encode_p95_ms,
+            preprocess_mean_ms: 1.0,
+            preprocess_p95_ms: 1.5,
+            actual_mbps,
+            cpu_percent: Some(5.0),
+            working_set_mib: Some(150.0),
+            drop_percent: 0.0,
+            freeze_count: Some(0),
+            pipeline_p95_ms: Some(35.0),
+            quality_score: None,
+        }
+    }
+
+    fn browser() -> BrowserVideoCapabilities {
+        let mut browser = BrowserVideoCapabilities {
+            user_agent: "test-browser".to_owned(),
+            ..BrowserVideoCapabilities::default()
+        };
+        browser.h264.reported = true;
+        browser.hevc.reported = true;
+        browser.av1.reported = true;
+        browser
+    }
+
+    #[test]
+    fn auto_uses_best_verified_score_instead_of_codec_age() {
+        let capabilities = [
+            capability(EncoderMode::H264Hardware),
+            capability(EncoderMode::HevcHardware),
+            capability(EncoderMode::Av1Hardware),
+        ];
+        let learned = [
+            observation(EncoderMode::H264Hardware, healthy(9.0, 2.0)),
+            observation(EncoderMode::HevcHardware, healthy(5.5, 3.0)),
+            observation(EncoderMode::Av1Hardware, healthy(4.0, 10.0)),
+        ];
+        let selected = select_encoder(&VideoConfig::default(), &browser(), &capabilities, &learned).unwrap();
+        assert_eq!(selected.0, EncoderMode::HevcHardware);
+    }
+
+    #[test]
+    fn efficient_codec_that_fails_fps_gate_is_rejected() {
+        let capabilities = [
+            capability(EncoderMode::H264Hardware),
+            capability(EncoderMode::HevcHardware),
+        ];
+        let mut slow = healthy(4.0, 3.0);
+        slow.presented_fps = Some(40.0);
+        let learned = [
+            observation(EncoderMode::H264Hardware, healthy(9.0, 2.0)),
+            observation(EncoderMode::HevcHardware, slow),
+        ];
+        let selected = select_encoder(&VideoConfig::default(), &browser(), &capabilities, &learned).unwrap();
+        assert_eq!(selected.0, EncoderMode::H264Hardware);
+    }
+
+    #[test]
+    fn stale_encoder_identity_is_not_trusted() {
+        let capabilities = [
+            capability(EncoderMode::H264Hardware),
+            capability(EncoderMode::Av1Hardware),
+        ];
+        let mut stale = observation(EncoderMode::Av1Hardware, healthy(3.0, 2.0));
+        stale.encoder_id = "old-adapter-or-driver".to_owned();
+        let selected = select_encoder(&VideoConfig::default(), &browser(), &capabilities, &[stale]).unwrap();
+        assert_eq!(selected.0, EncoderMode::H264Hardware);
+    }
+
+    #[test]
+    fn unavailable_hardware_uses_software_fallback() {
+        let capabilities = [capability(EncoderMode::H264Software)];
+        let selected = select_encoder(
+            &VideoConfig::default(),
+            &BrowserVideoCapabilities::default(),
+            &capabilities,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(selected.0, EncoderMode::H264Software);
+    }
+
+    #[test]
+    fn unsupported_av1_is_never_selected() {
+        let capabilities = [
+            capability(EncoderMode::H264Hardware),
+            capability(EncoderMode::H264Software),
+        ];
+        let mut browser = browser();
+        browser.av1.reported = true;
+        let selected = select_encoder(&VideoConfig::default(), &browser, &capabilities, &[]).unwrap();
+        assert_eq!(selected.0, EncoderMode::H264Hardware);
+    }
+
+    #[test]
+    fn preflight_dimensions_preserve_aspect_and_even_sizes() {
+        assert_eq!(output_dimensions(3840, 2160, 1920), (1920, 1080));
+        assert_eq!(output_dimensions(1919, 1079, 2560), (1918, 1078));
     }
 }

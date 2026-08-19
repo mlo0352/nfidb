@@ -3,21 +3,30 @@
 mod config;
 mod metrics;
 mod session;
+mod video;
 
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub use config::{
-    AppConfig, CaptureMode, FileTransferConfig, InputConfig, NetworkConfig, UiConfig, VideoConfig, VideoProfile,
+    AppConfig, CaptureMode, CodecBitrates, EncoderMode, FileTransferConfig, InputConfig, NetworkConfig, UiConfig,
+    VideoCodec, VideoConfig, VideoPreset, VideoPresets, VideoProfile,
 };
 pub use metrics::{Metrics, MetricsSnapshot};
 use nfidb_protocol::{CommandInput, KeyboardInput, PointerBatch, TextInput, WheelInput};
 pub use session::{PairMethod, PairResult, PublicSession, SessionError, SessionManager};
+pub use video::{
+    AutoBenchmarkObservation, AutoScore, BenchmarkMetrics, BrowserCodecCapability, BrowserVideoCapabilities,
+    CapabilityState, CompatibilityEntry, EncoderBackend, EncoderCapability, ModeAvailability, PipelineMemoryMode,
+    SetVideoSettingsRequest, VideoRuntimeStatus, VideoSettingsRuntime, VideoSettingsSnapshot, compatibility_matrix,
+    score_auto_candidate,
+};
 
 #[derive(Debug, Clone)]
 pub struct EncodedVideoFrame {
     pub data: Arc<[u8]>,
+    pub codec: VideoCodec,
     pub duration: std::time::Duration,
     pub width: u32,
     pub height: u32,

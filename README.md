@@ -2,12 +2,13 @@
 
 **No Frills iPad Drawing Bridge** turns an iPad and Apple Pencil into a local-network pen display for a Windows 11 PC. Extract one portable Windows app, open the address it shows in Safari, enter the six-digit PIN, and draw. There is no iPad app, account, subscription, cloud relay, or internet service involved in a session.
 
-> NFiDB 0.5.1 is a solid alpha. Its protocol, native input, Windows capture, browser pairing, remote-control, WebRTC, and bidirectional file-transfer paths have automated coverage, and the iPad mouse, keyboard, and three-finger controls have passed a physical-device check. Apple Pencil behavior in individual art apps and the Files panel still need physical field validation; see [the test matrix](docs/TEST_MATRIX.md) before relying on it for production work.
+> NFiDB 0.6.0 is a solid alpha. Its protocol, native input, Windows capture, browser pairing, remote-control, multi-codec WebRTC, and bidirectional file-transfer paths have automated coverage. H.264, HEVC, and AV1 hardware encoding work on the development RTX 4090; actual HEVC/AV1 availability remains a PC-and-browser capability decision. Apple Pencil behavior in individual art apps, physical iPad codec validation, and the Files panel still need field validation; see [the test matrix](docs/TEST_MATRIX.md) before relying on it for production work.
 
 ## What works
 
 - Windows 11 monitor capture through Windows Graphics Capture.
-- Local H.264 video over a peer-to-peer WebRTC connection.
+- Capability-aware H.264, HEVC, or AV1 video over peer-to-peer WebRTC, with Media Foundation hardware encoding and OpenH264 fallback.
+- Benchmark-driven Auto selection, receiver playback verification, editable Fast/Balanced/Sharp presets, and live changes from Windows or iPad.
 - Apple Pencil pressure, tilt, twist, buttons, and lifecycle samples from Safari Pointer Events.
 - Native Windows `PT_PEN` injection; optional `PT_TOUCH` injection is off by default.
 - iPad trackpad/mouse movement, buttons, and high-resolution horizontal/vertical scrolling.
@@ -22,7 +23,7 @@
 - Live Session, Source, Input, Files, Diagnostics, and App Setup pages in the Windows host.
 - Authenticated raw and percentile-processed latency, bandwidth, frame-timing, input, encoder, and WebRTC diagnostics with local JSON export.
 
-The first MVP mirrors one Windows monitor. It is not an extended-desktop display driver, remote-desktop product, or internet relay. Window-only capture, hardware Media Foundation encoding, audio, multi-client sessions, and an installer are not in this release.
+The first MVP mirrors one Windows monitor. It is not an extended-desktop display driver, remote-desktop product, or internet relay. Window-only capture, a zero-copy GPU preprocessing path, audio, multi-client sessions, and an installer are not in this release.
 
 ## Run the portable build
 
@@ -95,7 +96,8 @@ nfidb --diagnostics
 nfidb --capture test-pattern --input-sink log
 pointer-sink --self-test
 pointer-sink --stress-test --samples 14400 --rate 240 --batch-size 4
-./scripts/benchmark.ps1 -DurationSeconds 10
+./scripts/benchmark.ps1 -Quick
+./scripts/benchmark.ps1 -Full -HostOnly
 ./scripts/file-transfer-smoke.ps1
 ```
 
@@ -112,6 +114,7 @@ The host stores user settings in `%APPDATA%\NFiDB\config.toml`. Full flags are a
 - [Pointer and signaling protocol](docs/PROTOCOL.md)
 - [Security model](docs/SECURITY.md)
 - [Performance notes](docs/PERFORMANCE.md)
+- [Codec benchmarks](docs/CODEC_BENCHMARKS.md)
 - [Known issues](docs/KNOWN_ISSUES.md)
 - [Test matrix](docs/TEST_MATRIX.md)
 - [Release process](docs/RELEASE.md)

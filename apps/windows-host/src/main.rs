@@ -1,16 +1,21 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{fs, path::PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
 use eframe::egui;
-use nfidb_core::{AppConfig, CaptureMode, InputSink, LoggingInputSink, Metrics, SessionManager, VideoProfile};
+use nfidb_core::{
+    AppConfig, CaptureMode, EncoderMode, InputSink, LoggingInputSink, Metrics, SessionManager, VideoPresets,
+    VideoProfile, VideoSettingsRuntime,
+};
 use nfidb_host_windows::{
-    CaptureManager, MonitorDescriptor, PointerInjector, PointerInjectorOptions, enumerate_monitors,
-    set_per_monitor_dpi_awareness,
+    CaptureManager, HostBenchmarkReport, MonitorDescriptor, PointerInjector, PointerInjectorOptions,
+    ProcessResourceMonitor, discover_video_encoders, enumerate_monitors, full_benchmark_cases, quick_benchmark_cases,
+    run_host_benchmark_suite, set_per_monitor_dpi_awareness, write_benchmark_exports,
 };
 use nfidb_transport::{Distribution, FileTransferOptions, ServerHandle, ServerOptions};
 use qrcode::QrCode;
@@ -39,8 +44,14 @@ struct Cli {
     run_seconds: Option<u64>,
     #[arg(long, value_enum, help = "Override the saved video quality profile")]
     video_profile: Option<VideoProfileChoice>,
+    #[arg(long, value_enum, help = "Override the saved encoder mode for this run")]
+    encoder: Option<EncoderModeChoice>,
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..=120), help = "Override the capture frame-rate limit")]
     max_fps: Option<u32>,
+    #[arg(long, value_parser = clap::value_parser!(u32).range(320..=7680), help = "Override the active preset maximum width")]
+    max_width: Option<u32>,
+    #[arg(long, help = "Override the active codec target bitrate in Mbps (0.5-200)")]
+    bitrate: Option<f32>,
     #[arg(long, default_value_t = 1280, help = "Generated test-pattern source width")]
     test_width: u32,
     #[arg(long, default_value_t = 720, help = "Generated test-pattern source height")]
@@ -55,6 +66,14 @@ struct Cli {
     metrics_output: Option<PathBuf>,
     #[arg(long, requires = "headless", help = "Use this transfer Inbox for automation")]
     file_inbox: Option<PathBuf>,
+    #[arg(long, value_enum, help = "Run a deterministic host codec benchmark and exit")]
+    benchmark: Option<BenchmarkSuiteChoice>,
+    #[arg(long, requires = "benchmark", help = "Benchmark report directory")]
+    benchmark_output: Option<PathBuf>,
+    #[arg(long, requires = "benchmark", value_parser = clap::value_parser!(u32).range(10..=3600), help = "Frames per host benchmark case")]
+    benchmark_frames: Option<u32>,
+    #[arg(long, requires = "benchmark", value_enum, help = "Limit host benchmark workload")]
+    benchmark_workload: Option<BenchmarkWorkloadChoice>,
     #[arg(
         long,
         requires = "headless",
@@ -83,6 +102,38 @@ enum VideoProfileChoice {
     Sharp,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum EncoderModeChoice {
+    Auto,
+    H264Hardware,
+    HevcHardware,
+    Av1Hardware,
+    H264Software,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum BenchmarkSuiteChoice {
+    Quick,
+    Full,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum BenchmarkWorkloadChoice {
+    StaticDetail,
+    Drawing,
+    HighMotion,
+}
+
+impl From<BenchmarkWorkloadChoice> for nfidb_host_windows::BenchmarkWorkload {
+    fn from(value: BenchmarkWorkloadChoice) -> Self {
+        match value {
+            BenchmarkWorkloadChoice::StaticDetail => Self::StaticDetail,
+            BenchmarkWorkloadChoice::Drawing => Self::Drawing,
+            BenchmarkWorkloadChoice::HighMotion => Self::HighMotion,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HostPage {
     Session,
@@ -99,6 +150,18 @@ impl From<VideoProfileChoice> for VideoProfile {
             VideoProfileChoice::Fast => Self::Fast,
             VideoProfileChoice::Balanced => Self::Balanced,
             VideoProfileChoice::Sharp => Self::Sharp,
+        }
+    }
+}
+
+impl From<EncoderModeChoice> for EncoderMode {
+    fn from(value: EncoderModeChoice) -> Self {
+        match value {
+            EncoderModeChoice::Auto => Self::Auto,
+            EncoderModeChoice::H264Hardware => Self::H264Hardware,
+            EncoderModeChoice::HevcHardware => Self::HevcHardware,
+            EncoderModeChoice::Av1Hardware => Self::Av1Hardware,
+            EncoderModeChoice::H264Software => Self::H264Software,
         }
     }
 }
@@ -124,8 +187,23 @@ fn main() -> Result<()> {
     if let Some(profile) = cli.video_profile {
         config.video.profile = profile.into();
     }
+    if let Some(encoder) = cli.encoder {
+        config.video.encoder = encoder.into();
+    }
     if let Some(max_fps) = cli.max_fps {
-        config.video.max_fps = max_fps;
+        config.video.presets.get_mut(config.video.profile).max_fps = max_fps;
+    }
+    if let Some(max_width) = cli.max_width {
+        config.video.presets.get_mut(config.video.profile).max_width = max_width;
+    }
+    if let Some(bitrate) = cli.bitrate {
+        let codec = config.video.encoder.codec().unwrap_or(nfidb_core::VideoCodec::H264);
+        config
+            .video
+            .presets
+            .get_mut(config.video.profile)
+            .bitrates
+            .set_for_codec(codec, bitrate);
     }
     if let Some(port) = cli.port {
         config.network.port = port;
@@ -135,6 +213,55 @@ fn main() -> Result<()> {
     }
     if let Some(inbox) = &cli.file_inbox {
         config.file_transfer.inbox_directory = Some(inbox.clone());
+    }
+    config.video.validate().map_err(anyhow::Error::msg)?;
+    let encoder_capabilities = discover_video_encoders();
+    if let Some(suite) = cli.benchmark {
+        let frames = cli.benchmark_frames.unwrap_or(match suite {
+            BenchmarkSuiteChoice::Quick => 180,
+            BenchmarkSuiteChoice::Full => 120,
+        });
+        let mut cases = match suite {
+            BenchmarkSuiteChoice::Quick => quick_benchmark_cases(frames),
+            BenchmarkSuiteChoice::Full => full_benchmark_cases(frames),
+        };
+        if let Some(workload) = cli.benchmark_workload {
+            let workload = nfidb_host_windows::BenchmarkWorkload::from(workload);
+            cases.retain(|case| case.workload == workload);
+        }
+        if let Some(profile) = cli.video_profile {
+            let needle = match profile {
+                VideoProfileChoice::Fast => "fast",
+                VideoProfileChoice::Balanced => "balanced",
+                VideoProfileChoice::Sharp => "sharp",
+            };
+            cases.retain(|case| case.name.contains(needle));
+        }
+        let modes = cli.encoder.map_or_else(
+            || {
+                vec![
+                    EncoderMode::H264Hardware,
+                    EncoderMode::HevcHardware,
+                    EncoderMode::Av1Hardware,
+                    EncoderMode::H264Software,
+                ]
+            },
+            |mode| vec![EncoderMode::from(mode)],
+        );
+        let report = run_host_benchmark_suite(encoder_capabilities, &cases, &modes);
+        let output = cli.benchmark_output.unwrap_or_else(|| {
+            PathBuf::from("build").join("benchmarks").join(format!(
+                "host-{}",
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+            ))
+        });
+        write_benchmark_exports(&output, &report).map_err(anyhow::Error::msg)?;
+        write_json(&PathBuf::from("build").join("benchmarks").join("latest.json"), &report)?;
+        println!("NFiDB host codec benchmark: {}", output.display());
+        return Ok(());
     }
     let monitors = enumerate_monitors()
         .map_err(anyhow::Error::msg)
@@ -148,6 +275,7 @@ fn main() -> Result<()> {
     config.monitor_index = selected.index;
 
     let metrics = Arc::new(Metrics::default());
+    let _resource_monitor = ProcessResourceMonitor::start(Arc::clone(&metrics));
     let session = Arc::new(SessionManager::new());
     let native_injector = if cli.input_sink == InputSinkChoice::Inject && config.mode != CaptureMode::DisplayOnly {
         Some(Arc::new(PointerInjector::new(
@@ -173,9 +301,8 @@ fn main() -> Result<()> {
     let capture = Arc::new(CaptureManager::new(
         video_tx.clone(),
         Arc::clone(&metrics),
-        config.video.profile,
-        config.video.max_fps,
-        config.video.cursor,
+        config.video.clone(),
+        encoder_capabilities,
     ));
     if config.mode != CaptureMode::InputOnly {
         let capture_result = match cli.capture {
@@ -219,12 +346,14 @@ fn main() -> Result<()> {
                     inbox_directory,
                     staging_directory: config_directory.join("transfer-staging"),
                 },
+                video: config.video.clone(),
             },
             Arc::clone(&session),
             Arc::clone(&metrics),
             input,
             video_tx,
             capture.keyframe_request(),
+            Arc::clone(&capture) as Arc<dyn nfidb_core::VideoSettingsRuntime>,
         )
         .map_err(anyhow::Error::msg)?,
     );
@@ -249,7 +378,10 @@ fn main() -> Result<()> {
                     "port": server.info.port,
                     "capture": capture.status().source,
                     "profile": format!("{:?}", config.video.profile).to_ascii_lowercase(),
-                    "max_fps": config.video.max_fps,
+                    "requested_encoder": config.video.encoder,
+                    "active_encoder": capture.video_runtime_status(),
+                    "encoder_capabilities": capture.encoder_capabilities(),
+                    "max_fps": config.video.active_preset().max_fps,
                     "file_inbox": server.file_inbox_directory(),
                 }),
             )?;
@@ -296,6 +428,12 @@ fn main() -> Result<()> {
                     HostPage::Session
                 },
                 last_message: None,
+                last_video_revision: 0,
+                benchmark_rx: None,
+                benchmark_report: None,
+                benchmark_running_label: None,
+                benchmark_report_path: None,
+                resume_capture_after_benchmark: false,
             }))
         }),
     )
@@ -323,10 +461,22 @@ struct HostApp {
     injector: Option<Arc<PointerInjector>>,
     active_page: HostPage,
     last_message: Option<String>,
+    last_video_revision: u64,
+    benchmark_rx: Option<Receiver<Result<(PathBuf, HostBenchmarkReport), String>>>,
+    benchmark_report: Option<HostBenchmarkReport>,
+    benchmark_running_label: Option<String>,
+    benchmark_report_path: Option<PathBuf>,
+    resume_capture_after_benchmark: bool,
 }
 
 impl eframe::App for HostApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.poll_video_benchmark();
+        let video_state = self.server.video_control_state();
+        if video_state.settings.revision != self.last_video_revision {
+            self.last_video_revision = video_state.settings.revision;
+            self.config.video = video_state.settings.settings;
+        }
         let context = ui.ctx().clone();
         context.request_repaint_after(Duration::from_millis(500));
         if context.input(|input| input.focused) && self.server.rotate_pairing_if_expired() {
@@ -415,6 +565,7 @@ impl eframe::App for HostApp {
             let _ = injector.reset_all();
         }
         self.capture.stop();
+        self.config.video = self.server.video_control_state().settings.settings;
         self.server.stop();
         let _ = self.config.save();
     }
@@ -710,6 +861,8 @@ impl HostApp {
         self.client_diagnostics_card(ui);
         ui.add_space(16.0);
         self.processed_diagnostics_card(ui);
+        ui.add_space(16.0);
+        self.video_benchmark_card(ui);
     }
 
     fn app_setup_page(&mut self, ui: &mut egui::Ui) {
@@ -857,6 +1010,9 @@ impl HostApp {
     }
 
     fn source_settings_card(&mut self, ui: &mut egui::Ui) {
+        let video_state = self.server.video_control_state();
+        let mut draft = self.config.video.clone();
+        let mut apply_now = false;
         egui::Frame::NONE
             .fill(egui::Color32::from_rgb(19, 24, 25))
             .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(43, 54, 55)))
@@ -886,6 +1042,108 @@ impl HostApp {
                     });
                 });
                 ui.separator();
+                ui.label(egui::RichText::new("ACTIVE PATH").size(9.0).strong().color(muted()));
+                ui.add_space(7.0);
+                ui.horizontal_wrapped(|ui| {
+                    status_metric(ui, "CODEC", video_state.runtime.codec.label());
+                    ui.separator();
+                    status_metric(
+                        ui,
+                        "BACKEND",
+                        if video_state.runtime.hardware {
+                            "Hardware"
+                        } else {
+                            "Software"
+                        },
+                    );
+                    ui.separator();
+                    status_metric(
+                        ui,
+                        "MEMORY PATH",
+                        match video_state.runtime.pipeline_memory_mode {
+                            nfidb_core::PipelineMemoryMode::GpuZeroCopy => "GPU zero-copy",
+                            nfidb_core::PipelineMemoryMode::GpuAssisted => "GPU assisted",
+                            nfidb_core::PipelineMemoryMode::CpuCopy => "CPU copy",
+                            nfidb_core::PipelineMemoryMode::CpuPreprocessing => "CPU preprocess",
+                        },
+                    );
+                    ui.separator();
+                    status_metric(ui, "RESTARTS", &video_state.runtime.restart_count.to_string());
+                });
+                ui.label(
+                    egui::RichText::new(&video_state.runtime.encoder_name)
+                        .size(10.0)
+                        .color(egui::Color32::WHITE),
+                );
+                ui.label(
+                    egui::RichText::new(&video_state.runtime.auto_selection_reason)
+                        .size(10.0)
+                        .color(muted()),
+                );
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("ENCODER").size(9.0).strong().color(muted()));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        egui::ComboBox::from_id_salt("video-encoder")
+                            .selected_text(draft.encoder.label())
+                            .width(250.0)
+                            .show_ui(ui, |ui| {
+                                for mode in [
+                                    EncoderMode::Auto,
+                                    EncoderMode::H264Hardware,
+                                    EncoderMode::HevcHardware,
+                                    EncoderMode::Av1Hardware,
+                                    EncoderMode::H264Software,
+                                ] {
+                                    let entry = video_state.compatibility.iter().find(|entry| entry.mode == mode);
+                                    let host_usable = video_state
+                                        .host_capabilities
+                                        .iter()
+                                        .any(|candidate| candidate.mode() == mode && candidate.state.is_usable());
+                                    let receiver_known = !video_state.browser_capabilities.user_agent.is_empty();
+                                    let enabled = mode == EncoderMode::Auto
+                                        || (host_usable
+                                            && (!receiver_known || entry.is_some_and(|item| item.browser_reported)));
+                                    let reason = if mode == EncoderMode::Auto {
+                                        "Benchmarks and validates the best mutually supported low-latency path"
+                                            .to_owned()
+                                    } else {
+                                        entry
+                                            .map(|item| item.reason.clone())
+                                            .unwrap_or_else(|| "Waiting for receiver capability discovery".to_owned())
+                                    };
+                                    let label = if enabled {
+                                        mode.label().to_owned()
+                                    } else {
+                                        format!("{} — unavailable", mode.label())
+                                    };
+                                    let response =
+                                        ui.add_enabled(enabled, egui::Button::selectable(draft.encoder == mode, label));
+                                    if response.clicked() {
+                                        draft.encoder = mode;
+                                        apply_now = true;
+                                    }
+                                    response.on_hover_text(reason);
+                                }
+                            });
+                    });
+                });
+                ui.label(
+                    egui::RichText::new(match draft.encoder {
+                        EncoderMode::Auto => {
+                            "Recommended. Chooses the fastest verified path that meets the latency target."
+                        }
+                        EncoderMode::H264Hardware => "Best compatibility with low host CPU use.",
+                        EncoderMode::HevcHardware => "Lower bandwidth on receivers that prove HEVC playback.",
+                        EncoderMode::Av1Hardware => {
+                            "Highest compression on newer hardware; Auto requires a successful benchmark."
+                        }
+                        EncoderMode::H264Software => "Universal compatibility fallback; uses more CPU.",
+                    })
+                    .size(10.0)
+                    .color(muted()),
+                );
+                ui.separator();
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("QUALITY").size(9.0).strong().color(muted()));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -894,22 +1152,92 @@ impl HostApp {
                             (VideoProfile::Balanced, "Balanced"),
                             (VideoProfile::Fast, "Fast"),
                         ] {
-                            if ui
-                                .selectable_value(&mut self.config.video.profile, profile, name)
-                                .changed()
-                            {
-                                let _ = self.config.save();
-                                self.last_message =
-                                    Some("Video profile saved; restart NFiDB to rebuild the encoder".to_owned());
+                            if ui.selectable_value(&mut draft.profile, profile, name).changed() {
+                                apply_now = true;
                             }
                         }
                     });
+                });
+                ui.add_space(8.0);
+                let bitrate_codec = draft.encoder.codec().unwrap_or(video_state.runtime.codec);
+                let preset = draft.presets.get_mut(draft.profile);
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Maximum width");
+                    ui.add(
+                        egui::DragValue::new(&mut preset.max_width)
+                            .range(320..=7680)
+                            .suffix(" px"),
+                    );
+                    ui.add_space(12.0);
+                    ui.label("Frame rate");
+                    ui.add(egui::DragValue::new(&mut preset.max_fps).range(1..=120).suffix(" fps"));
+                    ui.add_space(12.0);
+                    ui.label(format!("{} target", bitrate_codec.label()));
+                    let mut bitrate = preset.bitrates.for_codec(bitrate_codec);
+                    if ui
+                        .add(
+                            egui::DragValue::new(&mut bitrate)
+                                .range(0.5..=200.0)
+                                .speed(0.1)
+                                .suffix(" Mbps"),
+                        )
+                        .changed()
+                    {
+                        preset.bitrates.set_for_codec(bitrate_codec, bitrate);
+                    }
+                });
+                ui.add_space(9.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(draft != self.config.video, egui::Button::new("APPLY LIVE"))
+                        .clicked()
+                    {
+                        apply_now = true;
+                    }
+                    if ui.button("RESET PRESET").clicked() {
+                        *draft.presets.get_mut(draft.profile) = VideoPresets::default().get(draft.profile).clone();
+                    }
+                    if ui.button("RESET ALL PRESETS").clicked() {
+                        draft.presets = VideoPresets::default();
+                    }
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} px · {} fps · {:.1} Mbps",
+                            draft.active_preset().max_width,
+                            draft.active_preset().max_fps,
+                            draft.active_preset().bitrates.for_codec(bitrate_codec),
+                        ))
+                        .size(10.0)
+                        .color(muted()),
+                    );
                 });
                 if let Some(message) = &self.last_message {
                     ui.separator();
                     ui.label(egui::RichText::new(message).size(10.0).color(accent()));
                 }
             });
+        self.config.video = draft;
+        if apply_now {
+            self.apply_video_settings();
+        }
+    }
+
+    fn apply_video_settings(&mut self) {
+        match self.server.apply_video_settings_from_host(self.config.video.clone()) {
+            Ok(state) => {
+                self.last_video_revision = state.settings.revision;
+                self.config.video = state.settings.settings;
+                self.last_message = Some(format!(
+                    "Video updated live: {} via {}",
+                    state.runtime.codec.label(),
+                    state.runtime.encoder_name
+                ));
+            }
+            Err(error) => {
+                self.config.video = self.server.video_control_state().settings.settings;
+                self.last_message = Some(format!("Video setting rejected: {error}"));
+            }
+        }
     }
 
     fn input_settings_card(&mut self, ui: &mut egui::Ui) {
@@ -1070,8 +1398,16 @@ impl HostApp {
                             ui,
                             "Encode",
                             &format!(
-                                "{:.2} ms now · {:.2} avg · {:.2} max",
-                                metrics.encode_ms, metrics.average_encode_ms, metrics.max_encode_ms
+                                "{:.2} ms now · {:.2} p50 · {:.2} p95 · {:.2} p99",
+                                metrics.encode_ms, metrics.encode_p50_ms, metrics.encode_p95_ms, metrics.encode_p99_ms
+                            ),
+                        );
+                        diagnostic_row(
+                            ui,
+                            "Process resources",
+                            &format!(
+                                "{:.1}% CPU · {:.1} MiB RAM · {:.1} MiB peak",
+                                metrics.process_cpu_percent, metrics.working_set_mib, metrics.peak_working_set_mib
                             ),
                         );
                         diagnostic_row(ui, "Encoded data", &format_bytes(metrics.encoded_bytes));
@@ -1124,6 +1460,7 @@ impl HostApp {
                     ui.colored_label(egui::Color32::from_rgb(255, 137, 125), error);
                 }
                 if ui.button("Copy sanitized diagnostics").clicked() {
+                    let video = self.server.video_control_state();
                     let report = serde_json::json!({
                         "product": concat!("NFiDB ", env!("CARGO_PKG_VERSION")),
                         "host": "redacted",
@@ -1131,6 +1468,7 @@ impl HostApp {
                         "encoder": capture.encoder,
                         "metrics": metrics,
                         "file_transfers": transfers,
+                        "video": video,
                     });
                     ui.ctx().copy_text(
                         serde_json::to_string_pretty(&report)
@@ -1366,6 +1704,184 @@ impl HostApp {
         });
     }
 
+    fn video_benchmark_card(&mut self, ui: &mut egui::Ui) {
+        let report = self.benchmark_report.clone();
+        card(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(
+                        egui::RichText::new("VIDEO ENCODER BENCHMARK")
+                            .size(9.0)
+                            .strong()
+                            .color(muted()),
+                    );
+                    ui.label(
+                        egui::RichText::new(
+                            "Host tests use deterministic screen/detail, drawing, and motion patterns. Run Quick Auto Test on the paired iPad for decode and presentation evidence.",
+                        )
+                        .size(10.0)
+                        .color(muted()),
+                    );
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let idle = self.benchmark_rx.is_none();
+                    if ui.add_enabled(idle, egui::Button::new("FULL BENCHMARK")).clicked() {
+                        self.start_video_benchmark(true);
+                    }
+                    if ui.add_enabled(idle, egui::Button::new("QUICK HOST TEST")).clicked() {
+                        self.start_video_benchmark(false);
+                    }
+                });
+            });
+            if let Some(label) = &self.benchmark_running_label {
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(egui::RichText::new(label).color(accent()));
+                });
+            }
+            if let Some(report) = &report {
+                ui.add_space(10.0);
+                egui::Grid::new("codec_benchmark_results")
+                    .num_columns(8)
+                    .striped(true)
+                    .show(ui, |ui| {
+                        for heading in ["ENCODER", "STATE", "FPS", "P95", "CPU", "RAM", "MBPS", "SCORE"] {
+                            ui.label(egui::RichText::new(heading).size(9.0).strong().color(muted()));
+                        }
+                        ui.end_row();
+                        for result in &report.results {
+                            ui.label(result.mode.label());
+                            ui.label(&result.state);
+                            ui.label(optional_number(result.actual_fps, ""));
+                            ui.label(optional_number(result.encode_p95_ms, " ms"));
+                            ui.label(optional_number(result.process_cpu_percent, "%"));
+                            ui.label(optional_number(result.working_set_peak_mib, " MiB"));
+                            ui.label(optional_number(result.actual_mbps, ""));
+                            if let Some(score) = result.auto_score.as_ref().and_then(|score| score.score) {
+                                ui.add(
+                                    egui::ProgressBar::new((score / 100.0).clamp(0.0, 1.0) as f32)
+                                        .desired_width(64.0)
+                                        .text(format!("{score:.1}")),
+                                );
+                            } else {
+                                ui.label("—");
+                            }
+                            ui.end_row();
+                            if let Some(reason) = &result.reason {
+                                ui.label(egui::RichText::new(reason).size(9.0).color(muted()));
+                                ui.end_row();
+                            }
+                        }
+                    });
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if let Some(path) = &self.benchmark_report_path
+                        && ui.button("OPEN REPORT FOLDER").clicked()
+                    {
+                        self.last_message = Some(match open_in_explorer(path) {
+                            Ok(()) => "Opened benchmark report folder".to_owned(),
+                            Err(error) => format!("Could not open benchmark folder: {error}"),
+                        });
+                    }
+                    if ui.button("CLEAR LEARNED RESULTS").clicked() {
+                        self.last_message = Some(match self.capture.clear_auto_benchmarks() {
+                            Ok(()) => "Cleared learned codec results; Auto will use its conservative policy".to_owned(),
+                            Err(error) => format!("Could not clear learned results: {error}"),
+                        });
+                    }
+                });
+            }
+        });
+    }
+
+    fn start_video_benchmark(&mut self, full: bool) {
+        if self.benchmark_rx.is_some() {
+            return;
+        }
+        self.resume_capture_after_benchmark = self.capture.status().running;
+        if self.resume_capture_after_benchmark {
+            self.capture.stop();
+        }
+        let capabilities = self.server.video_control_state().host_capabilities;
+        let cases = if full {
+            full_benchmark_cases(120)
+        } else {
+            quick_benchmark_cases(180)
+        };
+        let output = AppConfig::path()
+            .ok()
+            .and_then(|path| path.parent().map(PathBuf::from))
+            .unwrap_or_else(std::env::temp_dir)
+            .join("benchmarks")
+            .join(format!(
+                "{}-{}",
+                if full { "full" } else { "quick" },
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+            ));
+        let (tx, rx) = mpsc::channel();
+        self.benchmark_rx = Some(rx);
+        self.benchmark_running_label = Some(if full {
+            "Testing every functional encoder across 12 workload/geometry cases. Input remains available.".to_owned()
+        } else {
+            "Testing every functional encoder at Balanced 1080p60. Input remains available.".to_owned()
+        });
+        let spawn = std::thread::Builder::new()
+            .name("nfidb-benchmark".to_owned())
+            .spawn(move || {
+                let report = run_host_benchmark_suite(
+                    capabilities,
+                    &cases,
+                    &[
+                        EncoderMode::H264Hardware,
+                        EncoderMode::HevcHardware,
+                        EncoderMode::Av1Hardware,
+                        EncoderMode::H264Software,
+                    ],
+                );
+                let result = write_benchmark_exports(&output, &report)
+                    .map(|()| (output, report))
+                    .map_err(|error| format!("benchmark export failed: {error}"));
+                let _ = tx.send(result);
+            });
+        if let Err(error) = spawn {
+            self.benchmark_rx = None;
+            self.benchmark_running_label = None;
+            self.last_message = Some(format!("Could not start benchmark: {error}"));
+        }
+    }
+
+    fn poll_video_benchmark(&mut self) {
+        let Some(receiver) = &self.benchmark_rx else {
+            return;
+        };
+        let result = match receiver.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => Err("benchmark worker stopped without a report".to_owned()),
+        };
+        self.benchmark_rx = None;
+        self.benchmark_running_label = None;
+        match result {
+            Ok((path, report)) => {
+                self.benchmark_report_path = Some(path.clone());
+                self.benchmark_report = Some(report);
+                self.last_message = Some(format!("Benchmark complete: {}", path.display()));
+            }
+            Err(error) => self.last_message = Some(error),
+        }
+        if self.resume_capture_after_benchmark
+            && self.config.mode != CaptureMode::InputOnly
+            && let Err(error) = self.capture.start_monitor(self.selected_index)
+        {
+            self.last_message = Some(format!("Benchmark finished, but capture could not resume: {error}"));
+        }
+        self.resume_capture_after_benchmark = false;
+    }
+
     fn export_diagnostics(&self) -> Result<PathBuf> {
         let config_path = AppConfig::path().context("diagnostic directory unavailable")?;
         let directory = config_path
@@ -1387,6 +1903,7 @@ impl HostApp {
             "current_host_metrics": self.metrics.snapshot(),
             "file_transfers": self.server.file_transfer_snapshot(),
             "diagnostics": self.server.diagnostic_report(),
+            "video": self.server.video_control_state(),
         });
         write_json(&path, &report)?;
         Ok(path)
@@ -1557,6 +2074,10 @@ fn json_number(value: &serde_json::Value, key: &str) -> String {
         .get(key)
         .and_then(serde_json::Value::as_f64)
         .map_or_else(|| "?".to_owned(), |number| format!("{number:.0}"))
+}
+
+fn optional_number(value: Option<f64>, suffix: &str) -> String {
+    value.map_or_else(|| "—".to_owned(), |value| format!("{value:.2}{suffix}"))
 }
 
 fn format_bytes(bytes: u64) -> String {

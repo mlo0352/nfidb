@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -85,6 +85,8 @@ pub struct Metrics {
     encode_micros: AtomicU64,
     encode_micros_total: AtomicU64,
     encode_micros_max: AtomicU64,
+    encode_samples: Mutex<VecDeque<u64>>,
+    preprocess_samples: Mutex<VecDeque<u64>>,
     input_batches: AtomicU64,
     input_samples: AtomicU64,
     injected_samples: AtomicU64,
@@ -116,6 +118,9 @@ pub struct Metrics {
     last_tilt_x_bits: AtomicU32,
     last_tilt_y_bits: AtomicU32,
     rtt_micros: AtomicU64,
+    process_cpu_bits: AtomicU64,
+    working_set_bytes: AtomicU64,
+    peak_working_set_bytes: AtomicU64,
     source_width: AtomicU32,
     source_height: AtomicU32,
     output_width: AtomicU32,
@@ -141,6 +146,7 @@ impl Metrics {
         self.encode_micros.store(elapsed_micros, Ordering::Relaxed);
         self.encode_micros_total.fetch_add(elapsed_micros, Ordering::Relaxed);
         self.encode_micros_max.fetch_max(elapsed_micros, Ordering::Relaxed);
+        push_latency_sample(&self.encode_samples, elapsed_micros);
         self.output_width.store(width, Ordering::Relaxed);
         self.output_height.store(height, Ordering::Relaxed);
     }
@@ -151,6 +157,7 @@ impl Metrics {
         self.preprocess_micros_total
             .fetch_add(elapsed_micros, Ordering::Relaxed);
         self.preprocess_micros_max.fetch_max(elapsed_micros, Ordering::Relaxed);
+        push_latency_sample(&self.preprocess_samples, elapsed_micros);
     }
 
     pub fn encoded_keyframe(&self) {
@@ -291,6 +298,21 @@ impl Metrics {
             .store((rtt_ms.max(0.0) * 1000.0) as u64, Ordering::Relaxed);
     }
 
+    pub fn process_resources(&self, cpu_percent: f64, working_set_bytes: u64, peak_working_set_bytes: u64) {
+        if cpu_percent.is_finite() {
+            self.process_cpu_bits
+                .store(cpu_percent.max(0.0).to_bits(), Ordering::Relaxed);
+        }
+        self.working_set_bytes.store(working_set_bytes, Ordering::Relaxed);
+        self.peak_working_set_bytes
+            .fetch_max(peak_working_set_bytes.max(working_set_bytes), Ordering::Relaxed);
+    }
+
+    pub fn reset_video_latency_samples(&self) {
+        self.encode_samples.lock().clear();
+        self.preprocess_samples.lock().clear();
+    }
+
     pub fn set_client_clock_offset_ms(&self, offset_ms: f64) {
         if offset_ms.is_finite() {
             self.client_clock_offset_bits
@@ -341,6 +363,8 @@ impl Metrics {
         let preprocess_micros_total = self.preprocess_micros_total.load(Ordering::Relaxed);
         let input_arrival_samples = self.input_arrival_samples.load(Ordering::Relaxed);
         let input_inject_samples = self.input_inject_samples.load(Ordering::Relaxed);
+        let encode_samples = self.encode_samples.lock();
+        let preprocess_samples = self.preprocess_samples.lock();
         MetricsSnapshot {
             connected: self.connected.load(Ordering::Relaxed),
             capture_fps: rate.capture_fps,
@@ -397,6 +421,9 @@ impl Metrics {
             tilt_y_min: continuity.tilt_y_min,
             tilt_y_max: continuity.tilt_y_max,
             rtt_ms: self.rtt_micros.load(Ordering::Relaxed) as f64 / 1000.0,
+            process_cpu_percent: f64::from_bits(self.process_cpu_bits.load(Ordering::Relaxed)),
+            working_set_mib: self.working_set_bytes.load(Ordering::Relaxed) as f64 / (1024.0 * 1024.0),
+            peak_working_set_mib: self.peak_working_set_bytes.load(Ordering::Relaxed) as f64 / (1024.0 * 1024.0),
             encode_ms: self.encode_micros.load(Ordering::Relaxed) as f64 / 1000.0,
             preprocess_ms: self.preprocess_micros.load(Ordering::Relaxed) as f64 / 1000.0,
             average_preprocess_ms: if preprocessed_frames == 0 {
@@ -405,12 +432,20 @@ impl Metrics {
                 preprocess_micros_total as f64 / preprocessed_frames as f64 / 1000.0
             },
             max_preprocess_ms: self.preprocess_micros_max.load(Ordering::Relaxed) as f64 / 1000.0,
+            preprocess_p50_ms: latency_percentile(&preprocess_samples, 0.50),
+            preprocess_p95_ms: latency_percentile(&preprocess_samples, 0.95),
+            preprocess_p99_ms: latency_percentile(&preprocess_samples, 0.99),
+            recent_preprocess_mean_ms: latency_mean(&preprocess_samples),
             average_encode_ms: if encoded_frames == 0 {
                 0.0
             } else {
                 encode_micros_total as f64 / encoded_frames as f64 / 1000.0
             },
             max_encode_ms: self.encode_micros_max.load(Ordering::Relaxed) as f64 / 1000.0,
+            encode_p50_ms: latency_percentile(&encode_samples, 0.50),
+            encode_p95_ms: latency_percentile(&encode_samples, 0.95),
+            encode_p99_ms: latency_percentile(&encode_samples, 0.99),
+            recent_encode_mean_ms: latency_mean(&encode_samples),
             source_width: self.source_width.load(Ordering::Relaxed),
             source_height: self.source_height.load(Ordering::Relaxed),
             output_width: self.output_width.load(Ordering::Relaxed),
@@ -486,12 +521,23 @@ pub struct MetricsSnapshot {
     pub tilt_y_min: f32,
     pub tilt_y_max: f32,
     pub rtt_ms: f64,
+    pub process_cpu_percent: f64,
+    pub working_set_mib: f64,
+    pub peak_working_set_mib: f64,
     pub encode_ms: f64,
     pub preprocess_ms: f64,
     pub average_preprocess_ms: f64,
     pub max_preprocess_ms: f64,
+    pub preprocess_p50_ms: f64,
+    pub preprocess_p95_ms: f64,
+    pub preprocess_p99_ms: f64,
+    pub recent_preprocess_mean_ms: f64,
     pub average_encode_ms: f64,
     pub max_encode_ms: f64,
+    pub encode_p50_ms: f64,
+    pub encode_p95_ms: f64,
+    pub encode_p99_ms: f64,
+    pub recent_encode_mean_ms: f64,
     pub source_width: u32,
     pub source_height: u32,
     pub output_width: u32,
@@ -503,6 +549,33 @@ fn average_micros(total: u64, count: u64) -> f64 {
         0.0
     } else {
         total as f64 / count as f64 / 1000.0
+    }
+}
+
+fn push_latency_sample(samples: &Mutex<VecDeque<u64>>, value: u64) {
+    const MAX_SAMPLES: usize = 1_024;
+    let mut samples = samples.lock();
+    if samples.len() == MAX_SAMPLES {
+        samples.pop_front();
+    }
+    samples.push_back(value);
+}
+
+fn latency_percentile(samples: &VecDeque<u64>, quantile: f64) -> f64 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    let mut values: Vec<_> = samples.iter().copied().collect();
+    values.sort_unstable();
+    let index = ((values.len() - 1) as f64 * quantile).ceil() as usize;
+    values[index] as f64 / 1000.0
+}
+
+fn latency_mean(samples: &VecDeque<u64>) -> f64 {
+    if samples.is_empty() {
+        0.0
+    } else {
+        samples.iter().sum::<u64>() as f64 / samples.len() as f64 / 1000.0
     }
 }
 

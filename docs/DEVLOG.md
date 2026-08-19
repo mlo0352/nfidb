@@ -1,5 +1,23 @@
 # Engineering devlog
 
+## 2026-08-19 — Capability-aware hardware video and measured Auto
+
+### Goal
+
+Replace fixed software H.264 with real hardware discovery and a receiver-aware, evidence-driven choice without weakening the fresh-frame or input guarantees.
+
+### Implementation
+
+Added a codec-neutral encoder boundary, actual Media Foundation MFT enumeration/activation/encoded-sample probes, asynchronous NV12 hardware encoding for H.264/HEVC/AV1, codec-aware WebRTC packetization, explicit browser report/SDP/negotiation/presentation stages, versioned host-authoritative settings, editable per-codec presets, live reconfiguration, local learned results, and transparent Auto gates/scores. Windows and iPad expose the same controls and active-path evidence. Benchmarks now cover three workloads at host and end-to-end levels with JSON/CSV/Markdown output.
+
+### Evidence
+
+**PASS ON THE DEVELOPMENT PC; PHYSICAL SAFARI CODEC MATRIX PENDING.** The RTX 4090 returned real H.264, HEVC, and AV1 bytes through Media Foundation. All 48 optimized host cases completed. At 1080p drawing, hardware encode p95 was 4.94–5.54 ms versus 34.60 ms OpenH264. A live Edge Quick Auto run repeatedly changed codecs, verified presented frames, persisted three results, returned to Auto, and kept capture alive. H.264 hardware and AV1 were mutually usable; Edge did not report HEVC. The headless compositor's high presentation-drop statistic caused the strict gates to reject all end-to-end rows, so Auto conservatively stayed on H.264 hardware.
+
+### Decision
+
+Ship as v0.6.0 Alpha with OpenH264 retained as fallback. Keep the existing CPU preprocessing path labeled honestly and treat GPU resize/conversion/direct surfaces, decoded-frame quality metrics, physical Safari HEVC/AV1 validation, and multi-vendor hardware runs as follow-up work rather than invented results.
+
 ## 2026-08-19 — Download queue completion and arrival feedback
 
 ### Goal

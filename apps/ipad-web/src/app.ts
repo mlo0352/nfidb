@@ -1,4 +1,26 @@
-import { disconnect, getDiagnosticSummary, getMetrics, getStatus, pairWithPin, pairWithQr, sendOffer, type HostDiagnosticSummary, type HostMetrics, type HostStatus } from "./api";
+import {
+  disconnect,
+  getDiagnosticSummary,
+  getMetrics,
+  getStatus,
+  pairWithPin,
+  pairWithQr,
+  recordAutoBenchmark,
+  reportVideoPresented,
+  sendBrowserVideoCapabilities,
+  sendOffer,
+  setVideoSettings,
+  type BrowserCodecCapability,
+  type BrowserVideoCapabilities,
+  type AutoBenchmarkObservation,
+  type EncoderMode,
+  type HostDiagnosticSummary,
+  type HostMetrics,
+  type HostStatus,
+  type VideoCodec,
+  type VideoConfig,
+  type VideoControl,
+} from "./api";
 import {
   getFileListing,
   loadAutoClearDownloads,
@@ -138,6 +160,11 @@ export class NfidbApp {
   private activeUploadId = 0;
   private activeUploadAbort: AbortController | null = null;
   private nextUploadId = 1;
+  private videoControl: VideoControl | null = null;
+  private browserVideoCapabilities: BrowserVideoCapabilities | null = null;
+  private videoPresentationReported = false;
+  private videoBenchmarkRunning = false;
+  private videoBenchmarkStatus = "";
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -234,7 +261,23 @@ export class NfidbApp {
     this.renderSurface();
     this.startFilePolling();
     this.openControlSocket();
+    await this.connectVideo();
+  }
+
+  private async connectVideo(): Promise<void> {
     try {
+      const previousPeer = this.peer;
+      this.peer = null;
+      if (previousPeer) {
+        previousPeer.close();
+      }
+      this.channel = null;
+      if (this.inputTransport === "datachannel") {
+        this.inputTransport = this.socket?.readyState === WebSocket.OPEN ? "websocket" : null;
+      }
+      this.browserVideoCapabilities = detectBrowserVideoCapabilities();
+      this.videoControl = await sendBrowserVideoCapabilities(this.browserVideoCapabilities);
+      this.videoPresentationReported = false;
       const peer = new RTCPeerConnection({ iceServers: [] });
       this.peer = peer;
       const channel = peer.createDataChannel("input", { ordered: true });
@@ -242,7 +285,8 @@ export class NfidbApp {
       this.channel = channel;
       channel.addEventListener("open", () => this.drainPendingInput());
       channel.addEventListener("close", () => this.handleInputTransportClose("datachannel"));
-      peer.addTransceiver("video", { direction: "recvonly" });
+      const videoTransceiver = peer.addTransceiver("video", { direction: "recvonly" });
+      applyCodecPreference(videoTransceiver, this.videoControl.runtime.codec);
       peer.addEventListener("track", (event) => {
         const video = this.requiredElement<HTMLVideoElement>("remoteVideo");
         this.videoTrackAtMs = performance.now();
@@ -267,15 +311,19 @@ export class NfidbApp {
       if (!peer.localDescription) {
         throw new Error("Safari did not create a local WebRTC description");
       }
+      updateSdpCapabilityEvidence(this.browserVideoCapabilities, peer.localDescription.sdp ?? "");
+      this.videoControl = await sendBrowserVideoCapabilities(this.browserVideoCapabilities);
       const answer = await sendOffer(this.token, peer.localDescription.toJSON());
       await peer.setRemoteDescription(answer);
       this.state = "connected";
       this.updateHud();
+      this.renderVideoPanel();
     } catch (error) {
       console.error(error);
       this.state = "input-only";
       this.showNotice("Video negotiation failed. Pencil input remains available over the diagnostic channel.");
       this.updateHud();
+      this.renderVideoPanel();
     }
   }
 
@@ -295,6 +343,7 @@ export class NfidbApp {
             <button id="gestureButton" class="tool-button" aria-pressed="true">Gestures on</button>
             <button id="keyboardButton" class="tool-button" aria-pressed="false">Keyboard</button>
             <button id="filesButton" class="tool-button files-button" aria-pressed="false">Files<span id="filesBadge" class="file-badge" hidden>0</span></button>
+            <button id="videoButton" class="tool-button" aria-pressed="false">Video</button>
             <button id="statsButton" class="tool-button" aria-pressed="false">Stats</button>
             <button id="fullscreenButton" class="icon-button" aria-label="Fullscreen">⛶</button>
             <button id="disconnectButton" class="icon-button danger" aria-label="Disconnect">×</button>
@@ -314,6 +363,10 @@ export class NfidbApp {
         <aside id="filesPanel" class="files-panel" hidden aria-label="File transfer">
           <div class="panel-header"><div><b>FILES</b><small>Paired session only</small></div><button id="filesClose" class="icon-button" aria-label="Close files">×</button></div>
           <div id="filesContent" class="files-content"><p class="panel-empty">Loading transfer queue…</p></div>
+        </aside>
+        <aside id="videoPanel" class="files-panel video-panel" hidden aria-label="Video settings">
+          <div class="panel-header"><div><b>VIDEO</b><small>Changes apply live on Windows</small></div><button id="videoClose" class="icon-button" aria-label="Close video settings">×</button></div>
+          <div id="videoContent" class="files-content"><p class="panel-empty">Reading encoder capabilities…</p></div>
         </aside>
         <section id="keyboardPanel" class="keyboard-panel" hidden aria-label="Remote keyboard">
           <div class="keyboard-panel-header">
@@ -391,6 +444,15 @@ export class NfidbApp {
       this.firstVideoFrameAtMs = performance.now();
       this.stopVideoRecovery();
       this.renderStats();
+      if (!this.videoPresentationReported && this.videoControl) {
+        this.videoPresentationReported = true;
+        void reportVideoPresented(this.videoControl.runtime.codec, true, true)
+          .then((control) => {
+            this.videoControl = control;
+            this.renderVideoPanel();
+          })
+          .catch((error) => console.debug("NFiDB presentation verification was not recorded", error));
+      }
     }
   }
 
@@ -519,6 +581,20 @@ export class NfidbApp {
       }
     });
     this.requiredElement("filesClose").addEventListener("click", () => this.closeFilesPanel());
+    this.requiredElement("videoButton").addEventListener("click", () => {
+      const panel = this.requiredElement<HTMLElement>("videoPanel");
+      panel.hidden = !panel.hidden;
+      this.requiredElement("videoButton").setAttribute("aria-pressed", String(!panel.hidden));
+      if (!panel.hidden) {
+        this.renderVideoPanel();
+      }
+      this.scheduleToolbarHide();
+    });
+    this.requiredElement("videoClose").addEventListener("click", () => {
+      this.requiredElement<HTMLElement>("videoPanel").hidden = true;
+      this.requiredElement("videoButton").setAttribute("aria-pressed", "false");
+      this.scheduleToolbarHide();
+    });
     for (const button of this.root.querySelectorAll<HTMLButtonElement>("[data-remote-key]")) {
       button.addEventListener("click", () => {
         const code = button.dataset.remoteKey;
@@ -576,6 +652,273 @@ export class NfidbApp {
     this.requiredElement<HTMLElement>("filesPanel").hidden = true;
     this.requiredElement("filesButton").setAttribute("aria-pressed", "false");
     this.scheduleToolbarHide();
+  }
+
+  private renderVideoPanel(): void {
+    const content = this.root.querySelector<HTMLElement>("#videoContent");
+    if (!content) {
+      return;
+    }
+    const control = this.videoControl;
+    if (!control) {
+      content.innerHTML = `<p class="panel-empty">Waiting for Windows video capabilities…</p>`;
+      return;
+    }
+    const settings = control.settings.settings;
+    const preset = settings.presets[settings.profile];
+    const activeCodec = control.runtime.codec;
+    const bitrate = activeCodec === "h264"
+      ? preset.bitrates.h264_mbps
+      : activeCodec === "hevc"
+        ? (preset.bitrates.hevc_mbps ?? preset.bitrates.h264_mbps)
+        : (preset.bitrates.av1_mbps ?? preset.bitrates.h264_mbps);
+    const modes: Array<[typeof settings.encoder, string]> = [
+      ["auto", "Auto — Recommended"],
+      ["h264-hardware", "H.264 Hardware"],
+      ["hevc-hardware", "HEVC Hardware"],
+      ["av1-hardware", "AV1 Hardware"],
+      ["h264-software", "H.264 Software"],
+    ];
+    const encoderOptions = modes.map(([mode, label]) => {
+      const availability = control.compatibility.find((item) => item.mode === mode);
+      const disabled = mode !== "auto" && availability?.availability === "unavailable";
+      return `<option value="${mode}" ${settings.encoder === mode ? "selected" : ""} ${disabled ? "disabled" : ""}>${escapeHtml(label)}${disabled ? " — unavailable" : ""}</option>`;
+    }).join("");
+    const capabilities = control.compatibility.map((item) => `
+      <li><b>${escapeHtml(encoderModeLabel(item.mode))}</b><span class="video-state ${item.availability}">${escapeHtml(item.availability)}</span><small>${escapeHtml(item.reason)}</small></li>`).join("");
+    const learnedDetails = control.learned_results.map((result) => `
+      <li><b>${escapeHtml(encoderModeLabel(result.mode))}</b><span>${result.score.score === null ? "rejected" : `${result.score.score.toFixed(1)} score`}</span>
+      <small>${result.metrics.presented_fps?.toFixed(1) ?? "—"} fps · ${result.metrics.actual_mbps.toFixed(2)} Mbps · ${result.metrics.encode_p95_ms.toFixed(2)} ms encode p95 · ${result.metrics.pipeline_p95_ms?.toFixed(1) ?? "—"} ms pipeline${result.score.reasons.length ? ` · ${escapeHtml(result.score.reasons.join("; "))}` : ""}</small></li>`).join("");
+    content.innerHTML = `
+      <section class="video-active">
+        <span>ACTIVE PATH</span>
+        <b>${escapeHtml(encoderModeLabel(control.runtime.active_mode))}</b>
+        <small>${escapeHtml(control.runtime.encoder_name)} · ${escapeHtml(control.runtime.pipeline_memory_mode.replaceAll("-", " "))}</small>
+        <p>${escapeHtml(control.runtime.auto_selection_reason)}</p>
+      </section>
+      <label class="video-field">ENCODER<select id="videoEncoder">${encoderOptions}</select></label>
+      <div class="video-segments" aria-label="Quality preset">
+        ${(["fast", "balanced", "sharp"] as const).map((profile) => `<button data-video-profile="${profile}" class="${settings.profile === profile ? "active" : ""}">${profile.charAt(0).toUpperCase()}${profile.slice(1)}</button>`).join("")}
+      </div>
+      <div class="video-editor">
+        <label>MAX WIDTH<input id="videoWidth" type="number" inputmode="numeric" min="320" max="7680" step="2" value="${preset.max_width}"></label>
+        <label>FPS<input id="videoFps" type="number" inputmode="numeric" min="1" max="120" value="${preset.max_fps}"></label>
+        <label>MBPS<input id="videoBitrate" type="number" inputmode="decimal" min="0.5" max="200" step="0.1" value="${bitrate}"></label>
+      </div>
+      <div class="video-actions"><button id="videoApply" class="primary-button">Apply live</button><button id="videoReset">Reset preset</button></div>
+      <section class="video-benchmark">
+        <div><b>AUTO TEST</b><small>${control.learned_results.length} learned result${control.learned_results.length === 1 ? "" : "s"} stored locally</small></div>
+        <button id="videoAutoTest" class="primary-button" ${this.videoBenchmarkRunning ? "disabled" : ""}>${this.videoBenchmarkRunning ? "Testing…" : "Run quick test"}</button>
+        ${this.videoBenchmarkStatus ? `<p>${escapeHtml(this.videoBenchmarkStatus)}</p>` : ""}
+      </section>
+      ${learnedDetails ? `<details class="video-results"><summary>Auto test details</summary><ul>${learnedDetails}</ul></details>` : ""}
+      <ul class="video-capabilities">${capabilities}</ul>`;
+    content.querySelectorAll<HTMLButtonElement>("[data-video-profile]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const profile = button.dataset.videoProfile as VideoConfig["profile"];
+        void this.updateVideoSettings((next) => { next.profile = profile; });
+      });
+    });
+    content.querySelector<HTMLButtonElement>("#videoApply")?.addEventListener("click", () => {
+      void this.updateVideoSettings((next) => {
+        const requestedMode = this.requiredElement<HTMLSelectElement>("videoEncoder").value as VideoConfig["encoder"];
+        next.encoder = requestedMode;
+        const selected = next.presets[next.profile];
+        selected.max_width = Number(this.requiredElement<HTMLInputElement>("videoWidth").value);
+        selected.max_fps = Number(this.requiredElement<HTMLInputElement>("videoFps").value);
+        const value = Number(this.requiredElement<HTMLInputElement>("videoBitrate").value);
+        const requestedCodec = requestedMode === "hevc-hardware"
+          ? "hevc"
+          : requestedMode === "av1-hardware"
+            ? "av1"
+            : requestedMode === "auto" ? activeCodec : "h264";
+        if (requestedCodec === "h264") selected.bitrates.h264_mbps = value;
+        if (requestedCodec === "hevc") selected.bitrates.hevc_mbps = value;
+        if (requestedCodec === "av1") selected.bitrates.av1_mbps = value;
+      });
+    });
+    content.querySelector<HTMLButtonElement>("#videoReset")?.addEventListener("click", () => {
+      void this.updateVideoSettings((next) => {
+        const defaults = next.profile === "fast"
+          ? { max_width: 1280, max_fps: 60, bitrate: 5 }
+          : next.profile === "sharp"
+            ? { max_width: 2560, max_fps: 60, bitrate: 18 }
+            : { max_width: 1920, max_fps: 60, bitrate: 10 };
+        next.presets[next.profile] = {
+          max_width: defaults.max_width,
+          max_fps: defaults.max_fps,
+          bitrates: { h264_mbps: defaults.bitrate, hevc_mbps: null, av1_mbps: null },
+        };
+      });
+    });
+    content.querySelector<HTMLButtonElement>("#videoAutoTest")?.addEventListener("click", () => {
+      void this.runQuickAutoTest();
+    });
+  }
+
+  private async runQuickAutoTest(): Promise<void> {
+    if (this.videoBenchmarkRunning || !this.videoControl || !this.browserVideoCapabilities) {
+      return;
+    }
+    const candidates = this.videoControl.compatibility
+      .filter((entry) => entry.availability !== "unavailable")
+      .map((entry) => entry.mode);
+    if (candidates.length === 0) {
+      this.showNotice("No mutually supported encoders are available to test.");
+      return;
+    }
+    this.videoBenchmarkRunning = true;
+    const original = JSON.parse(JSON.stringify(this.videoControl.settings.settings)) as VideoConfig;
+    try {
+      for (let index = 0; index < candidates.length; index += 1) {
+        const mode = candidates[index]!;
+        this.videoBenchmarkStatus = `${index + 1}/${candidates.length} · ${encoderModeLabel(mode)} · measuring 4 seconds`;
+        this.renderVideoPanel();
+        await this.activateBenchmarkMode(mode);
+        await this.waitForPresentedFrame(10_000);
+        // Explicitly await the verification write; the normal playing callback
+        // is deliberately fire-and-forget for startup responsiveness.
+        this.videoControl = await reportVideoPresented(this.videoControl!.runtime.codec, true, true);
+        await delay(1_000);
+        const before = await this.benchmarkCounters();
+        const durationMs = 4_000;
+        await delay(durationMs);
+        const after = await this.benchmarkCounters();
+        const seconds = durationMs / 1000;
+        const encodedFrames = nonnegativeDelta(after.host.encoded_frames, before.host.encoded_frames);
+        const encodedBytes = nonnegativeDelta(after.host.encoded_bytes, before.host.encoded_bytes);
+        const presentedFrames = nonnegativeDelta(after.totalFrames, before.totalFrames);
+        const presentedDrops = nonnegativeDelta(after.droppedFrames, before.droppedFrames);
+        const decoderDrops = nonnegativeDelta(
+          numeric(after.inbound?.framesDropped),
+          numeric(before.inbound?.framesDropped),
+        );
+        const freezes = nonnegativeDelta(numeric(after.inbound?.freezeCount), numeric(before.inbound?.freezeCount));
+        const encoderCapability = this.videoControl!.host_capabilities.find((candidate) =>
+          encoderModeForCapability(candidate.codec, candidate.hardware) === mode &&
+          (candidate.state === "functional" || candidate.state === "benchmark-tested")
+        );
+        if (!encoderCapability) {
+          throw new Error(`${encoderModeLabel(mode)} disappeared during its test`);
+        }
+        const observation: AutoBenchmarkObservation = {
+          schema_version: 1,
+          nfidb_version: __NFIDB_CLIENT_VERSION__,
+          receiver_runtime: this.browserVideoCapabilities!.user_agent,
+          encoder_id: encoderCapability.id,
+          mode,
+          profile: original.profile,
+          max_width: original.presets[original.profile].max_width,
+          requested_fps: original.presets[original.profile].max_fps,
+          end_to_end_verified: true,
+          recorded_unix_ms: Date.now(),
+          metrics: {
+            requested_fps: original.presets[original.profile].max_fps,
+            encoded_fps: encodedFrames / seconds,
+            presented_fps: presentedFrames / seconds,
+            encode_mean_ms: after.host.recent_encode_mean_ms,
+            encode_p95_ms: after.host.encode_p95_ms,
+            preprocess_mean_ms: after.host.recent_preprocess_mean_ms,
+            preprocess_p95_ms: after.host.preprocess_p95_ms,
+            actual_mbps: (encodedBytes * 8) / durationMs / 1000,
+            cpu_percent: after.host.process_cpu_percent,
+            working_set_mib: after.host.working_set_mib,
+            drop_percent: ((presentedDrops + decoderDrops) / Math.max(1, presentedFrames)) * 100,
+            freeze_count: freezes,
+            pipeline_p95_ms: this.liveClientDiagnostic?.frameTiming.captureToPresentP95Ms ?? this.liveClientDiagnostic?.frameTiming.estimatedPipelineMs ?? null,
+            quality_score: null,
+          },
+          score: { mode, passed_gates: false, score: null, components: {}, reasons: [] },
+        };
+        this.videoControl = await recordAutoBenchmark(observation);
+      }
+      const autoSettings = JSON.parse(JSON.stringify(original)) as VideoConfig;
+      autoSettings.encoder = "auto";
+      const previousCodec = this.videoControl.runtime.codec;
+      this.videoControl = await setVideoSettings(this.videoControl.settings.revision, autoSettings);
+      if (this.videoControl.runtime.codec !== previousCodec) {
+        await this.connectVideo();
+      }
+      this.videoBenchmarkStatus = `Auto selected ${encoderModeLabel(this.videoControl.runtime.active_mode)}.`;
+      this.showNotice(this.videoBenchmarkStatus);
+    } catch (error) {
+      this.videoBenchmarkStatus = error instanceof Error ? error.message : String(error);
+      this.showNotice(`Auto test stopped: ${this.videoBenchmarkStatus}`);
+      try {
+        if (this.videoControl) {
+          this.videoControl = await setVideoSettings(this.videoControl.settings.revision, original);
+          await this.connectVideo();
+        }
+      } catch {
+        // The authenticated WebSocket remains available even if video recovery fails.
+      }
+    } finally {
+      this.videoBenchmarkRunning = false;
+      this.renderVideoPanel();
+    }
+  }
+
+  private async activateBenchmarkMode(mode: EncoderMode): Promise<void> {
+    if (!this.videoControl) return;
+    const settings = JSON.parse(JSON.stringify(this.videoControl.settings.settings)) as VideoConfig;
+    settings.encoder = mode;
+    const previousCodec = this.videoControl.runtime.codec;
+    this.videoControl = await setVideoSettings(this.videoControl.settings.revision, settings);
+    if (this.videoControl.runtime.codec !== previousCodec || this.state !== "connected") {
+      await this.connectVideo();
+    }
+  }
+
+  private async waitForPresentedFrame(timeoutMs: number): Promise<void> {
+    const started = performance.now();
+    const video = this.requiredElement<HTMLVideoElement>("remoteVideo");
+    const initial = video.getVideoPlaybackQuality().totalVideoFrames;
+    while (performance.now() - started < timeoutMs) {
+      if (this.state === "connected" && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.getVideoPlaybackQuality().totalVideoFrames > initial) {
+        return;
+      }
+      await delay(100);
+    }
+    throw new Error("Timed out waiting for a decoded frame");
+  }
+
+  private async benchmarkCounters(): Promise<{
+    host: HostMetrics;
+    inbound: Record<string, unknown> | null;
+    totalFrames: number;
+    droppedFrames: number;
+  }> {
+    const video = this.requiredElement<HTMLVideoElement>("remoteVideo");
+    const quality = video.getVideoPlaybackQuality();
+    return {
+      host: await getMetrics(),
+      inbound: (await this.readRtcStats()).inboundVideo,
+      totalFrames: quality.totalVideoFrames,
+      droppedFrames: quality.droppedVideoFrames,
+    };
+  }
+
+  private async updateVideoSettings(change: (settings: VideoControl["settings"]["settings"]) => void): Promise<void> {
+    if (!this.videoControl) {
+      return;
+    }
+    const previousCodec = this.videoControl.runtime.codec;
+    const settings = JSON.parse(JSON.stringify(this.videoControl.settings.settings)) as VideoControl["settings"]["settings"];
+    change(settings);
+    this.showNotice("Applying video settings on Windows…");
+    try {
+      this.videoControl = await setVideoSettings(this.videoControl.settings.revision, settings);
+      this.renderVideoPanel();
+      if (this.videoControl.runtime.codec !== previousCodec) {
+        this.showNotice(`Switching to ${encoderModeLabel(this.videoControl.runtime.active_mode)}…`);
+        await this.connectVideo();
+      } else {
+        this.showNotice(`${encoderModeLabel(this.videoControl.runtime.active_mode)} is active.`);
+      }
+    } catch (error) {
+      this.showNotice(error instanceof Error ? error.message : String(error));
+      this.renderVideoPanel();
+    }
   }
 
   private startFilePolling(): void {
@@ -1443,6 +1786,83 @@ export class NfidbApp {
     }
     return element;
   }
+}
+
+function detectBrowserVideoCapabilities(): BrowserVideoCapabilities {
+  const receiver = typeof RTCRtpReceiver !== "undefined" && "getCapabilities" in RTCRtpReceiver
+    ? RTCRtpReceiver.getCapabilities("video")
+    : null;
+  const codecs = receiver?.codecs ?? [];
+  const collect = (matches: (mime: string) => boolean): BrowserCodecCapability => {
+    const mimeTypes = [...new Set(codecs.map((codec) => codec.mimeType).filter((mime) => matches(mime.toLowerCase())))];
+    return {
+      reported: mimeTypes.length > 0,
+      included_in_sdp: false,
+      negotiated: false,
+      first_keyframe_received: false,
+      presented: false,
+      mime_types: mimeTypes,
+      failure_reason: null,
+    };
+  };
+  return {
+    user_agent: navigator.userAgent.slice(0, 1024),
+    set_codec_preferences: "setCodecPreferences" in RTCRtpTransceiver.prototype,
+    h264: collect((mime) => mime === "video/h264"),
+    hevc: collect((mime) => mime === "video/h265" || mime === "video/hevc"),
+    av1: collect((mime) => mime === "video/av1" || mime === "video/av01"),
+  };
+}
+
+function applyCodecPreference(transceiver: RTCRtpTransceiver, codec: VideoCodec): void {
+  if (!("setCodecPreferences" in transceiver)) {
+    return;
+  }
+  const capabilities = RTCRtpReceiver.getCapabilities("video")?.codecs ?? [];
+  const target = capabilities.filter((candidate) => codecMatches(candidate.mimeType, codec));
+  if (target.length === 0) {
+    return;
+  }
+  // Keep matching RTX/RED/FEC entries after the primary codec when Safari
+  // reports them; setCodecPreferences rejects an auxiliary-only list.
+  const auxiliaries = capabilities.filter((candidate) => /\/(rtx|red|ulpfec)$/i.test(candidate.mimeType));
+  try {
+    transceiver.setCodecPreferences([...target, ...auxiliaries]);
+  } catch (error) {
+    console.debug("NFiDB could not set an explicit codec preference", error);
+  }
+}
+
+function updateSdpCapabilityEvidence(capabilities: BrowserVideoCapabilities, sdp: string): void {
+  capabilities.h264.included_in_sdp = /a=rtpmap:\d+ H264\//i.test(sdp);
+  capabilities.hevc.included_in_sdp = /a=rtpmap:\d+ (H265|HEVC)\//i.test(sdp);
+  capabilities.av1.included_in_sdp = /a=rtpmap:\d+ (AV1|AV01)\//i.test(sdp);
+}
+
+function codecMatches(mimeType: string, codec: VideoCodec): boolean {
+  const mime = mimeType.toLowerCase();
+  if (codec === "h264") return mime === "video/h264";
+  if (codec === "hevc") return mime === "video/h265" || mime === "video/hevc";
+  return mime === "video/av1" || mime === "video/av01";
+}
+
+function encoderModeLabel(mode: VideoControl["runtime"]["active_mode"]): string {
+  if (mode === "auto") return "Auto";
+  if (mode === "h264-hardware") return "H.264 Hardware";
+  if (mode === "hevc-hardware") return "HEVC Hardware";
+  if (mode === "av1-hardware") return "AV1 Hardware";
+  return "H.264 Software";
+}
+
+function encoderModeForCapability(codec: VideoCodec, hardware: boolean): EncoderMode {
+  if (!hardware) return "h264-software";
+  if (codec === "h264") return "h264-hardware";
+  if (codec === "hevc") return "hevc-hardware";
+  return "av1-hardware";
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
 async function waitForIceGathering(peer: RTCPeerConnection, timeoutMs: number): Promise<void> {

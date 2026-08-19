@@ -1,6 +1,35 @@
 # Changelog
 
-NFiDB is pre-release software. Releases remain GitHub prereleases until the physical drawing-app matrix, longer stability run, and hardware-encoding work are complete.
+NFiDB is pre-release software. Releases remain GitHub prereleases until the physical drawing-app/multi-codec matrix, longer stability run, and broader hardware coverage are complete.
+
+## 0.6.0 — 2026-08-19 — Alpha
+
+### Video pipeline
+
+- Replaced the fixed OpenH264 assumption with a codec-neutral encoder interface and explicit H.264, HEVC/H.265, and AV1 identities.
+- Added real Media Foundation hardware-MFT enumeration, DXGI adapter identification when exposed, media-type/low-latency probing, and an encoded-frame functional test. A transform is never labeled usable hardware merely because it was enumerated.
+- Added working NVIDIA Media Foundation H.264, HEVC, and AV1 encoders while retaining OpenH264 as the compatibility fallback.
+- Made WebRTC codec-aware with matching MIME/SDP/RTP packetization, keyframe gating, and controlled peer replacement on codec changes.
+- Preserved bounded newest-frame replacement; live width/FPS/bitrate/preset changes rebuild only the encoder worker, not capture, pairing, HTTP, or the process.
+
+### Auto, settings, and UI
+
+- Added receiver capability discovery, codec preferences, SDP/negotiation tracking, and first-presented-frame verification. Browser-reported support alone is not treated as proof.
+- Added transparent hard gates and a 100-point Auto score weighted toward latency and frame stability before bandwidth, CPU, memory, and quality.
+- Added locally cached results keyed by build, receiver runtime, encoder identity, profile, width, and FPS, plus rerun/clear controls.
+- Converted Fast/Balanced/Sharp into editable, validated preset data with optional per-codec bitrates and migration for existing `config.toml` files.
+- Added synchronized, revision-checked, host-authoritative video controls to Windows and iPad. Both show availability reasons and the actual codec/backend/memory path; changes apply without restarting NFiDB.
+
+### Benchmarking and diagnostics
+
+- Added deterministic static-detail, drawing, and high-motion host workloads; Quick and Full suites; CPU/RAM/latency/throughput metrics; and JSON/CSV/Markdown exports.
+- Extended `scripts/benchmark.ps1` with codec/profile/workload filters and explicitly labeled Microsoft Edge end-to-end results.
+- Added codec/backend/adapter/memory-mode/restart/receiver/Auto fields to raw diagnostics and compact benchmark comparisons to both UIs.
+- Verified H.264, HEVC, and AV1 hardware output on the development RTX 4090. A 48-row optimized host run and a live repeated-codec Edge Auto run completed; physical iPad Safari multi-codec validation remains pending.
+
+### Known boundary
+
+- Hardware encode is active, but WGC resize/color conversion and NV12 upload still use CPU memory. Diagnostics truthfully report `cpu-preprocessing`; a D3D surface/zero-copy path is not claimed.
 
 ## 0.5.1 — 2026-08-19 — Alpha
 

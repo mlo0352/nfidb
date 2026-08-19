@@ -4,7 +4,9 @@ This file is intentionally strict: “implemented” and “verified on availabl
 
 ## MVP limitations
 
-- The current encoder is isolated software OpenH264. Media Foundation hardware H.264 is not implemented. The measured release build sustains roughly 51–54 fps at 720p Fast, 29–32 fps at 1080p Balanced, and 14–16 fps at 1440p Sharp on the development PC; other CPUs and real screen content will differ.
+- Media Foundation H.264, HEVC, and AV1 are functional on the development RTX 4090, but other adapters/drivers must pass runtime discovery and an encoded-frame probe. HEVC did not appear in the tested Edge receiver capabilities; physical iPad Safari HEVC/AV1 negotiation and presentation have not been rerun for 0.6.0.
+- Hardware encoding currently still uses CPU resize, BGRA-to-I420 conversion, I420-to-NV12 interleave, and a memory-buffer submission. It reduces encode time substantially but is not a GPU zero-copy pipeline; diagnostics report `cpu-preprocessing`.
+- Adapter LUID and driver version are retained when Windows exposes them cleanly. The NVIDIA MFT activations on the development PC did not expose an adapter LUID, and the current app does not query the display-driver package version, so those fields are explicitly unavailable in its exported capability record.
 - Physical iPad Safari pairing, touch transport, and video have begun field validation. Apple Pencil pressure/tilt/coalescing, rotation, background/resume, and repeated reconnect still require complete field results.
 - Krita, Rebelle, and Photoshop compatibility has not yet been physically tested. The independent native sink proves Windows receives injected pressure and tilt, not that every application configures its brushes correctly.
 - Only whole-monitor capture is available. Window capture is planned.
@@ -16,7 +18,8 @@ This file is intentionally strict: “implemented” and “verified on availabl
 - The first pairing/signaling exchange is local HTTP. Do not use NFiDB on hostile or public networks.
 - mDNS `.local` discovery depends on the router and iPad network. The numeric IPv4 URL is the fallback.
 - Some VPN and virtual adapters may add unusable WebRTC ICE candidates. Local ICE can still select the working LAN candidate, but logs may contain harmless bind warnings.
-- Changing the capture quality profile in the desktop UI is saved for the next launch; it does not rebuild the encoder mid-session.
+- A codec change briefly rebuilds the encoder and WebRTC peer. Pairing and WebSocket input remain alive, but active contacts are deliberately released rather than carried across renegotiation.
+- Objective decoded-frame PSNR/SSIM is not implemented. Benchmark quality is therefore unavailable rather than inferred from bitrate, and Auto assigns only the documented neutral quality component until a measured score exists.
 - Safari may omit WebRTC `captureTime`/`receiveTime` frame metadata. In that case the live/report pipeline value is explicitly a component estimate; exact Pencil-to-photon latency requires a synchronized high-speed camera.
 - Diagnostic recording is sampled once per second and retains approximately six hours in memory. It is intended for distributions and trend diagnosis, not packet-level capture.
 - iPadOS/Safari can reserve OS-level keyboard shortcuts before the page receives them. NFiDB forwards every supported event it receives and provides on-screen Alt+Tab, Alt+Shift+Tab, Task View, minimize, and special-key fallbacks.

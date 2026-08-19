@@ -1,9 +1,9 @@
 # Architecture
 
-NFiDB is a single-PC, single-browser, trusted-LAN bridge. The Windows executable owns capture, H.264 encoding, signaling, WebRTC, native pointer injection, configuration, and the desktop UI. The iPad side is a small TypeScript application embedded in that executable.
+NFiDB is a single-PC, single-browser, trusted-LAN bridge. The Windows executable owns capture, capability discovery, codec-neutral encoding, signaling, WebRTC, native pointer injection, configuration, and the desktop UI. The iPad side is a small TypeScript application embedded in that executable.
 
 ```text
-Windows monitor -> WGC newest-frame slot -> scale/YUV newest-frame slot -> H.264 -> WebRTC video -> Safari <video>
+Windows monitor -> WGC newest-frame slot -> scale/YUV newest-frame slot -> H.264/HEVC/AV1 -> WebRTC -> Safari <video>
 Windows PT_PEN <- native injector <- binary batches <- DataChannel <- Safari Pointer Events
 Windows SendInput <- mouse/key/text/wheel messages <- DataChannel <- iPad trackpad/keyboard/IME
 Windows commands <- semantic gesture messages <- DataChannel <- three-finger recognizer
@@ -15,8 +15,8 @@ iPad Files/Safari <- ranged HTTP stream <- explicit NFiDB Outbox <- Windows file
 ## Workspace boundaries
 
 - `crates/protocol`: fixed binary pointer packets and source-to-target mapping. It has no UI or transport knowledge.
-- `crates/core`: configuration, session credentials, metrics, and the abstract `InputSink`.
-- `crates/host-windows`: monitor enumeration, Windows Graphics Capture, H.264 encoding, and `PT_PEN`/`PT_TOUCH` injection.
+- `crates/core`: versioned video configuration/presets, capability and Auto-score models, session credentials, metrics, and the abstract `InputSink`.
+- `crates/host-windows`: monitor enumeration, Windows Graphics Capture, encoder abstraction, Media Foundation discovery/encoding, OpenH264 fallback, benchmarks, and `PT_PEN`/`PT_TOUCH` injection.
 - `crates/transport`: embedded static assets, HTTP pairing/file transfer, WebSocket control, mDNS, and WebRTC signaling/media.
 - `apps/windows-host`: CLI, egui shell, mode selection, QR display, and subsystem lifecycle.
 - `apps/ipad-web`: Safari UI, Pointer Events sampling, coordinate mapping, diagnostics, and the WebRTC initiator.
@@ -26,7 +26,13 @@ iPad Files/Safari <- ranged HTTP stream <- explicit NFiDB Outbox <- Windows file
 
 Windows Graphics Capture copies the newest BGRA frame into a one-element slot. A preprocessing worker scales and converts that frame to YUV into a second one-element slot, independently of the encoder. Replacing stale work at either boundary increments the dropped-frame counter. This deliberately bounds memory and latency: an overloaded stage discards stale pictures instead of building a queue.
 
-The encoder emits Annex-B H.264 access units and assigns RTP durations from the actual interval between encoded frames, so frame shedding cannot make media time fall behind wall time. A newly connected peer starts at the broadcast tail, requests an IDR, and discards delta frames until that IDR. Recovery keyframes are bounded by elapsed wall time rather than nominal encoded frame count. The current portable MVP uses the isolated OpenH264 software implementation; the intended replacement boundary is the encoder inside `host-windows`, leaving capture and WebRTC unchanged.
+The encoder worker owns a codec-neutral `VideoEncoder`. OpenH264 consumes I420; the Media Foundation path converts the same CPU YUV frame to NV12 and submits it to an asynchronously driven hardware MFT configured for low latency. Encoded frames carry their codec identity. The transport registers the matching H.264, H.265, or AV1 RTP codec/packetizer and refuses mismatched frames. RTP durations come from actual encoded-frame intervals so shedding cannot make media time fall behind wall time.
+
+A newly connected peer starts at the broadcast tail, requests a keyframe, and discards delta frames until it receives one. Hardware keyframe requests rebuild only the encoder for a reliable fresh parameter-set/IDR boundary; software H.264 can force an intra frame directly. Codec changes close and recreate the WebRTC peer while authenticated WebSocket input stays available and held contacts are released. Width, FPS, bitrate, and preset changes update the running encoder worker without restarting capture, pairing, HTTP, or the application.
+
+Windows enumerates hardware MFTs with `MFTEnumEx`, reads the associated DXGI adapter where exposed, initializes media types, and requires an actual encoded output sample before a mode becomes functional. Safari reports receiver codecs, SDP inclusion/negotiation is tracked separately, and a mode becomes playback-verified only after a browser presents its first frame. Auto combines those facts with locally cached benchmark gates and scores. Cache keys include NFiDB version, receiver runtime, encoder identity, profile, width, and FPS, so material changes cause a retest.
+
+The present hardware path is CPU preprocessing: WGC copies BGRA to a bounded CPU frame, resize/BGRA-to-I420 runs on CPU, and I420 is interleaved to an NV12 memory buffer for the hardware MFT. It is accurately reported as `cpu-preprocessing`, not zero-copy. The capture crate exposes a D3D texture, but GPU resize/color conversion and D3D-surface encoder input remain a future optimization.
 
 ## Input path
 

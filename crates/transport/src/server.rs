@@ -12,7 +12,10 @@ use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use futures_util::{SinkExt, StreamExt};
 use mdns_sd::{ServiceDaemon, ServiceInfo};
-use nfidb_core::{EncodedVideoFrame, InputSink, KeyframeRequest, Metrics, SessionManager};
+use nfidb_core::{
+    AppConfig, BrowserVideoCapabilities, EncodedVideoFrame, InputSink, KeyframeRequest, Metrics, SessionManager,
+    SetVideoSettingsRequest, VideoConfig, VideoSettingsRuntime, VideoSettingsSnapshot, compatibility_matrix,
+};
 use parking_lot::Mutex;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
@@ -45,6 +48,7 @@ pub struct ServerOptions {
     pub keyboard_enabled: bool,
     pub gestures_default: bool,
     pub file_transfer: FileTransferOptions,
+    pub video: VideoConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -74,6 +78,7 @@ impl ServerHandle {
         input: Arc<dyn InputSink>,
         video_tx: broadcast::Sender<EncodedVideoFrame>,
         keyframe_request: KeyframeRequest,
+        video_runtime: Arc<dyn VideoSettingsRuntime>,
     ) -> Result<Self, String> {
         let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -83,6 +88,7 @@ impl ServerHandle {
             Arc::clone(&session),
             Arc::clone(&metrics),
         )?;
+        let initial_video = options.video.clone();
         let state = Arc::new(AppState {
             options,
             session,
@@ -93,6 +99,13 @@ impl ServerHandle {
             peer: ActivePeer::default(),
             diagnostics: DiagnosticRecorder::default(),
             file_transfers,
+            video_settings: Mutex::new(VideoSettingsSnapshot {
+                revision: 1,
+                settings: initial_video,
+            }),
+            video_update: Mutex::new(()),
+            browser_video: Mutex::new(BrowserVideoCapabilities::default()),
+            video_runtime,
         });
         let server_state = Arc::clone(&state);
         let thread = std::thread::Builder::new()
@@ -229,6 +242,22 @@ impl ServerHandle {
     pub fn file_inbox_directory(&self) -> std::path::PathBuf {
         self.state.file_transfers.inbox_directory()
     }
+
+    #[must_use]
+    pub fn video_control_state(&self) -> VideoControlState {
+        video_response(&self.state)
+    }
+
+    /// Applies a settings edit made by the native Windows UI through the same
+    /// validated, revisioned authority used by the browser control endpoint.
+    pub fn apply_video_settings_from_host(&self, settings: VideoConfig) -> Result<VideoControlState, String> {
+        let previous_codec = self.state.video_runtime.video_runtime_status().codec;
+        let runtime = apply_video_settings_state(&self.state, settings, None)?;
+        if runtime.codec != previous_codec {
+            self.close_active_peer();
+        }
+        Ok(video_response(&self.state))
+    }
 }
 
 impl Drop for ServerHandle {
@@ -247,6 +276,10 @@ struct AppState {
     peer: ActivePeer,
     diagnostics: DiagnosticRecorder,
     file_transfers: FileTransferManager,
+    video_settings: Mutex<VideoSettingsSnapshot>,
+    video_update: Mutex<()>,
+    browser_video: Mutex<BrowserVideoCapabilities>,
+    video_runtime: Arc<dyn VideoSettingsRuntime>,
 }
 
 enum ServerCommand {
@@ -291,6 +324,11 @@ async fn run_server(
         .route("/api/status", get(status))
         .route("/api/metrics", get(metrics_handler))
         .route("/api/diagnostics", get(diagnostics_handler))
+        .route("/api/video", get(video_handler).put(set_video_settings))
+        .route("/api/video/capabilities", post(set_browser_video_capabilities))
+        .route("/api/video/presented", post(video_presented))
+        .route("/api/video/benchmark-result", post(record_video_benchmark))
+        .route("/api/video/benchmark-results", delete(clear_video_benchmarks))
         .route("/api/files", get(files_handler))
         .route("/api/files/uploads", post(create_upload))
         .route(
@@ -454,6 +492,216 @@ async fn diagnostics_handler(State(state): State<Arc<AppState>>, headers: Header
         return api_error(StatusCode::UNAUTHORIZED, "invalid session token");
     }
     Json(state.diagnostics.summary()).into_response()
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct VideoControlState {
+    pub settings: VideoSettingsSnapshot,
+    pub host_capabilities: Vec<nfidb_core::EncoderCapability>,
+    pub browser_capabilities: BrowserVideoCapabilities,
+    pub compatibility: Vec<nfidb_core::CompatibilityEntry>,
+    pub runtime: nfidb_core::VideoRuntimeStatus,
+    pub learned_results: Vec<nfidb_core::AutoBenchmarkObservation>,
+}
+
+fn video_response(state: &AppState) -> VideoControlState {
+    let settings = state.video_settings.lock().clone();
+    let browser_capabilities = state.browser_video.lock().clone();
+    let host_capabilities = state.video_runtime.encoder_capabilities();
+    let compatibility = compatibility_matrix(&host_capabilities, &browser_capabilities);
+    VideoControlState {
+        settings,
+        host_capabilities,
+        browser_capabilities,
+        compatibility,
+        runtime: state.video_runtime.video_runtime_status(),
+        learned_results: state.video_runtime.auto_benchmark_results(),
+    }
+}
+
+async fn video_handler(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if !authorized_cookie(&headers, &state.session) {
+        return api_error(StatusCode::UNAUTHORIZED, "invalid session token");
+    }
+    Json(video_response(&state)).into_response()
+}
+
+async fn set_browser_video_capabilities(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(capabilities): Json<BrowserVideoCapabilities>,
+) -> Response {
+    if authorize_mutation(&headers, &state.session).is_none() {
+        return api_error(StatusCode::UNAUTHORIZED, "invalid session token or request origin");
+    }
+    if capabilities.user_agent.len() > 1024
+        || capabilities
+            .h264
+            .mime_types
+            .iter()
+            .chain(capabilities.hevc.mime_types.iter())
+            .chain(capabilities.av1.mime_types.iter())
+            .any(|value| value.len() > 256)
+    {
+        return api_error(StatusCode::BAD_REQUEST, "browser capability report is too large");
+    }
+    let previous_codec = state.video_runtime.video_runtime_status().codec;
+    let settings = state.video_settings.lock().settings.clone();
+    match state.video_runtime.apply_video_settings(&settings, &capabilities) {
+        Ok(runtime) => {
+            *state.browser_video.lock() = capabilities;
+            if runtime.codec != previous_codec {
+                state.peer.close().await;
+                let _ = state.input.reset_all();
+                state.metrics.reset_input_continuity();
+            }
+            Json(video_response(&state)).into_response()
+        }
+        Err(error) => api_error(StatusCode::BAD_REQUEST, &error),
+    }
+}
+
+async fn set_video_settings(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(request): Json<SetVideoSettingsRequest>,
+) -> Response {
+    if authorize_mutation(&headers, &state.session).is_none() {
+        return api_error(StatusCode::UNAUTHORIZED, "invalid session token or request origin");
+    }
+    let current_revision = state.video_settings.lock().revision;
+    if !video_revision_matches(request.base_revision, current_revision) {
+        let mut response = Json(serde_json::json!({
+            "error": "video settings changed on another device",
+            "current": video_response(&state),
+        }))
+        .into_response();
+        *response.status_mut() = StatusCode::CONFLICT;
+        return response;
+    }
+    let previous_codec = state.video_runtime.video_runtime_status().codec;
+    let runtime = match apply_video_settings_state(&state, request.settings, Some(request.base_revision)) {
+        Ok(runtime) => runtime,
+        Err(error) => return api_error(StatusCode::BAD_REQUEST, &error),
+    };
+    if runtime.codec != previous_codec {
+        state.peer.close().await;
+        let _ = state.input.reset_all();
+        state.metrics.reset_input_continuity();
+    }
+    Json(video_response(&state)).into_response()
+}
+
+fn apply_video_settings_state(
+    state: &AppState,
+    settings: VideoConfig,
+    expected_revision: Option<u64>,
+) -> Result<nfidb_core::VideoRuntimeStatus, String> {
+    settings.validate()?;
+    let _update = state.video_update.lock();
+    let previous = state.video_settings.lock().clone();
+    if expected_revision.is_some_and(|revision| !video_revision_matches(revision, previous.revision)) {
+        return Err("video settings changed on another device; refresh and try again".to_owned());
+    }
+    let browser = state.browser_video.lock().clone();
+    let runtime = state.video_runtime.apply_video_settings(&settings, &browser)?;
+    if let Err(error) = AppConfig::save_video_settings(&settings) {
+        // Do not leave a live-but-unpersisted setting behind. The rollback is
+        // best-effort; its failure is included because it changes recovery.
+        let rollback = state
+            .video_runtime
+            .apply_video_settings(&previous.settings, &browser)
+            .err()
+            .map(|value| format!("; rollback also failed: {value}"))
+            .unwrap_or_default();
+        return Err(format!("failed to save video settings: {error}{rollback}"));
+    }
+    {
+        let mut snapshot = state.video_settings.lock();
+        snapshot.revision = previous.revision.saturating_add(1);
+        snapshot.settings = settings;
+    }
+    Ok(runtime)
+}
+
+const fn video_revision_matches(base_revision: u64, current_revision: u64) -> bool {
+    base_revision == current_revision
+}
+
+#[derive(Deserialize)]
+struct VideoPresentedRequest {
+    codec: nfidb_core::VideoCodec,
+    #[serde(default)]
+    first_keyframe_received: bool,
+    #[serde(default)]
+    presented: bool,
+    #[serde(default)]
+    failure_reason: Option<String>,
+}
+
+async fn video_presented(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(report): Json<VideoPresentedRequest>,
+) -> Response {
+    if authorize_mutation(&headers, &state.session).is_none() {
+        return api_error(StatusCode::UNAUTHORIZED, "invalid session token or request origin");
+    }
+    if report.failure_reason.as_ref().is_some_and(|value| value.len() > 512) {
+        return api_error(StatusCode::BAD_REQUEST, "failure reason is too large");
+    }
+    {
+        let mut browser = state.browser_video.lock();
+        let codec = browser.get_mut(report.codec);
+        codec.first_keyframe_received |= report.first_keyframe_received;
+        codec.presented |= report.presented;
+        codec.negotiated = true;
+        codec.failure_reason = report.failure_reason;
+    }
+    let browser = state.browser_video.lock().clone();
+    let settings = state.video_settings.lock().settings.clone();
+    if let Err(error) = state.video_runtime.apply_video_settings(&settings, &browser) {
+        return api_error(StatusCode::BAD_REQUEST, &error);
+    }
+    Json(video_response(&state)).into_response()
+}
+
+async fn record_video_benchmark(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(observation): Json<nfidb_core::AutoBenchmarkObservation>,
+) -> Response {
+    if authorize_mutation(&headers, &state.session).is_none() {
+        return api_error(StatusCode::UNAUTHORIZED, "invalid session token or request origin");
+    }
+    if let Err(error) = state.video_runtime.record_auto_benchmark(observation) {
+        return api_error(StatusCode::BAD_REQUEST, &error);
+    }
+    let settings = state.video_settings.lock().settings.clone();
+    if settings.encoder == nfidb_core::EncoderMode::Auto {
+        let previous_codec = state.video_runtime.video_runtime_status().codec;
+        let browser = state.browser_video.lock().clone();
+        match state.video_runtime.apply_video_settings(&settings, &browser) {
+            Ok(runtime) if runtime.codec != previous_codec => {
+                state.peer.close().await;
+                let _ = state.input.reset_all();
+                state.metrics.reset_input_continuity();
+            }
+            Ok(_) => {}
+            Err(error) => return api_error(StatusCode::BAD_REQUEST, &error),
+        }
+    }
+    Json(video_response(&state)).into_response()
+}
+
+async fn clear_video_benchmarks(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if authorize_mutation(&headers, &state.session).is_none() {
+        return api_error(StatusCode::UNAUTHORIZED, "invalid session token or request origin");
+    }
+    match state.video_runtime.clear_auto_benchmarks() {
+        Ok(()) => Json(video_response(&state)).into_response(),
+        Err(error) => api_error(StatusCode::INTERNAL_SERVER_ERROR, &error),
+    }
 }
 
 async fn files_handler(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
@@ -672,6 +920,7 @@ async fn webrtc_offer(State(state): State<Arc<AppState>>, Json(offer): Json<WebR
         Arc::clone(&state.metrics),
         state.video_tx.subscribe(),
         state.keyframe_request.clone(),
+        state.video_runtime.video_runtime_status().codec,
         &state.peer,
     )
     .await
@@ -883,7 +1132,7 @@ fn insert_header(headers: &mut HeaderMap, name: impl header::IntoHeaderName, val
 mod tests {
     use axum::http::{HeaderMap, HeaderValue, header};
 
-    use super::{cookie_value, same_origin};
+    use super::{cookie_value, same_origin, video_revision_matches};
 
     #[test]
     fn extracts_exact_cookie_without_prefix_confusion() {
@@ -900,5 +1149,12 @@ mod tests {
         assert!(same_origin(&headers));
         headers.insert(header::ORIGIN, HeaderValue::from_static("http://attacker.test"));
         assert!(!same_origin(&headers));
+    }
+
+    #[test]
+    fn video_edits_reject_stale_revisions() {
+        assert!(video_revision_matches(14, 14));
+        assert!(!video_revision_matches(13, 14));
+        assert!(!video_revision_matches(15, 14));
     }
 }

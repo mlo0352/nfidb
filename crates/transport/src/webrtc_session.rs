@@ -3,13 +3,13 @@ use std::time::Instant;
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use nfidb_core::{EncodedVideoFrame, InputSink, KeyframeRequest, Metrics};
+use nfidb_core::{EncodedVideoFrame, InputSink, KeyframeRequest, Metrics, VideoCodec};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, watch};
 use webrtc::api::APIBuilder;
 use webrtc::api::interceptor_registry::register_default_interceptors;
-use webrtc::api::media_engine::{MIME_TYPE_H264, MediaEngine};
+use webrtc::api::media_engine::{MIME_TYPE_AV1, MIME_TYPE_H264, MIME_TYPE_HEVC, MediaEngine};
 use webrtc::data_channel::RTCDataChannel;
 use webrtc::data_channel::data_channel_message::DataChannelMessage;
 use webrtc::ice_transport::ice_server::RTCIceServer;
@@ -95,6 +95,7 @@ pub async fn accept_offer(
     metrics: Arc<Metrics>,
     mut video_rx: broadcast::Receiver<EncodedVideoFrame>,
     keyframe_request: KeyframeRequest,
+    codec: VideoCodec,
     active: &ActivePeer,
 ) -> Result<WebRtcAnswer> {
     if offer.kind != "offer" {
@@ -117,12 +118,7 @@ pub async fn accept_offer(
     );
 
     let video_track = Arc::new(TrackLocalStaticSample::new(
-        RTCRtpCodecCapability {
-            mime_type: MIME_TYPE_H264.to_owned(),
-            clock_rate: 90_000,
-            sdp_fmtp_line: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f".to_owned(),
-            ..Default::default()
-        },
+        codec_capability(codec),
         "screen".to_owned(),
         "nfidb".to_owned(),
     ));
@@ -237,6 +233,10 @@ pub async fn accept_offer(
         loop {
             match video_rx.recv().await {
                 Ok(frame) => {
+                    if frame.codec != codec {
+                        video_metrics.video_transport_dropped(1);
+                        continue;
+                    }
                     let first_decodable_frame = startup_gate.awaiting_keyframe;
                     if !startup_gate.admit(frame.keyframe) {
                         video_metrics.video_startup_delta_frame_skipped();
@@ -271,9 +271,33 @@ pub async fn accept_offer(
     })
 }
 
+fn codec_capability(codec: VideoCodec) -> RTCRtpCodecCapability {
+    match codec {
+        VideoCodec::H264 => RTCRtpCodecCapability {
+            mime_type: MIME_TYPE_H264.to_owned(),
+            clock_rate: 90_000,
+            sdp_fmtp_line: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f".to_owned(),
+            ..Default::default()
+        },
+        VideoCodec::Hevc => RTCRtpCodecCapability {
+            mime_type: MIME_TYPE_HEVC.to_owned(),
+            clock_rate: 90_000,
+            ..Default::default()
+        },
+        VideoCodec::Av1 => RTCRtpCodecCapability {
+            mime_type: MIME_TYPE_AV1.to_owned(),
+            clock_rate: 90_000,
+            sdp_fmtp_line: "profile-id=0".to_owned(),
+            ..Default::default()
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::StartupKeyframeGate;
+    use super::{StartupKeyframeGate, codec_capability};
+    use nfidb_core::VideoCodec;
+    use webrtc::api::media_engine::{MIME_TYPE_AV1, MIME_TYPE_H264, MIME_TYPE_HEVC};
 
     #[test]
     fn startup_gate_rejects_delta_frames_until_first_keyframe() {
@@ -282,5 +306,12 @@ mod tests {
         assert!(!gate.admit(false));
         assert!(gate.admit(true));
         assert!(gate.admit(false));
+    }
+
+    #[test]
+    fn every_encoder_codec_has_matching_rtp_identity() {
+        assert_eq!(codec_capability(VideoCodec::H264).mime_type, MIME_TYPE_H264);
+        assert_eq!(codec_capability(VideoCodec::Hevc).mime_type, MIME_TYPE_HEVC);
+        assert_eq!(codec_capability(VideoCodec::Av1).mime_type, MIME_TYPE_AV1);
     }
 }

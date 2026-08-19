@@ -1,6 +1,6 @@
 # Test matrix
 
-Last updated: 2026-08-19. Development host: Windows 11 Pro x64 build 22631, Intel Core i9-13900K, Rust 1.97.1 (`x86_64-pc-windows-msvc`), Node 22.22.3, npm 10.9.8, Microsoft Edge headless. Profile/soak results are release `0.2.0`; startup, diagnostics, credential rotation, navigation, browser-upgrade, and physical regressions are the `0.3.1`–`0.3.4` candidates. Remote-input rows and the five-second comparison runs are the `0.4.0` alpha. File-transfer rows include the `0.5.1` alpha candidate.
+Last updated: 2026-08-19. Development host: Windows 11 Pro x64 build 22631, Intel Core i9-13900K, NVIDIA GeForce RTX 4090, Rust 1.97.1 (`x86_64-pc-windows-msvc`), Node 22.22.3, npm 10.9.8, Microsoft Edge headless. Historical OpenH264 profile/soak results are release `0.2.0`; physical remote-control and file-transfer rows are the `0.4.0`–`0.5.1` alphas. Multi-codec capability, host benchmark, and Edge Auto rows are the `0.6.0` candidate.
 
 | Layer | Test | Result | Evidence |
 | --- | --- | --- | --- |
@@ -8,6 +8,10 @@ Last updated: 2026-08-19. Development host: Windows 11 Pro x64 build 22631, Inte
 | Remote-input protocol | Wheel, key-down/up, Unicode text, semantic command round trips plus malformed/oversize rejection | PASS | 4 Rust remote-message tests and TypeScript binary-layout vectors |
 | Mapping | fit/fill/1:1 and negative-origin target coordinates | PASS | Rust plus 3 TypeScript geometry tests |
 | Sessions/config | PIN, QR, invalid credential, disconnect, rotation/invalidation, TOML round trip | PASS | Core unit tests plus live reset/reconnect path |
+| Video config migration | Old `[video] profile/max_fps/cursor` config, new preset round trip, bounds, reset defaults | PASS | Core migration/validation tests |
+| Capability matrix | Host/browser H.264-only, H.264+HEVC, all-codec common-mode calculation | PASS | Core matrix tests |
+| Auto selection | Unsupported AV1, failed HEVC FPS gate, lower-bandwidth healthy HEVC, hardware fallback, stale encoder identity | PASS | Core and capture unit tests |
+| Video setting synchronization | Host/iPad revision update, stale revision rejection, invalid remote values | PASS | Authenticated control tests and live Auto E2E |
 | PIN entry | Six digits auto-submit once; paste is normalized; partial entry stays local | PASS | PIN normalization unit tests plus live-host E2E with no Connect click |
 | Browser coalescing | Use coalesced samples exactly once and in chronological order | PASS | Exact binary packet test with pressure, tilt, twist, coordinates, and sequences |
 | Browser lifecycle | Preserve exactly one primary Down/Up across fit letterboxes and unusual coalesced/duplicate events | PASS | Deterministic edge-entry, edge-exit, duplicate-Down, and coalesced-lifecycle tests |
@@ -17,6 +21,11 @@ Last updated: 2026-08-19. Development host: Windows 11 Pro x64 build 22631, Inte
 | Browser remote input | Option+Tab ordering, Delete/Backspace and Ctrl+Option+Delete distinction, Unicode text, normalized wheel, three-finger command, mouse hover/click | PASS | deterministic browser event tests |
 | Native remote mapping | DOM key rows/modifiers/navigation/F1–F24/numpad, virtual-desktop mouse buttons, fractional wheel accumulation, held-state reset construction | PASS | Rust host unit tests |
 | Browser build | strict TypeScript + Safari 16.4 Vite target | PASS | 32 Vitest tests across 7 files; typecheck and production build |
+| Hardware encoder discovery | Enumerated candidate is activated, initialized, and must return encoded bytes before use | PASS | NVIDIA H.264/HEVC/AV1 MFT functional probes; Microsoft H264 MFT remains initializeable only |
+| Host codec matrix | Four modes × four geometries × three deterministic workloads | PASS | 48/48 rows completed in optimized mode; JSON/CSV/Markdown exports |
+| Live codec switching | H.264 HW → AV1 HW → H.264 SW → Auto while capture stays alive | PASS | Edge Quick Auto E2E passed in 18.1 s; capture advanced throughout; authenticated session retained |
+| HEVC receiver negotiation | Functional host HEVC plus receiver report/SDP/presentation | PARTIAL | Host encode passes; Edge 151 did not report H.265, so it was correctly excluded; physical Safari pending |
+| AV1 receiver negotiation | Functional host AV1 plus receiver SDP and presentation | PASS (EDGE) | Edge negotiated AV1 profile 0 and presented frames; physical Safari pending |
 | HTTP/control | status, pairing, embedded assets, authenticated metrics/diagnostics, stats WebSocket | PASS | live and portable smoke tests |
 | File upload core | leaf-name confinement, reserved names, chunk SHA-256, stale offsets, lost-response idempotency, collision-safe finalization, cancellation | PASS | Rust manager tests plus browser SHA/chunk/retry/cancel tests |
 | File download core | Explicit canonical Outbox file, no path serialization, complete and suffix/open/fixed byte ranges, concurrent per-file auto-clear | PASS | Rust queue/range tests prove completed streams clear independently while partial/interrupted streams remain |
@@ -79,4 +88,4 @@ The native sink must be the unobscured foreground target; Windows credential/sec
 .\scripts\portable-smoke.ps1
 ```
 
-The benchmark starts a real host, pairs through its LAN IPv4 URL, negotiates WebRTC, decodes H.264, sends synthetic coalesced Pointer Events plus mixed mouse/keyboard/text/gesture probes, reads authenticated host metrics, and writes JSON under ignored `build/benchmarks/`.
+The end-to-end benchmark starts a real host, pairs through its LAN IPv4 URL, negotiates the selected mutually supported codec, sends synthetic coalesced Pointer Events plus mixed mouse/keyboard/text/gesture probes, reads authenticated host metrics, and writes labeled JSON/CSV/Markdown under ignored `build/benchmarks/`. Host-only mode compares every functional encoder without a browser.

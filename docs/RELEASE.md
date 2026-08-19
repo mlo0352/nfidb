@@ -38,4 +38,4 @@ The repository's Pages source must be set to **GitHub Actions**. Workflows need 
 
 ## Stable checklist
 
-In addition to prerelease: physical iPad/Apple Pencil, Krita, Rebelle, reconnect, WAN-offline, and 30-minute stability rows must pass; release-mode performance must be published; hardware Media Foundation encoding should replace the current software fallback.
+In addition to prerelease: physical iPad/Apple Pencil, Krita, Rebelle, reconnect, WAN-offline, and 30-minute stability rows must pass; physical Safari codec results and release-mode performance must be published on more than one GPU vendor; GPU-side preprocessing should be evaluated against the current measured CPU-copy path.

@@ -12,11 +12,19 @@ NFiDB favors fresh input and pictures over complete frame delivery. Both the cap
 
 Aspect ratio is preserved and encoder dimensions are even. The browser requests fit by default and keeps predicted Pointer Events local so prediction cannot corrupt the remote ink stream.
 
+All three presets are configuration data in 0.6.0: maximum width, FPS, and bitrate can be edited from Windows or the paired iPad and applied live. Each preset has an H.264 base bitrate plus optional HEVC and AV1 overrides. An unset codec override inherits the H.264 target; NFiDB does not pretend that an unmeasured lower number is automatically equal quality.
+
 ## Metrics and recording
 
 The host and browser expose capture/encode/decode/presentation FPS; source and output dimensions; dropped, skipped, lost, and frozen frames by stage; encoded and received bandwidth; encode/decode/jitter-buffer cost; LAN RTT and clock offset; startup IDR/first-frame timing; frame-gap percentiles; DataChannel/WebSocket buffers; input rate, pressure, angles, continuity, estimated arrival age, and native injection cost. The generated test pattern provides a repeatable video path without depending on desktop activity.
 
 The iPad sends a structured sample once per second. The host retains approximately six hours, joins each sample to host counters, and processes count/min/mean/p50/p95/p99/max distributions. A report can be reset and exported from the desktop Diagnostics page. Direct browser capture-to-presentation values are included when Safari exposes frame metadata; otherwise the report labels a component-derived pipeline estimate. Neither method measures physical Pencil-contact-to-photon latency.
+
+## Multi-codec release measurements
+
+The 0.6.0 development host exposes functional NVIDIA Media Foundation H.264, HEVC, and AV1 encoders on an RTX 4090. The 60-frame full host matrix covered four source/output geometries and three deterministic workloads for all four usable modes. At 1080p Balanced with the drawing workload, steady encode p95 was 4.94 ms H.264 hardware, 5.54 ms HEVC hardware, 4.76 ms AV1 hardware, and 34.60 ms OpenH264. Unpaced complete host-pipeline throughput was 109.59, 102.12, 110.87, and 28.97 fps respectively. See [Codec benchmarks](CODEC_BENCHMARKS.md) for the complete method, representative tables, Auto formula, browser evidence, and limitations.
+
+The paired packaged Edge Quick Auto Test verified actual presentation for H.264 hardware, AV1 hardware, and OpenH264. Edge did not report HEVC and it was therefore excluded rather than forced. The final run measured 56.25/53.5 encoded/presented fps for hardware H.264, 57.25/57.25 for AV1, and 16.25/16.25 for OpenH264. Edge headless also reported 47.6–50% compositor presentation drops on the hardware paths, so every observation failed at least one strict end-to-end gate and Auto retained the conservative H.264 hardware choice. No physical iPad Safari multi-codec number is claimed.
 
 ## Release-mode measurements
 
@@ -45,7 +53,7 @@ The v0.4.0 mixed-input candidate added mouse, wheel, keyboard, Unicode text, and
 
 The 10-minute 4K→720p Fast soak delivered 144,002 exact input samples at 240.001 samples/s, decoded 30,508 frames, advanced media time by 599.997 seconds, and reported zero RTP loss, decoder drops, freezes, transport drops, or integrity mismatches. The encoder averaged about 51 fps over the run. Edge's headless 4K compositor presented only about 18 fps and reported 40.9% presentation drops even though WebRTC decoded every received frame; this is recorded as a test-environment compositor limit, not hidden as network loss.
 
-NFiDB therefore makes no “zero latency,” guaranteed 60/120 fps, color-accuracy, or native-Pencil-latency claim. Actual performance depends on PC CPU, source motion, Wi-Fi, iPad, and drawing app. Moving the isolated encoder layer to Media Foundation hardware encoding remains the main performance milestone.
+NFiDB therefore makes no “zero latency,” guaranteed 60/120 fps, color-accuracy, or native-Pencil-latency claim. Actual performance depends on PC CPU/GPU, source motion, Wi-Fi, iPad, codec, and drawing app. Media Foundation hardware encoding is now implemented; moving resize/color conversion and encoder input to GPU surfaces is the next major video optimization.
 
 ## File-transfer smoke
 
@@ -55,7 +63,7 @@ These are localhost protocol/flow-control measurements from the packaged release
 
 ## Measurement procedure
 
-1. Run `./scripts/benchmark.ps1 -DurationSeconds 10` for the four generated-pattern scenarios. Use `-ScenarioName 4k-to-720p-fast -DurationSeconds 600` for the soak.
+1. Run `./scripts/benchmark.ps1 -Quick` for a representative host and Edge comparison, or `./scripts/benchmark.ps1 -Full` for all codecs, presets/geometries, and workloads. Use `-HostOnly` when no browser receiver is wanted.
 2. Open the desktop Diagnostics page, reset the recording, pair a physical iPad, and enable the browser Stats panel.
 3. Exercise drawing and active monitor motion for at least 60 seconds, then export the detailed JSON. Record PC GPU/CPU, iPad model, iPadOS/Safari versions, Wi-Fi band, and access-point model alongside it.
 4. Repeat on an active Windows monitor and for Fast/Balanced/Sharp.
