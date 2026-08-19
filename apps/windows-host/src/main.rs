@@ -808,8 +808,10 @@ impl HostApp {
                             ui,
                             "Video startup",
                             &format!(
-                                "{:.0} ms · {} pre-IDR frames skipped",
-                                metrics.video_startup_wait_ms, metrics.video_startup_delta_frames
+                                "{:.0} ms · {} pre-IDR skipped · {} client recovery requests",
+                                metrics.video_startup_wait_ms,
+                                metrics.video_startup_delta_frames,
+                                metrics.video_recovery_requests
                             ),
                         );
                         diagnostic_row(

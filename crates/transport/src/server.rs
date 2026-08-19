@@ -494,6 +494,11 @@ async fn websocket_loop(socket: WebSocket, state: Arc<AppState>) {
                                         state.diagnostics.record(sample, state.metrics.snapshot());
                                     }
                                 }
+                                "request-keyframe" => {
+                                    state.metrics.video_recovery_requested();
+                                    state.keyframe_request.request();
+                                    tracing::info!("browser requested a video recovery keyframe");
+                                }
                                 _ => {}
                             }
                         }

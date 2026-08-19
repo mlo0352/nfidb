@@ -136,20 +136,29 @@ pub async fn accept_offer(
 
     let channel_input = Arc::clone(&input);
     let channel_metrics = Arc::clone(&metrics);
+    let channel_keyframe_request = keyframe_request.clone();
     peer.on_data_channel(Box::new(move |channel: Arc<RTCDataChannel>| {
         let input = Arc::clone(&channel_input);
         let metrics = Arc::clone(&channel_metrics);
+        let keyframe_request = channel_keyframe_request.clone();
         Box::pin(async move {
             if channel.label() != "input" && channel.label() != "control" {
                 return;
             }
             let message_input = Arc::clone(&input);
             let message_metrics = Arc::clone(&metrics);
+            let message_keyframe_request = keyframe_request.clone();
             channel.on_message(Box::new(move |message: DataChannelMessage| {
                 let input = Arc::clone(&message_input);
                 let metrics = Arc::clone(&message_metrics);
+                let keyframe_request = message_keyframe_request.clone();
                 Box::pin(async move {
                     if message.is_string {
+                        if message.data.as_ref() == b"request-keyframe" {
+                            metrics.video_recovery_requested();
+                            keyframe_request.request();
+                            tracing::info!("browser requested a video recovery keyframe over DataChannel");
+                        }
                         return;
                     }
                     process_input_packet(input.as_ref(), metrics.as_ref(), &message.data, "datachannel");

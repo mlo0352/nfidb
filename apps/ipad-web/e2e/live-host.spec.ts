@@ -31,6 +31,11 @@ test("sustains coalesced pressure/tilt input while receiving integrity-checked H
   await expect(page.locator("#connectionState")).toContainText("Connected locally", { timeout: 20_000 });
   await expect.poll(() => page.locator("video").evaluate((video) => video.videoWidth), { timeout: 30_000 }).toBeGreaterThan(0);
 
+  const recoveryRequestsBefore = Number((await snapshot(page)).host.video_recovery_requests);
+  await requestKeyframeOverAuthenticatedSocket(page);
+  await expect.poll(async () => Number((await snapshot(page)).host.video_recovery_requests), { timeout: 10_000 })
+    .toBe(recoveryRequestsBefore + 1);
+
   const remoteBefore = await snapshot(page);
   const overlayBounds = await page.locator("#interactionOverlay").boundingBox();
   expect(overlayBounds).not.toBeNull();
@@ -267,5 +272,27 @@ test("sustains coalesced pressure/tilt input while receiving integrity-checked H
 async function snapshot(page: import("@playwright/test").Page): Promise<DiagnosticSnapshot> {
   return page.evaluate(() =>
     (window as Window & { __nfidbDiagnostics: () => Promise<DiagnosticSnapshot> }).__nfidbDiagnostics(),
+  );
+}
+
+async function requestKeyframeOverAuthenticatedSocket(page: import("@playwright/test").Page): Promise<void> {
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+        const socket = new WebSocket(`${protocol}//${location.host}/api/ws`);
+        socket.addEventListener(
+          "open",
+          () => {
+            socket.send(JSON.stringify({ type: "request-keyframe" }));
+            window.setTimeout(() => {
+              socket.close();
+              resolve();
+            }, 100);
+          },
+          { once: true },
+        );
+        socket.addEventListener("error", () => reject(new Error("Recovery WebSocket failed to open")), { once: true });
+      }),
   );
 }

@@ -92,6 +92,8 @@ export class NfidbApp {
   private hideToolbarTimer = 0;
   private videoTrackAtMs = 0;
   private firstVideoFrameAtMs = 0;
+  private videoRecoveryTimer = 0;
+  private videoRecoveryAttempts = 0;
   private diagnosticTimer = 0;
   private diagnosticSequence = 0;
   private diagnosticFailures = 0;
@@ -216,6 +218,7 @@ export class NfidbApp {
         const video = this.requiredElement<HTMLVideoElement>("remoteVideo");
         this.videoTrackAtMs = performance.now();
         this.firstVideoFrameAtMs = 0;
+        this.startVideoRecovery(peer);
         video.srcObject = event.streams[0] ?? new MediaStream([event.track]);
         this.startVideoFrameTelemetry(video);
         video.addEventListener("playing", () => this.markFirstVideoFrame(), { once: true });
@@ -224,7 +227,7 @@ export class NfidbApp {
         startPlayback();
         window.setTimeout(() => {
           if (this.peer === peer && peer.connectionState === "connected" && this.firstVideoFrameAtMs === 0) {
-            this.showNotice("Video is connected but still waiting for its first decodable frame.");
+            this.showNotice("Waiting for a decodable frame. NFiDB is requesting a fresh video keyframe…");
           }
         }, 3000);
       });
@@ -349,8 +352,46 @@ export class NfidbApp {
   private markFirstVideoFrame(): void {
     if (this.firstVideoFrameAtMs === 0) {
       this.firstVideoFrameAtMs = performance.now();
+      this.stopVideoRecovery();
       this.renderStats();
     }
+  }
+
+  private startVideoRecovery(peer: RTCPeerConnection): void {
+    this.stopVideoRecovery();
+    this.videoRecoveryAttempts = 0;
+    const request = () => {
+      if (
+        this.peer !== peer ||
+        this.firstVideoFrameAtMs > 0 ||
+        peer.connectionState === "closed" ||
+        peer.connectionState === "failed"
+      ) {
+        this.stopVideoRecovery();
+        return;
+      }
+      if (peer.connectionState === "connected") {
+        let sent = false;
+        if (this.socket?.readyState === WebSocket.OPEN) {
+          this.socket.send(JSON.stringify({ type: "request-keyframe" }));
+          sent = true;
+        } else if (this.channel?.readyState === "open") {
+          this.channel.send("request-keyframe");
+          sent = true;
+        }
+        if (sent) {
+          this.videoRecoveryAttempts += 1;
+        }
+      }
+      const delay = Math.min(5000, 1500 * 2 ** Math.min(this.videoRecoveryAttempts, 2));
+      this.videoRecoveryTimer = window.setTimeout(request, delay);
+    };
+    this.videoRecoveryTimer = window.setTimeout(request, 1500);
+  }
+
+  private stopVideoRecovery(): void {
+    window.clearTimeout(this.videoRecoveryTimer);
+    this.videoRecoveryTimer = 0;
   }
 
   private startVideoFrameTelemetry(video: HTMLVideoElement): void {
@@ -924,7 +965,7 @@ export class NfidbApp {
     );
     this.setText(
       "pipelineStats",
-      `${playbackStartup} · ${metrics.video_startup_wait_ms.toFixed(0)} ms IDR · ${(client?.frameTiming.captureToPresentP95Ms ?? client?.frameTiming.estimatedPipelineMs ?? 0).toFixed(1)} ms p95 measured/estimated · ${(client?.frameTiming.frameGapP95Ms ?? 0).toFixed(1)} ms frame-gap p95`,
+      `${playbackStartup} · ${metrics.video_startup_wait_ms.toFixed(0)} ms IDR · ${metrics.video_recovery_requests} recovery requests · ${(client?.frameTiming.captureToPresentP95Ms ?? client?.frameTiming.estimatedPipelineMs ?? 0).toFixed(1)} ms p95 measured/estimated · ${(client?.frameTiming.frameGapP95Ms ?? 0).toFixed(1)} ms frame-gap p95`,
     );
     this.setText("pencilStats", `${metrics.input_samples_per_sec.toFixed(0)} samples/s · ${metrics.input_arrival_ms.toFixed(2)} ms arrival estimate · ${metrics.input_inject_ms.toFixed(3)} ms inject · ${metrics.input_samples} total`);
     this.setText("pressureStats", `${metrics.pressure.toFixed(2)} · ${metrics.tilt_x.toFixed(0)}° / ${metrics.tilt_y.toFixed(0)}°`);
@@ -981,6 +1022,7 @@ export class NfidbApp {
 
   private async disconnect(): Promise<void> {
     this.stopDiagnosticRecording();
+    this.stopVideoRecovery();
     this.pointerEngine?.cancelAll();
     this.pointerEngine?.dispose();
     this.remoteInputEngine?.resetRemoteInput();

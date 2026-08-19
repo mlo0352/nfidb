@@ -1,5 +1,23 @@
 # Engineering devlog
 
+## 2026-08-18 — Browser first-frame recovery
+
+### Goal
+
+Recover automatically when WebRTC is connected but Safari has not presented a decodable H.264 frame.
+
+### Experiment
+
+Reproduced the visible symptom, then removed a conflicting second capture session and isolated one real 3840×2160 Windows monitor through the production capture, Balanced 1920×1080 encode, WebRTC, and browser decode path. Added a presented-frame watchdog that requests a fresh IDR over the authenticated WebSocket, with DataChannel fallback, until the browser presents a frame. Added a host counter and live control-path regression.
+
+### Result
+
+**PASS.** The isolated real-monitor run presented its first frame in 96.4 ms after a 62.549 ms host IDR wait, decoded at 1920×1080, advanced continuously, and reported zero RTP loss, decoder drops, freezes, or transport drops. The final packaged regression started in 144.7 ms; its authenticated recovery request advanced the host recovery counter `0→1`, generated a new keyframe, and advanced browser keyframes decoded `1→2`. The intermittent physical-Safari stall was not reproduced after restarting the single capture session, so the precise cause of the originally missed first IDR remains unproven; the recovery handshake directly covers that failure mode.
+
+### Decision
+
+Do not treat `RTCPeerConnection.connected` or receipt of a video track as proof that the user can see a picture. Continue requesting bounded fresh IDRs until `requestVideoFrameCallback`/playback confirms presentation, and surface the recovery count in diagnostics.
+
 ## 2026-08-17 — Synthetic pen injection spike
 
 ### Goal

@@ -32,6 +32,7 @@ export interface HostMetrics {
   video_transport_drops: number;
   video_startup_delta_frames: number;
   video_startup_wait_ms: number;
+  video_recovery_requests: number;
   encoded_bytes: number;
   input_batches: number;
   input_samples: number;

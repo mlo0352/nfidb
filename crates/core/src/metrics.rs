@@ -76,6 +76,7 @@ pub struct Metrics {
     video_transport_drops: AtomicU64,
     video_startup_delta_frames: AtomicU64,
     video_startup_wait_micros: AtomicU64,
+    video_recovery_requests: AtomicU64,
     encoded_bytes: AtomicU64,
     preprocessed_frames: AtomicU64,
     preprocess_micros: AtomicU64,
@@ -171,6 +172,10 @@ impl Metrics {
     pub fn video_started(&self, wait: Duration) {
         self.video_startup_wait_micros
             .store(wait.as_micros().min(u128::from(u64::MAX)) as u64, Ordering::Relaxed);
+    }
+
+    pub fn video_recovery_requested(&self) {
+        self.video_recovery_requests.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn input_batch(&self, batch: &PointerBatch) {
@@ -344,6 +349,7 @@ impl Metrics {
             video_transport_drops: self.video_transport_drops.load(Ordering::Relaxed),
             video_startup_delta_frames: self.video_startup_delta_frames.load(Ordering::Relaxed),
             video_startup_wait_ms: self.video_startup_wait_micros.load(Ordering::Relaxed) as f64 / 1000.0,
+            video_recovery_requests: self.video_recovery_requests.load(Ordering::Relaxed),
             encoded_bytes: self.encoded_bytes.load(Ordering::Relaxed),
             input_batches: self.input_batches.load(Ordering::Relaxed),
             input_samples,
@@ -438,6 +444,7 @@ pub struct MetricsSnapshot {
     pub video_transport_drops: u64,
     pub video_startup_delta_frames: u64,
     pub video_startup_wait_ms: f64,
+    pub video_recovery_requests: u64,
     pub encoded_bytes: u64,
     pub input_batches: u64,
     pub input_samples: u64,
@@ -565,5 +572,13 @@ mod tests {
         observe_sequence(&mut expected, 0, &gaps, &out_of_order);
         assert_eq!(gaps.load(Ordering::Relaxed), 0);
         assert_eq!(out_of_order.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn counts_browser_video_recovery_requests() {
+        let metrics = Metrics::default();
+        metrics.video_recovery_requested();
+        metrics.video_recovery_requested();
+        assert_eq!(metrics.snapshot().video_recovery_requests, 2);
     }
 }
