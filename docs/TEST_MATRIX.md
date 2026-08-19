@@ -1,6 +1,6 @@
 # Test matrix
 
-Last updated: 2026-08-19. Development host: Windows 11 Pro x64 build 22631, Intel Core i9-13900K, Rust 1.97.1 (`x86_64-pc-windows-msvc`), Node 22.22.3, npm 10.9.8, Microsoft Edge headless. Profile/soak results are release `0.2.0`; startup, diagnostics, credential rotation, navigation, browser-upgrade, and physical regressions are the `0.3.1`–`0.3.4` candidates. Remote-input rows and the five-second comparison runs are the `0.4.0` alpha. File-transfer rows are the `0.5.0` alpha candidate.
+Last updated: 2026-08-19. Development host: Windows 11 Pro x64 build 22631, Intel Core i9-13900K, Rust 1.97.1 (`x86_64-pc-windows-msvc`), Node 22.22.3, npm 10.9.8, Microsoft Edge headless. Profile/soak results are release `0.2.0`; startup, diagnostics, credential rotation, navigation, browser-upgrade, and physical regressions are the `0.3.1`–`0.3.4` candidates. Remote-input rows and the five-second comparison runs are the `0.4.0` alpha. File-transfer rows include the `0.5.1` alpha candidate.
 
 | Layer | Test | Result | Evidence |
 | --- | --- | --- | --- |
@@ -16,11 +16,12 @@ Last updated: 2026-08-19. Development host: Windows 11 Pro x64 build 22631, Inte
 | Native input sustained | User32 injection, transient queue backpressure, and reverse-chronological history recovery | PASS | Exact packaged v0.3.3 primary-tip run: 14,400/14,400 samples over 59.83 s at 240.66 Hz; 5,375 coalesced samples recovered; zero missing/excess/value/barrel error; full pressure and ±60° tilt ranges; 50 ms bounded `ERROR_NOT_READY` retry |
 | Browser remote input | Option+Tab ordering, Delete/Backspace and Ctrl+Option+Delete distinction, Unicode text, normalized wheel, three-finger command, mouse hover/click | PASS | deterministic browser event tests |
 | Native remote mapping | DOM key rows/modifiers/navigation/F1–F24/numpad, virtual-desktop mouse buttons, fractional wheel accumulation, held-state reset construction | PASS | Rust host unit tests |
-| Browser build | strict TypeScript + Safari 16.4 Vite target | PASS | 30 Vitest tests across 7 files; typecheck and production build |
+| Browser build | strict TypeScript + Safari 16.4 Vite target | PASS | 32 Vitest tests across 7 files; typecheck and production build |
 | HTTP/control | status, pairing, embedded assets, authenticated metrics/diagnostics, stats WebSocket | PASS | live and portable smoke tests |
 | File upload core | leaf-name confinement, reserved names, chunk SHA-256, stale offsets, lost-response idempotency, collision-safe finalization, cancellation | PASS | Rust manager tests plus browser SHA/chunk/retry/cancel tests |
-| File download core | Explicit canonical Outbox file, no path serialization, complete and suffix/open/fixed byte ranges | PASS | Rust queue/range tests plus real-host full/range checksum smoke |
-| File HTTP/auth | Paired listing, mutation origin, unauthorized rejection, idempotent upload/finalize, cancel/download APIs | PASS | Packaged-release `scripts/file-transfer-smoke.ps1`; 3,146,237-byte upload and 5,243,017-byte download, zero failures |
+| File download core | Explicit canonical Outbox file, no path serialization, complete and suffix/open/fixed byte ranges, concurrent per-file auto-clear | PASS | Rust queue/range tests prove completed streams clear independently while partial/interrupted streams remain |
+| File HTTP/auth | Paired listing, mutation origin, unauthorized rejection, idempotent upload/finalize, cancel/download/auto-clear APIs | PASS | Packaged-release `scripts/file-transfer-smoke.ps1`; 3,146,237-byte upload plus two downloads totaling 7,340,252 bytes, exact hashes, partial retention, empty final Outbox, zero failures |
+| File queue UI | Background paired-session polling, multi-file arrival notice/badge, Download all, default-on persisted cleanup preference, ASCII history labels | PASS | deterministic browser DOM/storage/URL tests plus strict production build |
 | File QoS | Configured rate ceiling and drawing-contact pause | PASS | Default-limited real-host throughput plus deterministic active-Pen pacing test |
 | File transfer on iPad Safari | Files picker, foreground/background behavior, Safari native download, cancel/retry | NOT RUN | Browser logic is deterministic; physical iPad Files/Photos and Safari download-manager check remains |
 | Diagnostic recorder | One-hertz raw capture, host synchronization, bounded retention, processed distributions | PASS | Unit tests plus 11/11 live samples over 10.003 s, zero discarded |

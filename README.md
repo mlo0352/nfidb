@@ -2,7 +2,7 @@
 
 **No Frills iPad Drawing Bridge** turns an iPad and Apple Pencil into a local-network pen display for a Windows 11 PC. Extract one portable Windows app, open the address it shows in Safari, enter the six-digit PIN, and draw. There is no iPad app, account, subscription, cloud relay, or internet service involved in a session.
 
-> NFiDB 0.5.0 is a solid alpha. Its protocol, native input, Windows capture, browser pairing, remote-control, WebRTC, and bidirectional file-transfer paths have automated coverage, and the iPad mouse, keyboard, and three-finger controls have passed a physical-device check. Apple Pencil behavior in individual art apps and the new Files panel still need physical field validation; see [the test matrix](docs/TEST_MATRIX.md) before relying on it for production work.
+> NFiDB 0.5.1 is a solid alpha. Its protocol, native input, Windows capture, browser pairing, remote-control, WebRTC, and bidirectional file-transfer paths have automated coverage, and the iPad mouse, keyboard, and three-finger controls have passed a physical-device check. Apple Pencil behavior in individual art apps and the Files panel still need physical field validation; see [the test matrix](docs/TEST_MATRIX.md) before relying on it for production work.
 
 ## What works
 
@@ -49,9 +49,9 @@ If a PIN/QR has expired or Safari shows a stale-session error, use **Session →
 
 ## File transfer
 
-Open **Files** on Windows and choose **Add files for iPad** to place explicit files in the temporary Outbox. On the iPad, open **Files** in the toolbar and tap **Download**; Safari’s download manager handles progress and saving to Files. Removing an Outbox item removes only the NFiDB queue entry, never the original Windows file.
+Open **Files** on Windows and choose **Add files for iPad** to place one or more explicit files in the temporary Outbox. The paired iPad shows an in-page notice and queue-count badge even when its Files panel is closed. Open that panel to download one item or the full batch through Safari’s download manager. **Clear each queue item after download** is on by default, persists across page loads, and asks the host to remove each item only after its complete stream is delivered; interrupted and partial-range downloads remain queued. Manual removal affects only the NFiDB queue entry, never the original Windows file.
 
-To send files to Windows, open the iPad Files panel, choose one or more files, and leave Safari in the foreground until the queue completes. Incoming files are written through a private staging directory and moved into `Downloads\NFiDB Inbox` only after every 1 MiB chunk and the completed file have been SHA-256 processed. Duplicate names become `name (1).ext` rather than overwriting an existing file.
+To send files to Windows, open the iPad Files panel, choose one or more files, and leave Safari in the foreground until the queue completes. Incoming files are written through a private staging directory and moved into `Downloads\NFiDB Inbox` only after every 1 MiB chunk and the completed file have been SHA-256 processed. Duplicate names become `name (1).ext` rather than overwriting an existing file. Use **Open received files folder** on the Windows Files page to open the configured Inbox directly.
 
 Transfers are capped at 10 GiB per file and 32 Mbps by default. The Windows Files page can change those limits or disable transfer. With **Pause bulk traffic while Pencil or touch is down** enabled, a long transfer yields whenever a drawing contact is active. Pairing reset/disconnect invalidates transfer access and removes unfinished uploads.
 

@@ -1,8 +1,10 @@
 import { disconnect, getDiagnosticSummary, getMetrics, getStatus, pairWithPin, pairWithQr, sendOffer, type HostDiagnosticSummary, type HostMetrics, type HostStatus } from "./api";
 import {
   getFileListing,
+  loadAutoClearDownloads,
   outgoingDownloadUrl,
   removeOutgoingFile,
+  saveAutoClearDownloads,
   uploadFile,
   type FileListing,
 } from "./file-transfer";
@@ -129,6 +131,8 @@ export class NfidbApp {
   private fileListing: FileListing | null = null;
   private fileRefreshTimer = 0;
   private fileRefreshActive = false;
+  private knownOutgoingIds: Set<string> | null = null;
+  private autoClearDownloads = loadAutoClearDownloads();
   private readonly uploadQueue: QueuedUpload[] = [];
   private uploadQueueActive = false;
   private activeUploadId = 0;
@@ -228,6 +232,7 @@ export class NfidbApp {
   private async connect(): Promise<void> {
     this.state = "connecting";
     this.renderSurface();
+    this.startFilePolling();
     this.openControlSocket();
     try {
       const peer = new RTCPeerConnection({ iceServers: [] });
@@ -289,7 +294,7 @@ export class NfidbApp {
             <button id="touchButton" class="tool-button" aria-pressed="false">Touch off</button>
             <button id="gestureButton" class="tool-button" aria-pressed="true">Gestures on</button>
             <button id="keyboardButton" class="tool-button" aria-pressed="false">Keyboard</button>
-            <button id="filesButton" class="tool-button" aria-pressed="false">Files</button>
+            <button id="filesButton" class="tool-button files-button" aria-pressed="false">Files<span id="filesBadge" class="file-badge" hidden>0</span></button>
             <button id="statsButton" class="tool-button" aria-pressed="false">Stats</button>
             <button id="fullscreenButton" class="icon-button" aria-label="Fullscreen">⛶</button>
             <button id="disconnectButton" class="icon-button danger" aria-label="Disconnect">×</button>
@@ -564,17 +569,30 @@ export class NfidbApp {
     this.requiredElement("filesButton").setAttribute("aria-pressed", "true");
     this.renderFilesContent();
     void this.refreshFileListing();
-    window.clearInterval(this.fileRefreshTimer);
-    this.fileRefreshTimer = window.setInterval(() => void this.refreshFileListing(), 1500);
     this.scheduleToolbarHide();
   }
 
   private closeFilesPanel(): void {
     this.requiredElement<HTMLElement>("filesPanel").hidden = true;
     this.requiredElement("filesButton").setAttribute("aria-pressed", "false");
+    this.scheduleToolbarHide();
+  }
+
+  private startFilePolling(): void {
+    window.clearInterval(this.fileRefreshTimer);
+    this.knownOutgoingIds = null;
+    if (this.status?.file_transfer_enabled === false) {
+      return;
+    }
+    void this.refreshFileListing();
+    this.fileRefreshTimer = window.setInterval(() => void this.refreshFileListing(), 1500);
+  }
+
+  private stopFilePolling(): void {
     window.clearInterval(this.fileRefreshTimer);
     this.fileRefreshTimer = 0;
-    this.scheduleToolbarHide();
+    this.fileRefreshActive = false;
+    this.knownOutgoingIds = null;
   }
 
   private async refreshFileListing(): Promise<void> {
@@ -583,8 +601,19 @@ export class NfidbApp {
     }
     this.fileRefreshActive = true;
     try {
-      this.fileListing = await getFileListing();
+      const listing = await getFileListing();
+      const nextOutgoingIds = new Set(listing.outbox.map((file) => file.id));
+      const addedCount = this.knownOutgoingIds === null
+        ? nextOutgoingIds.size
+        : Array.from(nextOutgoingIds).filter((id) => !this.knownOutgoingIds?.has(id)).length;
+      this.knownOutgoingIds = nextOutgoingIds;
+      this.fileListing = listing;
+      this.updateFilesBadge();
       this.renderFilesContent();
+      if (addedCount > 0) {
+        const noun = addedCount === 1 ? "file is" : "files are";
+        this.showNotice(`${addedCount} ${noun} ready from Windows. Open Files to download.`);
+      }
     } catch (error) {
       const content = this.root.querySelector<HTMLElement>("#filesContent");
       if (content) {
@@ -593,6 +622,16 @@ export class NfidbApp {
     } finally {
       this.fileRefreshActive = false;
     }
+  }
+
+  private updateFilesBadge(): void {
+    const badge = this.root.querySelector<HTMLElement>("#filesBadge");
+    if (!badge) {
+      return;
+    }
+    const count = this.fileListing?.outbox.length ?? 0;
+    badge.textContent = String(count);
+    badge.hidden = count === 0;
   }
 
   private renderFilesContent(): void {
@@ -621,18 +660,19 @@ export class NfidbApp {
       ? `<p class="panel-empty">No Windows files are queued for this iPad.</p>`
       : listing.outbox.map((file) => `<div class="transfer-row">
           <div><b>${escapeHtml(file.name)}</b><small>${formatBytes(file.size)} · ${escapeHtml(file.mime)}${file.sha256 ? ` · SHA-256 ${file.sha256.slice(0, 12)}…` : " · checksum pending"}</small></div>
-          <div class="transfer-actions"><a data-download-id="${file.id}" href="${outgoingDownloadUrl(file.id)}" download="${escapeHtml(file.name)}">Download</a><button data-remove-outgoing="${file.id}">Remove</button></div>
+          <div class="transfer-actions"><a data-download-id="${file.id}" href="${outgoingDownloadUrl(file.id, this.autoClearDownloads)}" download="${escapeHtml(file.name)}">Download</a><button data-remove-outgoing="${file.id}">Remove</button></div>
         </div>`).join("");
     const recentRows = !listing || listing.recent.length === 0
       ? `<p class="panel-empty">No transfers completed in this run.</p>`
       : listing.recent.slice(0, 6).map((transfer) => `<div class="recent-transfer">
-          <span>${transfer.direction === "ipad-to-windows" ? "iPad → Windows" : "Windows → iPad"}</span>
+          <span>${transfer.direction === "ipad-to-windows" ? "iPad to Windows" : "Windows to iPad"}</span>
           <b>${escapeHtml(transfer.name)}</b><small>${formatBytes(transfer.bytes)} · ${escapeHtml(transfer.status)} · ${transfer.average_mbps.toFixed(2)} Mbps</small>
         </div>`).join("");
     const stats = listing?.stats;
+    const outboxCount = listing?.outbox.length ?? 0;
     content.innerHTML = `
       <div class="transfer-summary">
-        <span>↑ ${stats?.upload_mbps.toFixed(2) ?? "0.00"} Mbps</span><span>↓ ${stats?.download_mbps.toFixed(2) ?? "0.00"} Mbps</span><span>${listing?.rate_limit_mbps ?? 0} Mbps limit</span>
+        <span>UP ${stats?.upload_mbps.toFixed(2) ?? "0.00"} Mbps</span><span>DOWN ${stats?.download_mbps.toFixed(2) ?? "0.00"} Mbps</span><span>${listing?.rate_limit_mbps ?? 0} Mbps limit</span>
       </div>
       <section class="file-section">
         <div class="file-section-heading"><div><b>SEND TO WINDOWS</b><small>${listing ? `Saves to ${escapeHtml(listing.inbox_name)}` : "Verified 1 MiB chunks"}</small></div><button id="chooseFilesButton" class="file-primary" ${listing?.enabled === false ? "disabled" : ""}>Choose files</button></div>
@@ -640,8 +680,10 @@ export class NfidbApp {
         ${uploadRows}
       </section>
       <section class="file-section">
-        <div class="file-section-heading"><div><b>FROM WINDOWS</b><small>Only files queued in the desktop app</small></div></div>
+        <div class="file-section-heading"><div><b>FROM WINDOWS</b><small>Only files queued in the desktop app</small></div>${outboxCount > 1 ? `<button id="downloadAllButton" class="file-secondary">Download all (${outboxCount})</button>` : ""}</div>
         ${outboxRows}
+        <label class="file-option"><input id="autoClearDownloads" type="checkbox" ${this.autoClearDownloads ? "checked" : ""} /><span>Clear each queue item after download</span></label>
+        <p class="file-option-help">On by default. The host removes an item only after its full file stream is delivered.</p>
       </section>
       <section class="file-section recent-section">
         <div class="file-section-heading"><div><b>RECENT</b><small>Local session history</small></div></div>
@@ -657,6 +699,18 @@ export class NfidbApp {
     picker?.addEventListener("change", () => {
       this.queueUploads(Array.from(picker.files ?? []));
       picker.value = "";
+    });
+    this.root.querySelector<HTMLInputElement>("#autoClearDownloads")?.addEventListener("change", (event) => {
+      this.autoClearDownloads = (event.currentTarget as HTMLInputElement).checked;
+      saveAutoClearDownloads(this.autoClearDownloads);
+      this.renderFilesContent();
+    });
+    this.root.querySelector<HTMLButtonElement>("#downloadAllButton")?.addEventListener("click", () => {
+      const links = Array.from(this.root.querySelectorAll<HTMLAnchorElement>("[data-download-id]"));
+      for (const link of links) {
+        link.click();
+      }
+      this.showNotice(`${links.length} downloads started. Safari may ask once for permission to download multiple files.`);
     });
     for (const button of this.root.querySelectorAll<HTMLButtonElement>("[data-cancel-upload]")) {
       button.addEventListener("click", () => this.cancelQueuedUpload(Number(button.dataset.cancelUpload)));
@@ -700,7 +754,9 @@ export class NfidbApp {
     }
     for (const link of this.root.querySelectorAll<HTMLAnchorElement>("[data-download-id]")) {
       link.addEventListener("click", () => {
-        this.showNotice("Download handed to Safari. Use Safari’s download button to view progress or save to Files.");
+        this.showNotice(this.autoClearDownloads
+          ? "Download started. Its Windows queue item clears after every byte is delivered."
+          : "Download handed to Safari. Use Safari’s download button to view progress or save to Files.");
       });
     }
   }
@@ -1306,8 +1362,7 @@ export class NfidbApp {
   }
 
   private async disconnect(): Promise<void> {
-    window.clearInterval(this.fileRefreshTimer);
-    this.fileRefreshTimer = 0;
+    this.stopFilePolling();
     this.activeUploadAbort?.abort();
     this.activeUploadAbort = null;
     this.stopDiagnosticRecording();

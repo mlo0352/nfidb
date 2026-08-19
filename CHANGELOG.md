@@ -2,6 +2,25 @@
 
 NFiDB is pre-release software. Releases remain GitHub prereleases until the physical drawing-app matrix, longer stability run, and hardware-encoding work are complete.
 
+## 0.5.1 — 2026-08-19 — Alpha
+
+### Fixed
+
+- Replaced unsupported arrow glyphs in transfer history with plain labels so the iPad and Windows no longer show square placeholder characters.
+- The iPad now watches the Windows Outbox throughout the paired session, shows an arrival notice, and keeps a live queue-count badge even when the Files panel is closed.
+- Completed Safari downloads can remove their Windows queue entries automatically. Cleanup is enabled by default, persists across page loads, and occurs only after a full stream; partial or interrupted downloads stay queued.
+
+### Added
+
+- A single-tap **Download all** action for batches queued from Windows, with independent server-side completion and cleanup for every file.
+- A clearly labeled **Open received files folder** action on the Windows Files page.
+- Concurrent, partial, interrupted, persisted-preference, notification, multi-file, and real-host auto-clear coverage.
+
+### Automated evidence
+
+- The real-host smoke uploaded 3,146,237 bytes and downloaded two files totaling 7,340,252 bytes with exact SHA-256 matches, retained a partial range, then auto-cleared both completed files with zero failures.
+- Browser coverage now totals 32 tests across seven files; the Rust workspace totals 34 tests, including concurrent full-download cleanup and interrupted/ranged retention.
+
 ## 0.5.0 — 2026-08-19 — Alpha
 
 ### Added

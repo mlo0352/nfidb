@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::body::{Body, to_bytes};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{OriginalUri, Path, State};
+use axum::extract::{OriginalUri, Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
@@ -582,13 +582,18 @@ async fn remove_outbox_file(
 async fn download_outbox_file(
     State(state): State<Arc<AppState>>,
     Path(id): Path<uuid::Uuid>,
+    Query(query): Query<DownloadQuery>,
     headers: HeaderMap,
 ) -> Response {
     let Some(session_id) = authorized_session(&headers, &state.session) else {
         return api_error(StatusCode::UNAUTHORIZED, "invalid session token");
     };
     let range_header = headers.get(header::RANGE).and_then(|value| value.to_str().ok());
-    match state.file_transfers.open_download(id, session_id, range_header).await {
+    match state
+        .file_transfers
+        .open_download(id, session_id, range_header, query.remove == Some(1))
+        .await
+    {
         Ok(download) => {
             let size = if download.file.size == 0 {
                 0
@@ -631,6 +636,11 @@ async fn download_outbox_file(
         }
         Err(error) => file_error_response(error),
     }
+}
+
+#[derive(Default, Deserialize)]
+struct DownloadQuery {
+    remove: Option<u8>,
 }
 
 #[derive(Deserialize)]

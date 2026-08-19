@@ -277,6 +277,7 @@ struct DownloadStreamState {
 
 struct DownloadGuard {
     manager: FileTransferManager,
+    outbox_id: Uuid,
     session_id: Uuid,
     name: String,
     sha256: Option<String>,
@@ -284,6 +285,7 @@ struct DownloadGuard {
     transferred: u64,
     started: Instant,
     completed: bool,
+    remove_after_complete: bool,
 }
 
 impl FileTransferManager {
@@ -729,6 +731,7 @@ impl FileTransferManager {
         id: Uuid,
         session_id: Uuid,
         range_header: Option<&str>,
+        remove_after_complete: bool,
     ) -> Result<DownloadSource, FileTransferError> {
         self.ensure_enabled()?;
         self.ensure_session(&session_id)?;
@@ -764,6 +767,9 @@ impl FileTransferManager {
                 record.public.sha256.clone(),
                 "completed",
             );
+            if remove_after_complete {
+                self.remove_outgoing(id);
+            }
             return Ok(DownloadSource {
                 body,
                 file: record.public,
@@ -784,8 +790,10 @@ impl FileTransferManager {
             .await
             .map_err(|error| FileTransferError::new(FileTransferErrorKind::Io, error.to_string()))?;
         self.inner.active_downloads.fetch_add(1, Ordering::Relaxed);
+        let remove_after_complete = remove_after_complete && range.start == 0 && range.end == record.public.size - 1;
         let guard = DownloadGuard {
             manager: self.clone(),
+            outbox_id: id,
             session_id,
             name: record.public.name.clone(),
             sha256: record.public.sha256.clone(),
@@ -793,6 +801,7 @@ impl FileTransferManager {
             transferred: 0,
             started: Instant::now(),
             completed: false,
+            remove_after_complete,
         };
         let state = DownloadStreamState {
             file,
@@ -1004,6 +1013,9 @@ impl DownloadGuard {
             self.sha256.clone(),
             "completed",
         );
+        if self.remove_after_complete {
+            self.manager.remove_outgoing(self.outbox_id);
+        }
     }
 }
 
@@ -1020,6 +1032,9 @@ impl Drop for DownloadGuard {
             };
             if status == "completed" {
                 self.manager.inner.downloads_completed.fetch_add(1, Ordering::Relaxed);
+                if self.remove_after_complete {
+                    self.manager.remove_outgoing(self.outbox_id);
+                }
             } else {
                 self.manager.inner.failed_transfers.fetch_add(1, Ordering::Relaxed);
             }
@@ -1439,6 +1454,56 @@ mod tests {
         assert!(!json.contains(temp.path().to_string_lossy().as_ref()));
         let diagnostic_json = serde_json::to_string(&manager.snapshot()).unwrap();
         assert!(!diagnostic_json.contains(temp.path().to_string_lossy().as_ref()));
+    }
+
+    #[tokio::test]
+    async fn completed_full_downloads_auto_clear_independently_but_partial_or_interrupted_downloads_remain() {
+        let temp = TempDir::new().unwrap();
+        let (manager, _session, session_id) = manager(&temp);
+        let first_path = temp.path().join("first.bin");
+        let second_path = temp.path().join("second.bin");
+        let partial_path = temp.path().join("partial.bin");
+        let interrupted_path = temp.path().join("interrupted.bin");
+        std::fs::write(&first_path, b"first complete payload").unwrap();
+        std::fs::write(&second_path, b"second complete payload").unwrap();
+        std::fs::write(&partial_path, b"partial payload").unwrap();
+        std::fs::write(&interrupted_path, b"interrupted payload").unwrap();
+        let first = manager.queue_outgoing(first_path).unwrap();
+        let second = manager.queue_outgoing(second_path).unwrap();
+        let partial = manager.queue_outgoing(partial_path).unwrap();
+        let interrupted = manager.queue_outgoing(interrupted_path).unwrap();
+
+        let first_source = manager.open_download(first.id, session_id, None, true).await.unwrap();
+        let second_source = manager.open_download(second.id, session_id, None, true).await.unwrap();
+        let (first_bytes, second_bytes) = tokio::join!(
+            axum::body::to_bytes(first_source.body, usize::MAX),
+            axum::body::to_bytes(second_source.body, usize::MAX),
+        );
+        assert_eq!(&first_bytes.unwrap()[..], b"first complete payload");
+        assert_eq!(&second_bytes.unwrap()[..], b"second complete payload");
+
+        let partial_source = manager
+            .open_download(partial.id, session_id, Some("bytes=0-2"), true)
+            .await
+            .unwrap();
+        assert_eq!(
+            &axum::body::to_bytes(partial_source.body, usize::MAX).await.unwrap()[..],
+            b"par"
+        );
+        let interrupted_source = manager
+            .open_download(interrupted.id, session_id, None, true)
+            .await
+            .unwrap();
+        drop(interrupted_source.body);
+
+        let snapshot = manager.snapshot();
+        let remaining: Vec<_> = snapshot.outbox.iter().map(|file| file.id).collect();
+        assert!(!remaining.contains(&first.id));
+        assert!(!remaining.contains(&second.id));
+        assert!(remaining.contains(&partial.id));
+        assert!(remaining.contains(&interrupted.id));
+        assert_eq!(snapshot.stats.downloads_completed, 3);
+        assert_eq!(snapshot.stats.failed_transfers, 1);
     }
 
     #[tokio::test]

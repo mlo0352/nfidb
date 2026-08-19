@@ -39,7 +39,9 @@ if (-not $resolvedRoot.StartsWith($tempBase, [StringComparison]::OrdinalIgnoreCa
 $inbox = Join-Path $resolvedRoot 'inbox'
 $sessionInfo = Join-Path $resolvedRoot 'session.json'
 $outgoingPath = Join-Path $resolvedRoot 'from-windows.bin'
+$outgoingPathTwo = Join-Path $resolvedRoot 'from-windows-2.bin'
 $fullDownload = Join-Path $resolvedRoot 'downloaded.bin'
+$fullDownloadTwo = Join-Path $resolvedRoot 'downloaded-2.bin'
 $rangeDownload = Join-Path $resolvedRoot 'range.bin'
 $hostProcess = $null
 $stopwatch = [Diagnostics.Stopwatch]::StartNew()
@@ -51,10 +53,15 @@ try {
         $outgoingBytes[$index] = ($index * 31 + 17) % 251
     }
     [IO.File]::WriteAllBytes($outgoingPath, $outgoingBytes)
+    $outgoingBytesTwo = [byte[]]::new(2 * 1024 * 1024 + 83)
+    for ($index = 0; $index -lt $outgoingBytesTwo.Length; $index++) {
+        $outgoingBytesTwo[$index] = ($index * 23 + 29) % 247
+    }
+    [IO.File]::WriteAllBytes($outgoingPathTwo, $outgoingBytesTwo)
 
     $hostProcess = Start-Process -FilePath $hostExecutable -ArgumentList @(
         '--headless', '--capture=none', '--input-sink=log', '--no-mdns', '--run-seconds=90',
-        "--session-info=$sessionInfo", "--file-inbox=$inbox", "--queue-file=$outgoingPath"
+        "--session-info=$sessionInfo", "--file-inbox=$inbox", "--queue-file=$outgoingPath", "--queue-file=$outgoingPathTwo"
     ) -PassThru -WindowStyle Hidden
 
     $deadline = [DateTime]::UtcNow.AddSeconds(20)
@@ -130,21 +137,41 @@ try {
 
     $listing = Invoke-RestMethod -Uri "$origin/api/files" -WebSession $web
     $outgoing = $listing.outbox | Where-Object name -eq 'from-windows.bin' | Select-Object -First 1
+    $outgoingTwo = $listing.outbox | Where-Object name -eq 'from-windows-2.bin' | Select-Object -First 1
     if (-not $outgoing) { throw 'headless outbound file was not listed' }
-    $downloadStarted = [Diagnostics.Stopwatch]::StartNew()
-    $null = Invoke-WebRequest -Uri "$origin/api/files/outbox/$($outgoing.id)/download" -WebSession $web -OutFile $fullDownload
-    $downloadStarted.Stop()
-    if ((Get-FileHash -Algorithm SHA256 -LiteralPath $fullDownload).Hash -ne (Get-FileHash -Algorithm SHA256 -LiteralPath $outgoingPath).Hash) {
-        throw 'full ranged-capable download checksum mismatch'
-    }
-    $null = Invoke-WebRequest -Uri "$origin/api/files/outbox/$($outgoing.id)/download" -WebSession $web -Headers @{ Range = 'bytes=1024-2047' } -OutFile $rangeDownload
+    if (-not $outgoingTwo) { throw 'second headless outbound file was not listed' }
+    $null = Invoke-WebRequest -Uri "$origin/api/files/outbox/$($outgoing.id)/download?remove=1" -WebSession $web -Headers @{ Range = 'bytes=1024-2047' } -OutFile $rangeDownload
     $rangeBytes = [IO.File]::ReadAllBytes($rangeDownload)
     if ($rangeBytes.Length -ne 1024) { throw "range response was $($rangeBytes.Length) bytes instead of 1024" }
     for ($index = 0; $index -lt $rangeBytes.Length; $index++) {
         if ($rangeBytes[$index] -ne $outgoingBytes[$index + 1024]) { throw "range response differed at byte $index" }
     }
+    $afterRangeListing = Invoke-RestMethod -Uri "$origin/api/files" -WebSession $web
+    if (-not ($afterRangeListing.outbox | Where-Object id -eq $outgoing.id)) {
+        throw 'partial download incorrectly cleared its outbound queue item'
+    }
+
+    $downloadStarted = [Diagnostics.Stopwatch]::StartNew()
+    $null = Invoke-WebRequest -Uri "$origin/api/files/outbox/$($outgoing.id)/download?remove=1" -WebSession $web -Headers @{ Range = 'bytes=0-' } -OutFile $fullDownload
+    $null = Invoke-WebRequest -Uri "$origin/api/files/outbox/$($outgoingTwo.id)/download?remove=1" -WebSession $web -Headers @{ Range = 'bytes=0-' } -OutFile $fullDownloadTwo
+    $downloadStarted.Stop()
+    $downloadHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $fullDownload).Hash
+    $sourceDownloadHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $outgoingPath).Hash
+    if ($downloadHash -ne $sourceDownloadHash) {
+        $downloadLength = (Get-Item -LiteralPath $fullDownload).Length
+        throw "full ranged-capable download checksum mismatch: downloaded=$downloadLength/$downloadHash source=$($outgoingBytes.Length)/$sourceDownloadHash"
+    }
+    $downloadHashTwo = (Get-FileHash -Algorithm SHA256 -LiteralPath $fullDownloadTwo).Hash
+    $sourceDownloadHashTwo = (Get-FileHash -Algorithm SHA256 -LiteralPath $outgoingPathTwo).Hash
+    if ($downloadHashTwo -ne $sourceDownloadHashTwo) {
+        $downloadLengthTwo = (Get-Item -LiteralPath $fullDownloadTwo).Length
+        throw "second full download checksum mismatch: downloaded=$downloadLengthTwo/$downloadHashTwo source=$($outgoingBytesTwo.Length)/$sourceDownloadHashTwo"
+    }
 
     $finalListing = Invoke-RestMethod -Uri "$origin/api/files" -WebSession $web
+    if ($finalListing.outbox | Where-Object { $_.id -eq $outgoing.id -or $_.id -eq $outgoingTwo.id }) {
+        throw 'completed downloads remained in the outbound queue despite auto-clear'
+    }
     $stopwatch.Stop()
     $report = [ordered]@{
         passed = $true
@@ -153,10 +180,12 @@ try {
         upload_sha256 = $sourceUploadHash
         upload_seconds = [Math]::Round($uploadStarted.Elapsed.TotalSeconds, 3)
         upload_mbps = [Math]::Round($uploadBytes.Length * 8 / [Math]::Max($uploadStarted.Elapsed.TotalSeconds, 0.001) / 1000000, 3)
-        download_bytes = $outgoingBytes.Length
+        download_files = 2
+        download_bytes = $outgoingBytes.Length + $outgoingBytesTwo.Length
         download_seconds = [Math]::Round($downloadStarted.Elapsed.TotalSeconds, 3)
-        download_mbps = [Math]::Round($outgoingBytes.Length * 8 / [Math]::Max($downloadStarted.Elapsed.TotalSeconds, 0.001) / 1000000, 3)
+        download_mbps = [Math]::Round(($outgoingBytes.Length + $outgoingBytesTwo.Length) * 8 / [Math]::Max($downloadStarted.Elapsed.TotalSeconds, 0.001) / 1000000, 3)
         range_bytes = $rangeBytes.Length
+        outbox_items_after_auto_clear = $finalListing.outbox.Count
         server_stats = $finalListing.stats
         total_seconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
     }

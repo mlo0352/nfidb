@@ -108,7 +108,7 @@ The client computes the displayed video rectangle for fit, fill, or 1:1 mode, th
 - `PUT /api/files/uploads/{id}`: accepts one raw chunk with `x-nfidb-offset` and `x-nfidb-chunk-sha256`; stale or corrupt chunks return `409` and `expected_offset`.
 - `POST /api/files/uploads/{id}/complete`: requires the declared size, computes the complete SHA-256, and atomically publishes the file in the Inbox. Repeating completion after a lost response returns the same result without creating a duplicate.
 - `DELETE /api/files/uploads/{id}`: cancels the upload and removes its owned partial file.
-- `GET /api/files/outbox/{id}/download`: streams an explicitly queued Windows file with attachment headers and single-range support.
+- `GET /api/files/outbox/{id}/download`: streams an explicitly queued Windows file with attachment headers and single-range support. `?remove=1` removes that Outbox ID only after a response covering the full file completes; partial or interrupted responses retain it.
 - `DELETE /api/files/outbox/{id}`: removes the queue entry without deleting the Windows source file.
 - `POST /api/disconnect`: closes the peer, resets native input, and invalidates the token.
 

@@ -497,10 +497,10 @@ impl HostApp {
                         )
                     });
                 }
-                if ui.button("Open Inbox").clicked() {
+                if ui.button("Open received files folder").clicked() {
                     self.last_message = Some(match open_in_explorer(&snapshot.inbox_directory) {
-                        Ok(()) => "Opened the NFiDB Inbox".to_owned(),
-                        Err(error) => format!("Could not open Inbox: {error}"),
+                        Ok(()) => "Opened the folder where iPad files are saved".to_owned(),
+                        Err(error) => format!("Could not open the received files folder: {error}"),
                     });
                 }
                 if ui.button("Clear iPad queue").clicked() {
@@ -590,7 +590,7 @@ impl HostApp {
                         ui,
                         "Current rate",
                         &format!(
-                            "↑ {:.2} Mbps · ↓ {:.2} Mbps",
+                            "UP {:.2} Mbps · DOWN {:.2} Mbps",
                             snapshot.stats.upload_mbps, snapshot.stats.download_mbps
                         ),
                     );
@@ -674,8 +674,8 @@ impl HostApp {
                 ui.label(egui::RichText::new("RECENT").size(9.0).strong().color(muted()));
                 for transfer in snapshot.recent.iter().take(8) {
                     let direction = match transfer.direction {
-                        nfidb_transport::TransferDirection::IpadToWindows => "iPad → Windows",
-                        nfidb_transport::TransferDirection::WindowsToIpad => "Windows → iPad",
+                        nfidb_transport::TransferDirection::IpadToWindows => "iPad to Windows",
+                        nfidb_transport::TransferDirection::WindowsToIpad => "Windows to iPad",
                     };
                     ui.label(
                         egui::RichText::new(format!(
