@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { outgoingDownloadUrl, sha256Hex, uploadFile } from "./file-transfer";
+import {
+  loadAutoClearDownloads,
+  outgoingDownloadUrl,
+  saveAutoClearDownloads,
+  sha256Hex,
+  uploadFile,
+} from "./file-transfer";
 
 describe("file transfer", () => {
   it("hashes chunks without requiring secure-context Web Crypto", () => {
@@ -13,6 +19,20 @@ describe("file transfer", () => {
 
   it("encodes queued identifiers in download URLs", () => {
     expect(outgoingDownloadUrl("id with spaces")).toBe("/api/files/outbox/id%20with%20spaces/download");
+    expect(outgoingDownloadUrl("id with spaces", true)).toBe("/api/files/outbox/id%20with%20spaces/download?remove=1");
+  });
+
+  it("defaults auto-clear on and persists an explicit choice", () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+    };
+    expect(loadAutoClearDownloads(storage)).toBe(true);
+    saveAutoClearDownloads(false, storage);
+    expect(loadAutoClearDownloads(storage)).toBe(false);
+    saveAutoClearDownloads(true, storage);
+    expect(loadAutoClearDownloads(storage)).toBe(true);
   });
 
   it("uploads sequential verified chunks and reports progress", async () => {

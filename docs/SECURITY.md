@@ -12,7 +12,7 @@ NFiDB is designed for a trusted home or studio LAN. It is not hardened for publi
 - Only one active WebRTC peer is retained. Disconnect/peer failure releases all synthetic contacts.
 - Resetting the PIN/QR invalidates the active token, closes the WebRTC peer and authenticated WebSocket, and releases all synthetic contacts.
 - File APIs require the same paired HttpOnly cookie; mutation requests enforce a matching origin when browsers send one. Credential reset/disconnect removes unfinished session uploads and streamed downloads recheck session identity between blocks.
-- Windows exposes only canonical regular files selected into a temporary Outbox. Its paths are never sent to Safari, and removing an item cannot delete the source file.
+- Windows exposes only canonical regular files selected into a temporary Outbox. Its paths are never sent to Safari, and manual or completed-download queue cleanup cannot delete the source file. Automatic cleanup requires a paired request and a successfully completed whole-file response.
 - iPad uploads accept only sanitized leaf names, are size/chunk bounded, verify each chunk's SHA-256, stage under NFiDB-owned configuration storage, use collision-free Inbox names, and clean abandoned NFiDB `.part` files at startup.
 - The app has no account, telemetry, analytics, database, STUN/TURN service, or cloud relay.
 - Static responses set `nosniff` and a no-referrer policy.

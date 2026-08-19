@@ -1,5 +1,23 @@
 # Engineering devlog
 
+## 2026-08-19 — Download queue completion and arrival feedback
+
+### Goal
+
+Make Windows-to-iPad delivery visible without leaving the Files panel open, prevent completed downloads from lingering in the Outbox, and keep multi-file behavior safe under concurrent streams.
+
+### Implementation
+
+The paired page now polls the small authenticated file listing throughout the session, announces newly queued IDs, and badges the Files control. Safari download URLs opt into cleanup through a persisted default-on preference. The host owns the completion decision: only a stream covering the entire file can remove its matching Outbox ID after all bytes are produced. Partial ranges, canceled clients, session changes, and read failures retain the source queue entry. Download all starts each normal Safari download independently. Transfer labels use plain text to avoid missing-glyph boxes, and the Windows Files page exposes its received-files folder directly.
+
+### Evidence
+
+**PASS IN AUTOMATION; PHYSICAL SAFARI BATCH PROMPT PENDING.** Concurrent manager tests consume two complete bodies and prove each queue ID disappears, then prove partial and interrupted bodies remain. Browser tests cover default and persisted preference state, cleanup URLs, two-file arrival notice/badge, batch control, and glyph-safe history. The packaged-release smoke transferred two outbound files totaling 7,340,252 bytes with exact hashes, retained a 1,024-byte partial response, then completed and auto-cleared both IDs with zero failures.
+
+### Decision
+
+Ship as v0.5.1. Keep the cleanup signal opt-in at the HTTP URL and default it on in the UI; never infer completion from a browser click or remove a source queue entry before the host finishes its body.
+
 ## 2026-08-19 — Paired bidirectional file transfer
 
 ### Goal

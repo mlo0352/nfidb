@@ -80,6 +80,9 @@ export interface UploadCallbacks {
 }
 
 type FetchLike = typeof fetch;
+type PreferenceStorage = Pick<Storage, "getItem" | "setItem">;
+
+const AUTO_CLEAR_DOWNLOADS_KEY = "nfidb-auto-clear-downloads";
 
 export class FileApiError extends Error {
   readonly status: number;
@@ -107,8 +110,26 @@ export async function removeOutgoingFile(id: string, fetcher: FetchLike = fetch)
   }
 }
 
-export function outgoingDownloadUrl(id: string): string {
-  return `/api/files/outbox/${encodeURIComponent(id)}/download`;
+export function outgoingDownloadUrl(id: string, removeAfterDownload = false): string {
+  const path = `/api/files/outbox/${encodeURIComponent(id)}/download`;
+  return removeAfterDownload ? `${path}?remove=1` : path;
+}
+
+export function loadAutoClearDownloads(storage?: PreferenceStorage): boolean {
+  try {
+    const saved = (storage ?? window.localStorage).getItem(AUTO_CLEAR_DOWNLOADS_KEY);
+    return saved === null ? true : saved !== "false";
+  } catch {
+    return true;
+  }
+}
+
+export function saveAutoClearDownloads(enabled: boolean, storage?: PreferenceStorage): void {
+  try {
+    (storage ?? window.localStorage).setItem(AUTO_CLEAR_DOWNLOADS_KEY, String(enabled));
+  } catch {
+    // Private browsing and managed-device policies can disable local storage.
+  }
 }
 
 export async function uploadFile(
