@@ -14,7 +14,7 @@ From a clean Windows checkout with the documented toolchain:
 .\scripts\portable-smoke.ps1
 ```
 
-The build script creates `build\packages\NFiDB-windows-x64.zip` and a sibling `.sha256` file. It contains the GUI host, pointer sink, README, licenses, third-party notice, and operating documentation. An installer is explicitly deferred; the ZIP is portable and unsigned.
+The build script creates `build\packages\NFiDB-windows-x64.zip` and a sibling `.sha256` file. It contains the GUI host, pointer sink, README, changelog, licenses, third-party notice, and operating documentation. An installer is explicitly deferred; the ZIP is portable and unsigned.
 
 ## GitHub automation
 

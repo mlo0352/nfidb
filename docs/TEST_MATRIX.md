@@ -1,6 +1,6 @@
 # Test matrix
 
-Last updated: 2026-08-18. Development host: Windows 11 Pro x64 build 22631, Intel Core i9-13900K, Rust 1.97.1 (`x86_64-pc-windows-msvc`), Node 22.22.3, npm 10.9.8, Microsoft Edge headless. Profile/soak results are release `0.2.0`; startup, diagnostics, credential rotation, navigation, browser-upgrade, and physical regressions are the `0.3.1`–`0.3.4` candidates. Remote-input rows and the five-second comparison runs are the `0.4.0` feature candidate.
+Last updated: 2026-08-18. Development host: Windows 11 Pro x64 build 22631, Intel Core i9-13900K, Rust 1.97.1 (`x86_64-pc-windows-msvc`), Node 22.22.3, npm 10.9.8, Microsoft Edge headless. Profile/soak results are release `0.2.0`; startup, diagnostics, credential rotation, navigation, browser-upgrade, and physical regressions are the `0.3.1`–`0.3.4` candidates. Remote-input rows and the five-second comparison runs are the `0.4.0` alpha.
 
 | Layer | Test | Result | Evidence |
 | --- | --- | --- | --- |
@@ -38,8 +38,8 @@ Last updated: 2026-08-18. Development host: Windows 11 Pro x64 build 22631, Inte
 | Workspace | fmt, check all targets, Clippy `-D warnings`, all Rust tests | PASS | local Windows build and GitHub Actions |
 | iPad Safari video/touch | Real LAN pairing, touch transport, initial video | PASS | Cache-safe v0.3.2 client identified itself, recorded at 1 Hz, and started physical video in 71 ms after rejecting one pre-IDR delta |
 | iPad Safari Pencil | Real pressure/tilt/coalescing and primary-tip semantics | IN PROGRESS | 10,358 real samples carried pressure/tilt with zero packet gaps; barrel mapping and the observed fit-edge lifecycle defect are fixed; Paint/Rebelle behavior still needs user confirmation on v0.3.3 |
-| iPad trackpad/keyboard | Pointer/buttons/wheel, hardware shortcuts, software keyboard/IME, reconnect reset | NOT RUN | End-to-end packets and Windows mappings pass automation; physical iPad accessories required |
-| iPad three-finger gestures | next/previous app, Task View, minimize, Pencil suppression | NOT RUN | Deterministic recognizer and live semantic-command transport pass; physical iPad gesture arbitration required |
+| iPad trackpad/keyboard | Pointer/buttons/wheel, hardware shortcuts, software keyboard/IME, reconnect reset | PASS | Physical iPad: responsive pointer and typing; Caps Lock, Shift, shifted symbols, Tab, Option+Tab, and minimize controls passed; Ctrl+Option+Delete reached the documented Windows secure-attention boundary |
+| iPad three-finger gestures | next/previous app, Task View, minimize, Pencil suppression | PASS | Physical iPad app switching and minimize passed; deterministic recognizer covers all four directions and Pencil arbitration |
 | Krita | pressure/tilt/undo/reconnect | NOT RUN | Application/hardware unavailable |
 | Rebelle | pressure/tilt/undo/reconnect | NOT RUN | Application/hardware unavailable |
 | Photoshop | pressure/tilt/undo/reconnect | NOT RUN | Application/hardware unavailable |

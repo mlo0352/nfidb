@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="A concise guide to NFiDB pairing, Apple Pencil, iPad mouse and keyboard control, gestures, video controls, and troubleshooting." />
+    <meta name="theme-color" content="#101514" />
+    <title>NFiDB Help</title>
+    <link rel="icon" href="favicon.svg" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <nav>
+      <a class="brand" href="index.html" aria-label="NFiDB home"><b>NFi<span>DB</span></b><small>No Frills iPad Drawing Bridge</small></a>
+      <div class="nav-links"><a class="desktop-link" href="index.html#how">How it works</a><a href="download.html">Download</a><a href="help.html" aria-current="page">Help</a><a href="about.html">About</a><a class="desktop-link" href="https://github.com/mlo0352/nfidb">Source</a><a class="support-link" href="https://ko-fi.com/arealmiown">Donate</a></div>
+    </nav>
+
+    <main>
+      <section class="page-hero help-hero">
+        <p class="eyebrow"><i></i> v0.4.0 Alpha guide</p>
+        <h1>One surface.<br /><em>Four ways to work.</em></h1>
+        <p class="lede">Draw with Apple Pencil, navigate with your fingers, use an iPad trackpad or mouse, and type into Windows—all from the same local Safari session.</p>
+        <div class="help-jump" aria-label="Help topics">
+          <a href="#start">Start</a><a href="#input">Input</a><a href="#gestures">Gestures</a><a href="#controls">Controls</a><a href="#fixes">Troubleshooting</a>
+        </div>
+      </section>
+
+      <section class="help-summary" aria-label="Available input methods">
+        <article><span>01</span><h2>Pencil</h2><p>Native Windows pen input with pressure and tilt.</p></article>
+        <article><span>02</span><h2>Fingers</h2><p>Windows touch or three-finger app controls.</p></article>
+        <article><span>03</span><h2>Pointer</h2><p>Trackpad or mouse movement, clicks, and scrolling.</p></article>
+        <article><span>04</span><h2>Keyboard</h2><p>Shortcuts, held keys, symbols, and Unicode text.</p></article>
+      </section>
+
+      <section id="start" class="help-section split-help">
+        <div class="section-copy">
+          <p class="eyebrow">Start a session</p>
+          <h2>Windows first.<br />Safari second.</h2>
+          <p>The drawing page comes from your PC. GitHub Pages is only this documentation site.</p>
+        </div>
+        <ol>
+          <li><b>1</b><div><strong>Run <code>nfidb.exe</code></strong><span>Choose a monitor and keep the desktop window open.</span></div></li>
+          <li><b>2</b><div><strong>Open the local address</strong><span>Use the QR code, <code>.local</code> address, or numeric LAN address shown on Windows.</span></div></li>
+          <li><b>3</b><div><strong>Pair</strong><span>Scan the QR code or type the six-digit PIN. Six digits are checked automatically.</span></div></li>
+          <li><b>4</b><div><strong>Work</strong><span>Bring your Windows drawing app forward and use the iPad surface.</span></div></li>
+        </ol>
+      </section>
+
+      <section id="input" class="help-section">
+        <div class="section-heading">
+          <div><p class="eyebrow">Pencil, pointer, keyboard</p><h2>Use the input that fits the moment.</h2></div>
+          <p>Pencil remains a pen. A connected iPad trackpad or mouse remains a mouse. Keyboard input stays separate from both.</p>
+        </div>
+        <div class="help-cards">
+          <article>
+            <span class="help-number">01</span>
+            <h3>Apple Pencil</h3>
+            <p>Draw directly into the selected Windows monitor. NFiDB forwards the primary tip, pressure, tilt, and coalesced samples as native Windows pen input.</p>
+            <small>In the drawing app, select its Windows Ink or pointer-input path when available.</small>
+          </article>
+          <article>
+            <span class="help-number">02</span>
+            <h3>Trackpad or mouse</h3>
+            <p>Move the Windows cursor, click, secondary-click, drag, and scroll horizontally or vertically. Pointer coordinates follow the video fit mode.</p>
+            <small>Keep Safari in the foreground so iPadOS delivers pointer events to the page.</small>
+          </article>
+          <article>
+            <span class="help-number">03</span>
+            <h3>Hardware keyboard</h3>
+            <p>With the Keyboard panel closed, key-down and key-up events go straight to Windows. Held modifiers and drawing-app shortcuts work normally.</p>
+            <small>Open Keyboard when you want layout-independent text or the on-screen special keys.</small>
+          </article>
+        </div>
+
+        <div class="key-reference" aria-label="Keyboard mappings">
+          <div><kbd>Option</kbd><span>Alt</span></div>
+          <div><kbd>Control</kbd><span>Ctrl</span></div>
+          <div><kbd>Shift</kbd><span>Shift</span></div>
+          <div><kbd>Return</kbd><span>Enter</span></div>
+          <div><kbd>Delete</kbd><span>Backspace</span></div>
+          <div><kbd>Option</kbd> + <kbd>Tab</kbd><span>Switch app</span></div>
+        </div>
+        <p class="help-note"><strong>Ctrl+Alt+Delete:</strong> Control+Option+Delete is sent, but Windows rejects synthetic input on the protected secure-attention screen. A portable user-mode app cannot override that boundary.</p>
+      </section>
+
+      <section id="gestures" class="help-section split-help">
+        <div class="section-copy">
+          <p class="eyebrow">Three fingers</p>
+          <h2>Move around Windows without leaving the canvas.</h2>
+          <p>Set <strong>Touch off</strong> and <strong>Gestures on</strong>. Pencil contact temporarily suppresses finger shortcuts.</p>
+        </div>
+        <div class="gesture-reference">
+          <div><b>→</b><span><strong>Next app</strong><small>Alt+Tab</small></span></div>
+          <div><b>←</b><span><strong>Previous app</strong><small>Alt+Shift+Tab</small></span></div>
+          <div><b>↑</b><span><strong>Task View</strong><small>Win+Tab</small></span></div>
+          <div><b>↓</b><span><strong>Minimize</strong><small>Foreground window</small></span></div>
+        </div>
+      </section>
+
+      <section id="controls" class="help-section">
+        <div class="section-heading">
+          <div><p class="eyebrow">The iPad toolbar</p><h2>Everything in the top strip.</h2></div>
+          <p>The toolbar hides to leave the canvas clear. Tap the small tab at the top edge to bring it back.</p>
+        </div>
+        <div class="control-reference">
+          <div><strong>Fit</strong><span>Shows the complete monitor with letterboxing when needed.</span></div>
+          <div><strong>Fill</strong><span>Fills the iPad screen and crops the monitor edges.</span></div>
+          <div><strong>1:1</strong><span>Centers the encoded video at its native pixel size.</span></div>
+          <div><strong>Touch</strong><span>Forwards finger contact as native Windows touch. This pauses three-finger gestures.</span></div>
+          <div><strong>Gestures</strong><span>Enables or disables the three-finger Windows commands.</span></div>
+          <div><strong>Keyboard</strong><span>Opens text entry plus Esc, Tab, Backspace, Enter, app, Task View, and minimize buttons.</span></div>
+          <div><strong>Stats</strong><span>Shows video, bandwidth, latency, loss, frame timing, pressure, tilt, and input integrity.</span></div>
+          <div><strong>Fullscreen</strong><span>Requests browser fullscreen. Add to Home Screen gives Safari the least chrome.</span></div>
+          <div><strong>×</strong><span>Disconnects, releases held input, and returns to pairing.</span></div>
+        </div>
+      </section>
+
+      <section id="fixes" class="help-section split-help troubleshooting">
+        <div class="section-copy">
+          <p class="eyebrow">Quick fixes</p>
+          <h2>Most problems are pairing or network state.</h2>
+          <p>NFiDB does not use a cloud relay. Both devices must be able to reach each other on the same trusted LAN.</p>
+        </div>
+        <div class="fix-list">
+          <details open><summary>No page or connection</summary><p>Use a normal private Wi-Fi network, not guest Wi-Fi. Allow NFiDB through Windows Firewall on Private networks only.</p></details>
+          <details><summary>Expired PIN or stale QR error</summary><p>Open <strong>Session</strong> on Windows and choose <strong>Reset PIN + QR</strong>, then reload Safari and use the new code.</p></details>
+          <details><summary>Connected but no picture</summary><p>NFiDB now requests fresh video keyframes until Safari presents a frame. Give it a few seconds; if it still does not appear, reload the page and pair again.</p></details>
+          <details><summary>No pressure in a drawing app</summary><p>Enable the app's Windows Ink/pointer input option. Run <code>pointer-sink.exe --self-test</code> to verify the native pen path independently.</p></details>
+          <details><summary>Need measurements</summary><p>Open <strong>Stats</strong> on the iPad or <strong>Diagnostics</strong> on Windows. Reports stay local unless you export them.</p></details>
+        </div>
+      </section>
+
+      <section class="help-cta">
+        <p class="eyebrow">Trusted LAN only · no account · no cloud relay</p>
+        <h2>Ready to draw?</h2>
+        <div class="actions"><a class="primary" href="download.html">Download v0.4.0 Alpha</a><a class="secondary" href="https://github.com/mlo0352/nfidb/blob/main/docs/TEST_MATRIX.md">Read the test matrix</a></div>
+      </section>
+    </main>
+
+    <footer><b>NFiDB</b><span>MIT License · Free and open source.</span><div class="footer-links"><a href="download.html">Download</a><a href="about.html">About</a><a href="https://github.com/mlo0352/nfidb">GitHub</a></div></footer>
+  </body>
+</html>

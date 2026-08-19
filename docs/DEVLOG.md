@@ -1,5 +1,23 @@
 # Engineering devlog
 
+## 2026-08-18 — Physical iPad remote-control acceptance
+
+### Goal
+
+Confirm that the new mouse, keyboard, and three-finger controls survive real iPadOS/Safari event handling rather than only browser automation.
+
+### Experiment
+
+Paired a physical iPad to the release host and exercised trackpad/mouse movement, typing, Caps Lock, Shift, numbers and shifted symbols, Tab, Option+Tab, three-finger app switching, and three-finger minimize.
+
+### Result
+
+**PASS.** Pointer control and typing were responsive; keyboard state and punctuation arrived correctly; Option+Tab switched Windows apps; mouse, minimize, and swipe app switching worked. Control+Option+Delete did not open the secure-attention screen, matching the documented Windows restriction on synthetic Ctrl+Alt+Delete from an unsigned user-mode process.
+
+### Decision
+
+Promote v0.4.0 as a solid alpha, mark physical iPad trackpad/keyboard and gesture rows passed, keep the secure-attention limitation explicit, and retain the physical per-art-app Pencil matrix as a stable-release gate.
+
 ## 2026-08-18 — Browser first-frame recovery
 
 ### Goal

@@ -2,7 +2,7 @@
 
 **No Frills iPad Drawing Bridge** turns an iPad and Apple Pencil into a local-network pen display for a Windows 11 PC. Extract one portable Windows app, open the address it shows in Safari, enter the six-digit PIN, and draw. There is no iPad app, account, subscription, cloud relay, or internet service involved in a session.
 
-> NFiDB is an early MVP. Its protocol, native pen injection, Windows capture, browser pairing, and WebRTC video path have automated coverage. Physical iPad/Apple Pencil and individual art-app compatibility still need field validation; see [the test matrix](docs/TEST_MATRIX.md) before relying on it for production work.
+> NFiDB 0.4.0 is a solid alpha. Its protocol, native input, Windows capture, browser pairing, remote-control, and WebRTC paths have automated coverage, and the iPad mouse, keyboard, and three-finger controls have passed a physical-device check. Apple Pencil behavior in individual art apps still needs field validation; see [the test matrix](docs/TEST_MATRIX.md) before relying on it for production work.
 
 ## What works
 
@@ -97,6 +97,7 @@ The host stores user settings in `%APPDATA%\NFiDB\config.toml`. Full flags are a
 
 ## Documentation
 
+- [Changelog](CHANGELOG.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Pointer and signaling protocol](docs/PROTOCOL.md)
 - [Security model](docs/SECURITY.md)
