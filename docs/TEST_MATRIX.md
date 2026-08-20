@@ -12,6 +12,7 @@ Last updated: 2026-08-19. Development host: Windows 11 Pro x64 build 22631, Inte
 | Capability matrix | Host/browser H.264-only, H.264+HEVC, all-codec common-mode calculation | PASS | Core matrix tests |
 | Auto selection | Unsupported AV1, failed HEVC FPS gate, lower-bandwidth healthy HEVC, hardware fallback, stale encoder identity | PASS | Core and capture unit tests |
 | Video setting synchronization | Host/iPad revision update, stale revision rejection, invalid remote values | PASS | Authenticated control tests and live Auto E2E |
+| Input setting synchronization | iPad Touch/Gesture edits update the host-authoritative native injector gate; stale revisions reject | SOURCE VERIFIED | Browser control test and server revision test; native build/user validation pending |
 | PIN entry | Six digits auto-submit once; paste is normalized; partial entry stays local | PASS | PIN normalization unit tests plus live-host E2E with no Connect click |
 | Browser coalescing | Use coalesced samples exactly once and in chronological order | PASS | Exact binary packet test with pressure, tilt, twist, coordinates, and sequences |
 | Browser lifecycle | Preserve exactly one primary Down/Up across fit letterboxes and unusual coalesced/duplicate events | PASS | Deterministic edge-entry, edge-exit, duplicate-Down, and coalesced-lifecycle tests |
@@ -20,7 +21,7 @@ Last updated: 2026-08-19. Development host: Windows 11 Pro x64 build 22631, Inte
 | Native input sustained | User32 injection, transient queue backpressure, and reverse-chronological history recovery | PASS | Exact packaged v0.3.3 primary-tip run: 14,400/14,400 samples over 59.83 s at 240.66 Hz; 5,375 coalesced samples recovered; zero missing/excess/value/barrel error; full pressure and ±60° tilt ranges; 50 ms bounded `ERROR_NOT_READY` retry |
 | Browser remote input | Option+Tab ordering, Delete/Backspace and Ctrl+Option+Delete distinction, Unicode text, normalized wheel, three-finger command, mouse hover/click | PASS | deterministic browser event tests |
 | Native remote mapping | DOM key rows/modifiers/navigation/F1–F24/numpad, virtual-desktop mouse buttons, fractional wheel accumulation, held-state reset construction | PASS | Rust host unit tests |
-| Browser build | strict TypeScript + Safari 16.4 Vite target | PASS | 32 Vitest tests across 7 files; typecheck and production build |
+| Browser build | strict TypeScript + Safari 16.4 Vite target | PASS | 35 Vitest tests across 7 files; typecheck and production build |
 | Hardware encoder discovery | Enumerated candidate is activated, initialized, and must return encoded bytes before use | PASS | NVIDIA H.264/HEVC/AV1 MFT functional probes; Microsoft H264 MFT remains initializeable only |
 | Host codec matrix | Four modes × four geometries × three deterministic workloads | PASS | 48/48 rows completed in optimized mode; JSON/CSV/Markdown exports |
 | Live codec switching | H.264 HW → AV1 HW → H.264 SW → Auto while capture stays alive | PASS | Edge Quick Auto E2E passed in 18.1 s; capture advanced throughout; authenticated session retained |

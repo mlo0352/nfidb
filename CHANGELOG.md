@@ -2,6 +2,18 @@
 
 NFiDB is pre-release software. Releases remain GitHub prereleases until the physical drawing-app/multi-codec matrix, longer stability run, and broader hardware coverage are complete.
 
+## Unreleased
+
+### Fixed
+
+- The iPad Touch toggle now changes the host's real native-touch injector gate through an authenticated, revision-checked control instead of changing only a browser flag.
+- Drawing near the remote screen's top edge no longer reopens the controls. The toolbar opens only from the compact bottom-left Controls button and can be closed immediately.
+
+### Added
+
+- Added branded Windows executable icon resources generated from the existing NFiDB mark.
+- Added a user-run validation handoff that records the tested commit/tree, commands, results, package checksum, and log for a later Codex resume turn.
+
 ## 0.6.0 — 2026-08-19 — Alpha
 
 ### Video pipeline

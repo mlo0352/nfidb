@@ -133,3 +133,71 @@ describe("outbound file notifications", () => {
     expect(root.querySelector("#filesContent")?.textContent).not.toContain("→");
   });
 });
+
+describe("surface controls", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    localStorage.clear();
+  });
+
+  it("keeps controls closed during drawing and opens them only from the explicit button", () => {
+    vi.useFakeTimers();
+    const root = document.createElement("div");
+    const app = new NfidbApp(root);
+    const internal = app as unknown as {
+      status: { mode: string };
+      renderSurface: () => void;
+      hideToolbar: () => void;
+      scheduleToolbarHide: () => void;
+    };
+    internal.status = { mode: "display-and-input" };
+    internal.renderSurface();
+    internal.hideToolbar();
+
+    root.querySelector("#interactionOverlay")?.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    internal.scheduleToolbarHide();
+    expect(root.querySelector("#toolbar")?.classList.contains("visible")).toBe(false);
+
+    root.querySelector<HTMLButtonElement>("#toolbarReveal")?.click();
+    expect(root.querySelector("#toolbar")?.classList.contains("visible")).toBe(true);
+    expect(root.querySelector("#toolbarReveal")?.getAttribute("aria-expanded")).toBe("true");
+
+    root.querySelector("#interactionOverlay")?.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    expect(root.querySelector("#toolbar")?.classList.contains("visible")).toBe(false);
+    expect(root.querySelector("#toolbarReveal")?.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("updates the host-authoritative touch gate before claiming touch is enabled", async () => {
+    const root = document.createElement("div");
+    const app = new NfidbApp(root);
+    const internal = app as unknown as {
+      status: { mode: string };
+      inputControl: { revision: number; settings: { touch_enabled: boolean; gestures_enabled: boolean } };
+      renderSurface: () => void;
+      updateInputSettings: (changes: { touch_enabled: boolean }) => Promise<void>;
+    };
+    internal.status = { mode: "display-and-input" };
+    internal.inputControl = { revision: 4, settings: { touch_enabled: false, gestures_enabled: true } };
+    internal.renderSurface();
+    const fetchMock = vi.fn(async (_path: string, init?: RequestInit) => {
+      expect(init?.method).toBe("PUT");
+      expect(JSON.parse(String(init?.body))).toEqual({
+        base_revision: 4,
+        settings: { touch_enabled: true, gestures_enabled: true },
+      });
+      return new Response(JSON.stringify({
+        revision: 5,
+        settings: { touch_enabled: true, gestures_enabled: true },
+      }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await internal.updateInputSettings({ touch_enabled: true });
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/input", expect.objectContaining({ method: "PUT" }));
+    expect(root.querySelector("#touchButton")?.getAttribute("aria-pressed")).toBe("true");
+    expect(root.querySelector("#touchButton")?.textContent).toBe("Touch on");
+    expect(root.querySelector<HTMLButtonElement>("#gestureButton")?.disabled).toBe(true);
+  });
+});

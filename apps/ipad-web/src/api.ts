@@ -20,6 +20,16 @@ export interface PairResult {
   method: "pin" | "qr";
 }
 
+export interface RemoteInputSettings {
+  touch_enabled: boolean;
+  gestures_enabled: boolean;
+}
+
+export interface InputControl {
+  revision: number;
+  settings: RemoteInputSettings;
+}
+
 export interface HostMetrics {
   connected: boolean;
   capture_fps: number;
@@ -243,6 +253,21 @@ export async function getMetrics(): Promise<HostMetrics> {
 
 export async function getDiagnosticSummary(): Promise<HostDiagnosticSummary> {
   return requestJson<HostDiagnosticSummary>("/api/diagnostics");
+}
+
+export async function getInputControl(): Promise<InputControl> {
+  return requestJson<InputControl>("/api/input");
+}
+
+export async function setInputSettings(
+  baseRevision: number,
+  settings: RemoteInputSettings,
+): Promise<InputControl> {
+  return requestJson<InputControl>("/api/input", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ base_revision: baseRevision, settings }),
+  });
 }
 
 export async function getVideoControl(): Promise<VideoControl> {

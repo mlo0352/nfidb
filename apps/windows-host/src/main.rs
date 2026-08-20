@@ -17,7 +17,7 @@ use nfidb_host_windows::{
     ProcessResourceMonitor, discover_video_encoders, enumerate_monitors, full_benchmark_cases, quick_benchmark_cases,
     run_host_benchmark_suite, set_per_monitor_dpi_awareness, write_benchmark_exports,
 };
-use nfidb_transport::{Distribution, FileTransferOptions, ServerHandle, ServerOptions};
+use nfidb_transport::{Distribution, FileTransferOptions, RemoteInputSettings, ServerHandle, ServerOptions};
 use qrcode::QrCode;
 use qrcode::types::Color;
 use tokio::sync::broadcast;
@@ -429,6 +429,7 @@ fn main() -> Result<()> {
                 },
                 last_message: None,
                 last_video_revision: 0,
+                last_input_revision: 0,
                 benchmark_rx: None,
                 benchmark_report: None,
                 benchmark_running_label: None,
@@ -462,6 +463,7 @@ struct HostApp {
     active_page: HostPage,
     last_message: Option<String>,
     last_video_revision: u64,
+    last_input_revision: u64,
     benchmark_rx: Option<Receiver<Result<(PathBuf, HostBenchmarkReport), String>>>,
     benchmark_report: Option<HostBenchmarkReport>,
     benchmark_running_label: Option<String>,
@@ -476,6 +478,13 @@ impl eframe::App for HostApp {
         if video_state.settings.revision != self.last_video_revision {
             self.last_video_revision = video_state.settings.revision;
             self.config.video = video_state.settings.settings;
+        }
+        let input_state = self.server.input_control_state();
+        if input_state.revision != self.last_input_revision {
+            self.last_input_revision = input_state.revision;
+            self.config.input.touch = input_state.settings.touch_enabled;
+            self.config.input.gestures = input_state.settings.gestures_enabled;
+            let _ = self.config.save();
         }
         let context = ui.ctx().clone();
         context.request_repaint_after(Duration::from_millis(500));
@@ -1942,6 +1951,13 @@ impl HostApp {
                 gestures_enabled: self.config.input.gestures,
                 strict_palm_rejection: self.config.input.strict_palm_rejection,
             });
+        }
+        match self.server.apply_input_settings_from_host(RemoteInputSettings {
+            touch_enabled: self.config.input.touch,
+            gestures_enabled: self.config.input.gestures,
+        }) {
+            Ok(state) => self.last_input_revision = state.revision,
+            Err(error) => self.last_message = Some(format!("Input setting rejected: {error}")),
         }
         let _ = self.config.save();
     }

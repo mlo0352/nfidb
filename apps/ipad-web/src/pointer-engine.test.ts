@@ -227,6 +227,33 @@ describe("PointerEngine", () => {
     ]);
     engine.dispose();
   });
+
+  it("forwards a complete finger lifecycle only while native touch is enabled", () => {
+    let touchEnabled = false;
+    const engine = new PointerEngine({
+      overlay,
+      video,
+      send: (packet) => packets.push(packet),
+      getFitMode: () => "fit",
+      getTouchEnabled: () => touchEnabled,
+    });
+
+    overlay.dispatchEvent(pointer("pointerdown", 0.5, 0, 0, 1, 500, 375, [], "touch"));
+    expect(packets).toHaveLength(0);
+
+    touchEnabled = true;
+    overlay.dispatchEvent(pointer("pointerdown", 0.5, 0, 0, 1, 500, 375, [], "touch"));
+    overlay.dispatchEvent(pointer("pointermove", 0.5, 0, 0, 1, 520, 390, [], "touch"));
+    overlay.dispatchEvent(pointer("pointerup", 0, 0, 0, 0, 520, 390, [], "touch"));
+
+    expect(packets.map((packet) => new DataView(packet).getUint8(HEADER_BYTES))).toEqual([2, 2, 2]);
+    expect(packets.map((packet) => decode(packet).actions)).toEqual([
+      [PointerAction.Down],
+      [PointerAction.Move],
+      [PointerAction.Up],
+    ]);
+    engine.dispose();
+  });
 });
 
 function pointer(

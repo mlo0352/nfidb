@@ -1,6 +1,7 @@
 import {
   disconnect,
   getDiagnosticSummary,
+  getInputControl,
   getMetrics,
   getStatus,
   pairWithPin,
@@ -9,6 +10,7 @@ import {
   reportVideoPresented,
   sendBrowserVideoCapabilities,
   sendOffer,
+  setInputSettings,
   setVideoSettings,
   type BrowserCodecCapability,
   type BrowserVideoCapabilities,
@@ -17,6 +19,7 @@ import {
   type HostDiagnosticSummary,
   type HostMetrics,
   type HostStatus,
+  type InputControl,
   type VideoCodec,
   type VideoConfig,
   type VideoControl,
@@ -161,6 +164,8 @@ export class NfidbApp {
   private activeUploadAbort: AbortController | null = null;
   private nextUploadId = 1;
   private videoControl: VideoControl | null = null;
+  private inputControl: InputControl | null = null;
+  private inputUpdateActive = false;
   private browserVideoCapabilities: BrowserVideoCapabilities | null = null;
   private videoPresentationReported = false;
   private videoBenchmarkRunning = false;
@@ -258,6 +263,13 @@ export class NfidbApp {
 
   private async connect(): Promise<void> {
     this.state = "connecting";
+    try {
+      this.inputControl = await getInputControl();
+      this.touchEnabled = this.inputControl.settings.touch_enabled;
+      this.gesturesEnabled = this.inputControl.settings.gestures_enabled;
+    } catch (error) {
+      console.warn("NFiDB could not synchronize input controls; using the advertised defaults", error);
+    }
     this.renderSurface();
     this.startFilePolling();
     this.openControlSocket();
@@ -346,6 +358,7 @@ export class NfidbApp {
             <button id="videoButton" class="tool-button" aria-pressed="false">Video</button>
             <button id="statsButton" class="tool-button" aria-pressed="false">Stats</button>
             <button id="fullscreenButton" class="icon-button" aria-label="Fullscreen">⛶</button>
+            <button id="controlsClose" class="icon-button" aria-label="Hide controls">⌃</button>
             <button id="disconnectButton" class="icon-button danger" aria-label="Disconnect">×</button>
           </div>
         </header>
@@ -387,7 +400,7 @@ export class NfidbApp {
           </div>
           <p>Three fingers: swipe left/right to switch apps, up for Task View, down to minimize. Windows blocks synthetic Ctrl+Alt+Del on its secure screen.</p>
         </section>
-        <button id="toolbarReveal" class="toolbar-reveal" aria-label="Show controls"></button>
+        <button id="toolbarReveal" class="toolbar-reveal" aria-label="Show controls" aria-controls="toolbar" aria-expanded="true"><b>NFi</b><span>Controls</span></button>
       </main>`;
     const overlay = this.requiredElement<HTMLCanvasElement>("interactionOverlay");
     const video = this.requiredElement<HTMLVideoElement>("remoteVideo");
@@ -427,8 +440,12 @@ export class NfidbApp {
     const touchButton = this.requiredElement<HTMLButtonElement>("touchButton");
     touchButton.textContent = this.touchEnabled ? "Touch on" : "Touch off";
     touchButton.setAttribute("aria-pressed", String(this.touchEnabled));
+    touchButton.disabled = this.inputUpdateActive || this.status?.mode === "display-only";
+    touchButton.title = this.status?.mode === "display-only"
+      ? "Input forwarding is disabled on Windows"
+      : "Send fingers as native Windows touch";
     const gestureButton = this.requiredElement<HTMLButtonElement>("gestureButton");
-    gestureButton.disabled = this.touchEnabled;
+    gestureButton.disabled = this.inputUpdateActive || this.touchEnabled || this.status?.mode === "display-only";
     gestureButton.textContent = this.touchEnabled ? "Gestures paused" : this.gesturesEnabled ? "Gestures on" : "Gestures off";
     gestureButton.setAttribute("aria-pressed", String(this.gesturesEnabled));
     const keyboardButton = this.requiredElement<HTMLButtonElement>("keyboardButton");
@@ -542,21 +559,10 @@ export class NfidbApp {
       });
     }
     this.requiredElement("touchButton").addEventListener("click", () => {
-      this.touchEnabled = !this.touchEnabled;
-      const button = this.requiredElement<HTMLButtonElement>("touchButton");
-      button.textContent = this.touchEnabled ? "Touch on" : "Touch off";
-      button.setAttribute("aria-pressed", String(this.touchEnabled));
-      const gestureButton = this.requiredElement<HTMLButtonElement>("gestureButton");
-      gestureButton.disabled = this.touchEnabled;
-      gestureButton.textContent = this.touchEnabled ? "Gestures paused" : this.gesturesEnabled ? "Gestures on" : "Gestures off";
-      this.scheduleToolbarHide();
+      void this.updateInputSettings({ touch_enabled: !this.touchEnabled });
     });
     this.requiredElement("gestureButton").addEventListener("click", () => {
-      this.gesturesEnabled = !this.gesturesEnabled;
-      const button = this.requiredElement<HTMLButtonElement>("gestureButton");
-      button.textContent = this.gesturesEnabled ? "Gestures on" : "Gestures off";
-      button.setAttribute("aria-pressed", String(this.gesturesEnabled));
-      this.scheduleToolbarHide();
+      void this.updateInputSettings({ gestures_enabled: !this.gesturesEnabled });
     });
     this.requiredElement("keyboardButton").addEventListener("click", () => {
       const panel = this.requiredElement<HTMLElement>("keyboardPanel");
@@ -635,8 +641,66 @@ export class NfidbApp {
       }
     });
     this.requiredElement("disconnectButton").addEventListener("click", () => void this.disconnect());
-    this.requiredElement("toolbarReveal").addEventListener("pointerdown", () => this.showToolbar());
-    this.requiredElement("surface").addEventListener("pointerdown", () => this.scheduleToolbarHide(), { passive: true });
+    this.requiredElement("controlsClose").addEventListener("click", () => this.hideToolbar());
+    this.requiredElement("toolbarReveal").addEventListener("click", () => this.showToolbar());
+    this.requiredElement("interactionOverlay").addEventListener("pointerdown", () => this.hideToolbar(), { passive: true });
+  }
+
+  private async updateInputSettings(
+    changes: Partial<InputControl["settings"]>,
+  ): Promise<void> {
+    if (this.inputUpdateActive || this.status?.mode === "display-only") {
+      return;
+    }
+    this.inputUpdateActive = true;
+    this.updateRemoteControlAvailability();
+    try {
+      const current = this.inputControl ?? await getInputControl();
+      const settings = { ...current.settings, ...changes };
+      this.pointerEngine?.cancelAll();
+      this.remoteInputEngine?.resetRemoteInput();
+      this.inputControl = await setInputSettings(current.revision, settings);
+      this.touchEnabled = this.inputControl.settings.touch_enabled;
+      this.gesturesEnabled = this.inputControl.settings.gestures_enabled;
+      this.showNotice(this.touchEnabled
+        ? "Finger input is now native Windows touch."
+        : this.gesturesEnabled
+          ? "Finger touch is off; three-finger Windows gestures are active."
+          : "Finger touch and shortcut gestures are off.");
+    } catch (error) {
+      try {
+        this.inputControl = await getInputControl();
+        this.touchEnabled = this.inputControl.settings.touch_enabled;
+        this.gesturesEnabled = this.inputControl.settings.gestures_enabled;
+      } catch {
+        // Keep the last confirmed state when reconciliation is unavailable.
+      }
+      this.showNotice(`Input setting failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      this.inputUpdateActive = false;
+      this.updateRemoteControlAvailability();
+      this.scheduleToolbarHide();
+    }
+  }
+
+  private async refreshInputControl(): Promise<void> {
+    if (this.inputUpdateActive) {
+      return;
+    }
+    try {
+      const control = await getInputControl();
+      if (this.inputControl?.revision === control.revision) {
+        return;
+      }
+      this.pointerEngine?.cancelAll();
+      this.remoteInputEngine?.resetRemoteInput();
+      this.inputControl = control;
+      this.touchEnabled = control.settings.touch_enabled;
+      this.gesturesEnabled = control.settings.gestures_enabled;
+      this.updateRemoteControlAvailability();
+    } catch {
+      // Input transport remains usable with the last confirmed settings.
+    }
   }
 
   private openFilesPanel(): void {
@@ -1339,6 +1403,7 @@ export class NfidbApp {
     }
     this.diagnosticCollectionActive = true;
     try {
+      await this.refreshInputControl();
       const rtc = await this.readRtcStats();
       const video = this.root.querySelector<HTMLVideoElement>("#remoteVideo");
       const quality =
@@ -1687,19 +1752,29 @@ export class NfidbApp {
 
   private showToolbar(): void {
     this.requiredElement("toolbar").classList.add("visible");
+    this.requiredElement("toolbarReveal").setAttribute("aria-expanded", "true");
     this.scheduleToolbarHide();
+  }
+
+  private hideToolbar(): void {
+    window.clearTimeout(this.hideToolbarTimer);
+    this.root.querySelector("#toolbar")?.classList.remove("visible");
+    this.root.querySelector("#toolbarReveal")?.setAttribute("aria-expanded", "false");
   }
 
   private scheduleToolbarHide(): void {
     window.clearTimeout(this.hideToolbarTimer);
-    this.requiredElement("toolbar").classList.add("visible");
+    if (!this.requiredElement("toolbar").classList.contains("visible")) {
+      return;
+    }
     this.hideToolbarTimer = window.setTimeout(() => {
       if (
         this.root.querySelector<HTMLElement>("#statsPanel")?.hidden !== false &&
         this.root.querySelector<HTMLElement>("#keyboardPanel")?.hidden !== false &&
-        this.root.querySelector<HTMLElement>("#filesPanel")?.hidden !== false
+        this.root.querySelector<HTMLElement>("#filesPanel")?.hidden !== false &&
+        this.root.querySelector<HTMLElement>("#videoPanel")?.hidden !== false
       ) {
-        this.root.querySelector("#toolbar")?.classList.remove("visible");
+        this.hideToolbar();
       }
     }, 2400);
   }

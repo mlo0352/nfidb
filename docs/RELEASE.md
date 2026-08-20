@@ -15,6 +15,14 @@ From a clean Windows checkout with the documented toolchain:
 .\scripts\file-transfer-smoke.ps1 -SkipBuild -ExecutablePath .\build\packages\NFiDB-windows-x64\nfidb.exe
 ```
 
+For unattended user-run validation and a resumable result, the equivalent supported handoff is:
+
+```powershell
+.\scripts\validate-for-codex.ps1
+```
+
+The script records the commit, dirty-tree fingerprint, step timings/errors, release checksum, and transcript under `build\user-validation`, with the latest result always at `build\user-validation\latest.json`.
+
 The build script creates `build\packages\NFiDB-windows-x64.zip` and a sibling `.sha256` file. It contains the GUI host, pointer sink, README, changelog, licenses, third-party notice, and operating documentation. An installer is explicitly deferred; the ZIP is portable and unsigned.
 
 ## GitHub automation

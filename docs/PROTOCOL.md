@@ -117,6 +117,8 @@ The client computes the displayed video rectangle for fit, fill, or 1:1 mode, th
 - `GET /api/files/outbox/{id}/download`: streams an explicitly queued Windows file with attachment headers and single-range support. `?remove=1` removes that Outbox ID only after a response covering the full file completes; partial or interrupted responses retain it.
 - `DELETE /api/files/outbox/{id}`: removes the queue entry without deleting the Windows source file.
 - `POST /api/disconnect`: closes the peer, resets native input, and invalidates the token.
+- `GET /api/input`: returns the host-authoritative touch/gesture settings and their revision.
+- `PUT /api/input`: applies paired iPad touch/gesture changes to the native Windows injector. It requires the current base revision and rejects stale concurrent edits.
 
 File mutations additionally reject a present `Origin` header unless it exactly matches the request host. Upload names are leaf-only, Windows-reserved/invalid characters are neutralized, files never overwrite an Inbox entry, and active transfer requests recheck the session during pacing. Bulk payloads are HTTP-only; WebRTC DataChannel and WebSocket queues remain reserved for bounded input/control messages.
 

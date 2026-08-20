@@ -36,7 +36,7 @@ The first MVP mirrors one Windows monitor. It is not an extended-desktop display
 
 Nothing is installed on the iPad: the Windows host serves the complete browser client from the EXE. The Windows ZIP is portable and has only standard Windows DLL dependencies in the tested build. It is unsigned, so SmartScreen can warn, and Windows Firewall may ask once for Private-network access.
 
-Touch is deliberately disabled until enabled in both the host and browser. Use input-only mode when another screen-sharing system handles the picture, or display-only mode when you do not want remote input.
+Touch is disabled by default. The paired iPad's **Touch** button now changes the authoritative Windows injector setting directly, and the Windows Input page stays synchronized with it. Use input-only mode when another screen-sharing system handles the picture, or display-only mode when you do not want remote input.
 
 ## iPad mouse and keyboard
 
@@ -44,7 +44,7 @@ Connect a trackpad/mouse and keyboard to the iPad, keep Safari in the foreground
 
 The hardware mappings are **Option → Alt**, **Control → Ctrl**, **Shift → Shift**, **Return → Enter**, and an unmodified **Delete → Backspace**. Option+Tab therefore sends Alt+Tab. Control+Option+Delete sends the Ctrl+Alt+Delete key sequence, but normal unsigned applications cannot invoke the protected Windows secure-attention screen; Windows discards synthetic Ctrl+Alt+Delete there.
 
-With browser **Touch off** and **Gestures on**, swipe three fingers right/left to move to the next/previous Windows app, up for Task View, and down to minimize the foreground window. Pencil contact temporarily suppresses finger shortcuts. Turning Touch on sends fingers as native Windows touch instead. iPadOS can consume system-reserved shortcuts before Safari receives them, so the on-screen shortcut buttons remain the deterministic fallback.
+With **Touch off** and **Gestures on**, swipe three fingers right/left to move to the next/previous Windows app, up for Task View, and down to minimize the foreground window. Pencil contact temporarily suppresses finger shortcuts. Turning Touch on updates Windows and sends fingers as native Windows touch instead. The controls open only from the small bottom-left **NFi Controls** button, so drawing across Windows menu bars does not summon the toolbar. iPadOS can consume system-reserved shortcuts before Safari receives them, so the on-screen shortcut buttons remain the deterministic fallback.
 
 If a PIN/QR has expired or Safari shows a stale-session error, use **Session → Reset PIN + QR**. This immediately invalidates the old browser session, releases injected contacts, closes its peer connection, and redraws both credentials. An expired unpaired code also rotates automatically while the desktop app is focused.
 
@@ -84,6 +84,14 @@ Create the portable ZIP and SHA-256 file with:
 ```powershell
 .\scripts\build-release.ps1
 ```
+
+For a single long-running handoff that another Codex turn can verify without spending the turn waiting on compilation, run:
+
+```powershell
+.\scripts\validate-for-codex.ps1
+```
+
+It writes `build\user-validation\latest.json` plus a full transcript. After it finishes, tell Codex **resume**; the report identifies the exact commit/tree and every validation stage.
 
 The browser client is built into `nfidb.exe`; GitHub Pages is the public download/documentation site, not the drawing client. The actual iPad page is served directly by the Windows host on the trusted LAN.
 

@@ -46,15 +46,19 @@ test("sustains coalesced pressure/tilt input while receiving integrity-checked H
   await page.keyboard.down("Alt");
   await page.keyboard.press("Tab");
   await page.keyboard.up("Alt");
+  await page.locator("#toolbarReveal").click();
   await page.locator("#keyboardButton").click();
   await page.locator("#remoteTextInput").fill("NFiDB remote text");
   await page.locator("#keyboardClose").click();
   if ((await page.locator("#touchButton").getAttribute("aria-pressed")) === "true") {
     await page.locator("#touchButton").click();
+    await expect(page.locator("#touchButton")).toHaveAttribute("aria-pressed", "false");
   }
   if ((await page.locator("#gestureButton").getAttribute("aria-pressed")) !== "true") {
     await page.locator("#gestureButton").click();
+    await expect(page.locator("#gestureButton")).toHaveAttribute("aria-pressed", "true");
   }
+  const commandBeforeGesture = await snapshot(page);
   await page.evaluate(() => {
     const overlay = document.querySelector<HTMLCanvasElement>("#interactionOverlay")!;
     const bounds = overlay.getBoundingClientRect();
@@ -87,7 +91,7 @@ test("sustains coalesced pressure/tilt input while receiving integrity-checked H
   expect(Number(remoteAfter.host.keyboard_events) - Number(remoteBefore.host.keyboard_events)).toBe(4);
   expect(Number(remoteAfter.host.text_events) - Number(remoteBefore.host.text_events)).toBe(1);
   expect(Number(remoteAfter.host.text_bytes) - Number(remoteBefore.host.text_bytes)).toBe(17);
-  expect(Number(remoteAfter.host.command_events) - Number(remoteBefore.host.command_events)).toBe(1);
+  expect(Number(remoteAfter.host.command_events) - Number(commandBeforeGesture.host.command_events)).toBe(1);
 
   const before = await snapshot(page);
   expect(before.peerConnectionState).toBe("connected");

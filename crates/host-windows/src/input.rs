@@ -471,6 +471,14 @@ impl InputSink for PointerInjector {
         self.inject_command_native(input.command)
     }
 
+    fn set_remote_input_options(&self, touch_enabled: bool, gestures_enabled: bool) -> Result<(), InputError> {
+        self.reset_all()?;
+        let mut options = self.options.write();
+        options.touch_enabled = touch_enabled;
+        options.gestures_enabled = gestures_enabled;
+        Ok(())
+    }
+
     fn reset_all(&self) -> Result<(), InputError> {
         let mut state = self.state.lock();
         release_pen(&mut state)?;

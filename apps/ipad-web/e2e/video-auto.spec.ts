@@ -15,6 +15,7 @@ test("benchmarks mutually supported codecs and returns to Auto without restartin
   expect(cleared).toBe(true);
 
   const captureBefore = await page.evaluate(async () => (await (await fetch("/api/metrics")).json()).capture_frames as number);
+  await page.locator("#toolbarReveal").click();
   await page.locator("#videoButton").click();
   await expect(page.locator("#videoAutoTest")).toBeVisible();
   await page.locator("#videoAutoTest").click();

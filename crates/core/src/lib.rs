@@ -72,6 +72,13 @@ pub trait InputSink: Send + Sync + 'static {
     fn inject_text(&self, input: &TextInput) -> Result<(), InputError>;
     fn inject_command(&self, input: &CommandInput) -> Result<(), InputError>;
     fn reset_all(&self) -> Result<(), InputError>;
+
+    /// Applies the two input modes that a paired receiver can change at run time.
+    /// Sinks without native injection can safely accept the state as a no-op so
+    /// headless diagnostics exercise the same authenticated control path.
+    fn set_remote_input_options(&self, _touch_enabled: bool, _gestures_enabled: bool) -> Result<(), InputError> {
+        Ok(())
+    }
 }
 
 #[derive(Default)]

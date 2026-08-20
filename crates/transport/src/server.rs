@@ -62,6 +62,24 @@ pub struct ServerInfo {
     pub pin: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteInputSettings {
+    pub touch_enabled: bool,
+    pub gestures_enabled: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct InputControlState {
+    pub revision: u64,
+    pub settings: RemoteInputSettings,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+struct SetInputSettingsRequest {
+    base_revision: u64,
+    settings: RemoteInputSettings,
+}
+
 pub struct ServerHandle {
     pub info: ServerInfo,
     state: Arc<AppState>,
@@ -89,6 +107,10 @@ impl ServerHandle {
             Arc::clone(&metrics),
         )?;
         let initial_video = options.video.clone();
+        let initial_input = RemoteInputSettings {
+            touch_enabled: options.touch_default,
+            gestures_enabled: options.gestures_default,
+        };
         let state = Arc::new(AppState {
             options,
             session,
@@ -102,6 +124,10 @@ impl ServerHandle {
             video_settings: Mutex::new(VideoSettingsSnapshot {
                 revision: 1,
                 settings: initial_video,
+            }),
+            input_settings: Mutex::new(InputControlState {
+                revision: 1,
+                settings: initial_input,
             }),
             video_update: Mutex::new(()),
             browser_video: Mutex::new(BrowserVideoCapabilities::default()),
@@ -248,6 +274,17 @@ impl ServerHandle {
         video_response(&self.state)
     }
 
+    #[must_use]
+    pub fn input_control_state(&self) -> InputControlState {
+        *self.state.input_settings.lock()
+    }
+
+    /// Applies native-UI changes through the same authority used by the paired
+    /// receiver, keeping both controls and the injector on one shared state.
+    pub fn apply_input_settings_from_host(&self, settings: RemoteInputSettings) -> Result<InputControlState, String> {
+        apply_input_settings_state(&self.state, settings, None)
+    }
+
     /// Applies a settings edit made by the native Windows UI through the same
     /// validated, revisioned authority used by the browser control endpoint.
     pub fn apply_video_settings_from_host(&self, settings: VideoConfig) -> Result<VideoControlState, String> {
@@ -277,6 +314,7 @@ struct AppState {
     diagnostics: DiagnosticRecorder,
     file_transfers: FileTransferManager,
     video_settings: Mutex<VideoSettingsSnapshot>,
+    input_settings: Mutex<InputControlState>,
     video_update: Mutex<()>,
     browser_video: Mutex<BrowserVideoCapabilities>,
     video_runtime: Arc<dyn VideoSettingsRuntime>,
@@ -324,6 +362,7 @@ async fn run_server(
         .route("/api/status", get(status))
         .route("/api/metrics", get(metrics_handler))
         .route("/api/diagnostics", get(diagnostics_handler))
+        .route("/api/input", get(input_handler).put(set_input_settings))
         .route("/api/video", get(video_handler).put(set_video_settings))
         .route("/api/video/capabilities", post(set_browser_video_capabilities))
         .route("/api/video/presented", post(video_presented))
@@ -437,18 +476,72 @@ struct StatusResponse {
 }
 
 async fn status(State(state): State<Arc<AppState>>) -> Json<StatusResponse> {
+    let input = state.input_settings.lock().settings;
     Json(StatusResponse {
         session: state
             .session
             .public(state.options.host_name.clone(), state.options.mode.clone()),
         protocol_version: nfidb_protocol::PROTOCOL_VERSION,
         webrtc: true,
-        touch_default: state.options.touch_default,
+        touch_default: input.touch_enabled,
         mouse_enabled: state.options.mouse_enabled,
         keyboard_enabled: state.options.keyboard_enabled,
-        gestures_default: state.options.gestures_default,
+        gestures_default: input.gestures_enabled,
         file_transfer_enabled: state.file_transfers.snapshot().enabled,
     })
+}
+
+async fn input_handler(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if !authorized_cookie(&headers, &state.session) {
+        return api_error(StatusCode::UNAUTHORIZED, "invalid session token");
+    }
+    Json(*state.input_settings.lock()).into_response()
+}
+
+async fn set_input_settings(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(request): Json<SetInputSettingsRequest>,
+) -> Response {
+    if authorize_mutation(&headers, &state.session).is_none() {
+        return api_error(StatusCode::UNAUTHORIZED, "invalid session token or request origin");
+    }
+    let current = state.input_settings.lock().revision;
+    if !input_revision_matches(request.base_revision, current) {
+        let mut response = Json(serde_json::json!({
+            "error": "input settings changed on another device",
+            "current": *state.input_settings.lock(),
+        }))
+        .into_response();
+        *response.status_mut() = StatusCode::CONFLICT;
+        return response;
+    }
+    match apply_input_settings_state(&state, request.settings, Some(request.base_revision)) {
+        Ok(control) => Json(control).into_response(),
+        Err(error) => api_error(StatusCode::BAD_REQUEST, &error),
+    }
+}
+
+fn apply_input_settings_state(
+    state: &AppState,
+    settings: RemoteInputSettings,
+    expected_revision: Option<u64>,
+) -> Result<InputControlState, String> {
+    let mut current = state.input_settings.lock();
+    if expected_revision.is_some_and(|revision| revision != current.revision) {
+        return Err("input settings changed on another device".to_owned());
+    }
+    if current.settings == settings {
+        return Ok(*current);
+    }
+    state
+        .input
+        .set_remote_input_options(settings.touch_enabled, settings.gestures_enabled)
+        .map_err(|error| error.to_string())?;
+    current.revision = current.revision.saturating_add(1);
+    current.settings = settings;
+    state.metrics.reset_input_continuity();
+    Ok(*current)
 }
 
 #[derive(Deserialize)]
@@ -625,6 +718,10 @@ fn apply_video_settings_state(
 }
 
 const fn video_revision_matches(base_revision: u64, current_revision: u64) -> bool {
+    base_revision == current_revision
+}
+
+const fn input_revision_matches(base_revision: u64, current_revision: u64) -> bool {
     base_revision == current_revision
 }
 
@@ -1132,7 +1229,7 @@ fn insert_header(headers: &mut HeaderMap, name: impl header::IntoHeaderName, val
 mod tests {
     use axum::http::{HeaderMap, HeaderValue, header};
 
-    use super::{cookie_value, same_origin, video_revision_matches};
+    use super::{cookie_value, input_revision_matches, same_origin, video_revision_matches};
 
     #[test]
     fn extracts_exact_cookie_without_prefix_confusion() {
@@ -1156,5 +1253,12 @@ mod tests {
         assert!(video_revision_matches(14, 14));
         assert!(!video_revision_matches(13, 14));
         assert!(!video_revision_matches(15, 14));
+    }
+
+    #[test]
+    fn input_edits_reject_stale_revisions() {
+        assert!(input_revision_matches(8, 8));
+        assert!(!input_revision_matches(7, 8));
+        assert!(!input_revision_matches(9, 8));
     }
 }
