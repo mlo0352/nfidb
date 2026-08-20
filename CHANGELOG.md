@@ -14,7 +14,7 @@ NFiDB is pre-release software. Releases remain GitHub prereleases until the phys
 ### Added
 
 - Added branded Windows executable icon resources generated from the existing NFiDB mark.
-- Added a user-run validation handoff that records the tested commit/tree, commands, results, package checksum, and log for a later Codex resume turn. Its post-build resume path skips npm and Cargo, and lock-resistant staging allows an older portable copy to remain open during packaging.
+- Added a user-run validation handoff that records the tested commit/tree, commands, results, package checksum, and log for a later Codex resume turn. Its post-build resume path skips npm and Cargo; unique staging and bounded scanner-lock retries keep packaging resilient while an older portable copy remains open.
 
 ## 0.6.0 — 2026-08-19 — Alpha
 

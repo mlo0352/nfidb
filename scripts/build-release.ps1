@@ -28,6 +28,7 @@ if (-not $SkipFrontend) {
 
 $stageRoot = $null
 $temporaryArchive = $null
+$temporaryArchives = [Collections.Generic.List[string]]::new()
 Push-Location $repoRoot
 try {
     if (-not $SkipBuild) {
@@ -50,7 +51,6 @@ try {
     $stageRoot = Join-Path $packageRoot ".staging-$packageId"
     $stage = Join-Path $stageRoot 'NFiDB-windows-x64'
     $archive = Join-Path $packageRoot 'NFiDB-windows-x64.zip'
-    $temporaryArchive = Join-Path $packageRoot ".NFiDB-windows-x64-$packageId.zip"
     $checksum = "$archive.sha256"
     New-Item -ItemType Directory -Force -Path (Join-Path $stage 'docs') | Out-Null
 
@@ -59,7 +59,23 @@ try {
     Copy-Item -LiteralPath (Join-Path $repoRoot 'README.md'), (Join-Path $repoRoot 'CHANGELOG.md'), (Join-Path $repoRoot 'LICENSE-MIT'), (Join-Path $repoRoot 'LICENSE-APACHE'), (Join-Path $repoRoot 'THIRD_PARTY.md') -Destination $stage
     Copy-Item -LiteralPath (Join-Path $repoRoot 'docs\SECURITY.md'), (Join-Path $repoRoot 'docs\ARCHITECTURE.md'), (Join-Path $repoRoot 'docs\KNOWN_ISSUES.md'), (Join-Path $repoRoot 'docs\TEST_MATRIX.md'), (Join-Path $repoRoot 'docs\PERFORMANCE.md'), (Join-Path $repoRoot 'docs\CODEC_BENCHMARKS.md'), (Join-Path $repoRoot 'docs\PROTOCOL.md') -Destination (Join-Path $stage 'docs')
 
-    Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $temporaryArchive -CompressionLevel Optimal
+    $compressionSucceeded = $false
+    for ($attempt = 1; $attempt -le 12; $attempt++) {
+        $temporaryArchive = Join-Path $packageRoot ".NFiDB-windows-x64-$packageId-$attempt.zip"
+        $temporaryArchives.Add($temporaryArchive)
+        try {
+            Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $temporaryArchive -CompressionLevel Optimal
+            $compressionSucceeded = $true
+            break
+        }
+        catch {
+            if ($attempt -eq 12) { throw }
+            $delayMilliseconds = [Math]::Min(2500, 250 * $attempt)
+            Write-Warning "Portable ZIP source was temporarily busy; retrying in $delayMilliseconds ms (attempt $attempt/12)."
+            Start-Sleep -Milliseconds $delayMilliseconds
+        }
+    }
+    if (-not $compressionSucceeded) { throw 'portable ZIP creation did not complete' }
     Move-Item -LiteralPath $temporaryArchive -Destination $archive -Force
     $temporaryArchive = $null
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
@@ -70,9 +86,14 @@ try {
 finally {
     Pop-Location
     if ($stageRoot -and (Test-Path -LiteralPath $stageRoot)) {
-        Remove-Item -Recurse -Force -LiteralPath $stageRoot
+        Remove-Item -Recurse -Force -LiteralPath $stageRoot -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $stageRoot) {
+            Write-Warning "Temporary package staging remains locked and can be removed later: $stageRoot"
+        }
     }
-    if ($temporaryArchive -and (Test-Path -LiteralPath $temporaryArchive)) {
-        Remove-Item -Force -LiteralPath $temporaryArchive
+    foreach ($candidateArchive in $temporaryArchives) {
+        if (Test-Path -LiteralPath $candidateArchive) {
+            Remove-Item -Force -LiteralPath $candidateArchive -ErrorAction SilentlyContinue
+        }
     }
 }
