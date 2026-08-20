@@ -8,6 +8,92 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'msvc-env.ps1')
 
+function New-PortableZip {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $SourceDirectory,
+        [Parameter(Mandatory = $true)]
+        [string] $DestinationPath,
+        [int] $OpenAttempts = 12
+    )
+
+    Add-Type -AssemblyName System.IO.Compression
+    $sourceRoot = [IO.Path]::GetFullPath($SourceDirectory)
+    $separator = [IO.Path]::DirectorySeparatorChar.ToString()
+    if (-not $sourceRoot.EndsWith($separator)) {
+        $sourceRoot += $separator
+    }
+
+    $archiveStream = [IO.File]::Open(
+        $DestinationPath,
+        [IO.FileMode]::CreateNew,
+        [IO.FileAccess]::Write,
+        [IO.FileShare]::None
+    )
+    $zip = $null
+    try {
+        $zip = [IO.Compression.ZipArchive]::new(
+            $archiveStream,
+            [IO.Compression.ZipArchiveMode]::Create,
+            $false
+        )
+        $sourceFiles = Get-ChildItem -LiteralPath $SourceDirectory -File -Recurse | Sort-Object FullName
+        foreach ($sourceFile in $sourceFiles) {
+            $sourceStream = $null
+            for ($attempt = 1; $attempt -le $OpenAttempts; $attempt++) {
+                try {
+                    # ReadWrite/Delete sharing is safe for immutable staged files and
+                    # cooperates with antivirus/indexers. An exclusive scanner lock is
+                    # retried quietly rather than surfacing Compress-Archive internals.
+                    $readSharing = [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete
+                    $sourceStream = [IO.File]::Open(
+                        $sourceFile.FullName,
+                        [IO.FileMode]::Open,
+                        [IO.FileAccess]::Read,
+                        $readSharing
+                    )
+                    break
+                }
+                catch [IO.IOException] {
+                    if ($attempt -eq $OpenAttempts) {
+                        throw [IO.IOException]::new(
+                            "Package source remained busy after $OpenAttempts attempts: $($sourceFile.FullName)",
+                            $_.Exception
+                        )
+                    }
+                    Start-Sleep -Milliseconds ([Math]::Min(2500, 250 * $attempt))
+                }
+            }
+
+            try {
+                $relativePath = $sourceFile.FullName.Substring($sourceRoot.Length).Replace('\', '/')
+                $entry = $zip.CreateEntry($relativePath, [IO.Compression.CompressionLevel]::Optimal)
+                $entry.LastWriteTime = [DateTimeOffset]$sourceFile.LastWriteTime
+                $entryStream = $entry.Open()
+                try {
+                    $sourceStream.CopyTo($entryStream)
+                }
+                finally {
+                    $entryStream.Dispose()
+                }
+            }
+            finally {
+                if ($sourceStream) {
+                    $sourceStream.Dispose()
+                }
+            }
+        }
+    }
+    finally {
+        if ($zip) {
+            $zip.Dispose()
+        }
+        else {
+            $archiveStream.Dispose()
+        }
+    }
+}
+
 if (-not $SkipTests) {
     & (Join-Path $PSScriptRoot 'test.ps1')
     if ($LASTEXITCODE -ne 0) { throw 'test suite failed' }
@@ -28,7 +114,6 @@ if (-not $SkipFrontend) {
 
 $stageRoot = $null
 $temporaryArchive = $null
-$temporaryArchives = [Collections.Generic.List[string]]::new()
 Push-Location $repoRoot
 try {
     if (-not $SkipBuild) {
@@ -59,23 +144,8 @@ try {
     Copy-Item -LiteralPath (Join-Path $repoRoot 'README.md'), (Join-Path $repoRoot 'CHANGELOG.md'), (Join-Path $repoRoot 'LICENSE-MIT'), (Join-Path $repoRoot 'LICENSE-APACHE'), (Join-Path $repoRoot 'THIRD_PARTY.md') -Destination $stage
     Copy-Item -LiteralPath (Join-Path $repoRoot 'docs\SECURITY.md'), (Join-Path $repoRoot 'docs\ARCHITECTURE.md'), (Join-Path $repoRoot 'docs\KNOWN_ISSUES.md'), (Join-Path $repoRoot 'docs\TEST_MATRIX.md'), (Join-Path $repoRoot 'docs\PERFORMANCE.md'), (Join-Path $repoRoot 'docs\CODEC_BENCHMARKS.md'), (Join-Path $repoRoot 'docs\PROTOCOL.md') -Destination (Join-Path $stage 'docs')
 
-    $compressionSucceeded = $false
-    for ($attempt = 1; $attempt -le 12; $attempt++) {
-        $temporaryArchive = Join-Path $packageRoot ".NFiDB-windows-x64-$packageId-$attempt.zip"
-        $temporaryArchives.Add($temporaryArchive)
-        try {
-            Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $temporaryArchive -CompressionLevel Optimal
-            $compressionSucceeded = $true
-            break
-        }
-        catch {
-            if ($attempt -eq 12) { throw }
-            $delayMilliseconds = [Math]::Min(2500, 250 * $attempt)
-            Write-Warning "Portable ZIP source was temporarily busy; retrying in $delayMilliseconds ms (attempt $attempt/12)."
-            Start-Sleep -Milliseconds $delayMilliseconds
-        }
-    }
-    if (-not $compressionSucceeded) { throw 'portable ZIP creation did not complete' }
+    $temporaryArchive = Join-Path $packageRoot ".NFiDB-windows-x64-$packageId.zip"
+    New-PortableZip -SourceDirectory $stage -DestinationPath $temporaryArchive
     Move-Item -LiteralPath $temporaryArchive -Destination $archive -Force
     $temporaryArchive = $null
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
@@ -91,9 +161,7 @@ finally {
             Write-Warning "Temporary package staging remains locked and can be removed later: $stageRoot"
         }
     }
-    foreach ($candidateArchive in $temporaryArchives) {
-        if (Test-Path -LiteralPath $candidateArchive) {
-            Remove-Item -Force -LiteralPath $candidateArchive -ErrorAction SilentlyContinue
-        }
+    if ($temporaryArchive -and (Test-Path -LiteralPath $temporaryArchive)) {
+        Remove-Item -Force -LiteralPath $temporaryArchive -ErrorAction SilentlyContinue
     }
 }

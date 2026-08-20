@@ -112,7 +112,11 @@ try {
     if (-not $serverReady) {
         throw "NFiDB GUI started but its local server was not ready on port $Port within $StartupTimeoutSeconds seconds"
     }
-    if ($result.main_window_title -ne 'NFiDB — No Frills iPad Drawing Bridge') {
+    # Windows PowerShell 5.1 decodes UTF-8 scripts without a BOM using the
+    # active ANSI code page. Construct the em dash explicitly so this check is
+    # stable in both Windows PowerShell and PowerShell 7.
+    $expectedWindowTitle = 'NFiDB ' + [char]0x2014 + ' No Frills iPad Drawing Bridge'
+    if ($result.main_window_title -ne $expectedWindowTitle) {
         throw "Unexpected GUI window title: $($result.main_window_title)"
     }
     $result.status_protocol_version = $status.protocol_version
