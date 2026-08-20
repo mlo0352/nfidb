@@ -4,6 +4,8 @@ NFiDB is pre-release software. Releases remain GitHub prereleases until the phys
 
 ## Unreleased
 
+## 0.6.1 — 2026-08-20 — Alpha
+
 ### Fixed
 
 - The iPad Touch toggle now changes the host's real native-touch injector gate through an authenticated, revision-checked control instead of changing only a browser flag.
@@ -12,7 +14,7 @@ NFiDB is pre-release software. Releases remain GitHub prereleases until the phys
 ### Added
 
 - Added branded Windows executable icon resources generated from the existing NFiDB mark.
-- Added a user-run validation handoff that records the tested commit/tree, commands, results, package checksum, and log for a later Codex resume turn.
+- Added a user-run validation handoff that records the tested commit/tree, commands, results, package checksum, and log for a later Codex resume turn. Its post-build resume path skips npm and Cargo, and lock-resistant staging allows an older portable copy to remain open during packaging.
 
 ## 0.6.0 — 2026-08-19 — Alpha
 

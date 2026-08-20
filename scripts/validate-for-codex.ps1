@@ -1,6 +1,7 @@
 param(
     [switch] $SkipRelease,
     [switch] $SkipSmoke,
+    [switch] $ResumeAfterBuild,
     [int] $PortableSmokePort = 49120
 )
 
@@ -51,28 +52,34 @@ Push-Location $repoRoot
 try {
     Start-Transcript -LiteralPath $logPath -Force | Out-Null
     try {
-        Invoke-ValidationStep 'Complete source validation' {
-            & (Join-Path $PSScriptRoot 'test.ps1')
+        if (-not $ResumeAfterBuild) {
+            Invoke-ValidationStep 'Complete source validation' {
+                & (Join-Path $PSScriptRoot 'test.ps1')
+            }
         }
 
         if (-not $SkipRelease) {
             Invoke-ValidationStep 'Portable release build' {
-                & (Join-Path $PSScriptRoot 'build-release.ps1') -SkipTests
+                if ($ResumeAfterBuild) {
+                    & (Join-Path $PSScriptRoot 'build-release.ps1') -SkipTests -SkipFrontend -SkipBuild
+                } else {
+                    & (Join-Path $PSScriptRoot 'build-release.ps1') -SkipTests
+                }
             }
         }
 
         if (-not $SkipSmoke) {
             $archive = Join-Path $repoRoot 'build\packages\NFiDB-windows-x64.zip'
             $pointerSink = Join-Path $repoRoot 'target\release\pointer-sink.exe'
-            $packagedHost = Join-Path $repoRoot 'build\packages\NFiDB-windows-x64\nfidb.exe'
+            $releaseHost = Join-Path $repoRoot 'target\release\nfidb.exe'
             if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
                 throw "Release archive is missing: $archive"
             }
             if (-not (Test-Path -LiteralPath $pointerSink -PathType Leaf)) {
                 throw "Release pointer sink is missing: $pointerSink"
             }
-            if (-not (Test-Path -LiteralPath $packagedHost -PathType Leaf)) {
-                throw "Packaged host is missing: $packagedHost"
+            if (-not (Test-Path -LiteralPath $releaseHost -PathType Leaf)) {
+                throw "Release host is missing: $releaseHost"
             }
             Invoke-ValidationStep 'Native pointer self-test' {
                 & $pointerSink --self-test
@@ -81,7 +88,7 @@ try {
                 & (Join-Path $PSScriptRoot 'portable-smoke.ps1') -Archive $archive -Port $PortableSmokePort
             }
             Invoke-ValidationStep 'Bidirectional file-transfer smoke' {
-                & (Join-Path $PSScriptRoot 'file-transfer-smoke.ps1') -SkipBuild -ExecutablePath $packagedHost
+                & (Join-Path $PSScriptRoot 'file-transfer-smoke.ps1') -SkipBuild -ExecutablePath $releaseHost
             }
         }
     }

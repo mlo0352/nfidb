@@ -1,6 +1,6 @@
 # Test matrix
 
-Last updated: 2026-08-19. Development host: Windows 11 Pro x64 build 22631, Intel Core i9-13900K, NVIDIA GeForce RTX 4090, Rust 1.97.1 (`x86_64-pc-windows-msvc`), Node 22.22.3, npm 10.9.8, Microsoft Edge headless. Historical OpenH264 profile/soak results are release `0.2.0`; physical remote-control and file-transfer rows are the `0.4.0`–`0.5.1` alphas. Multi-codec capability, host benchmark, and Edge Auto rows are the `0.6.0` candidate.
+Last updated: 2026-08-20. Development host: Windows 11 Pro x64 build 22631, Intel Core i9-13900K, NVIDIA GeForce RTX 4090, Rust 1.97.1 (`x86_64-pc-windows-msvc`), Node 22.22.3, npm 10.9.8, Microsoft Edge headless. Historical OpenH264 profile/soak results are release `0.2.0`; physical remote-control and file-transfer rows are the `0.4.0`–`0.5.1` alphas. Multi-codec capability, host benchmark, and Edge Auto rows are the `0.6.0` candidate.
 
 | Layer | Test | Result | Evidence |
 | --- | --- | --- | --- |
@@ -12,7 +12,7 @@ Last updated: 2026-08-19. Development host: Windows 11 Pro x64 build 22631, Inte
 | Capability matrix | Host/browser H.264-only, H.264+HEVC, all-codec common-mode calculation | PASS | Core matrix tests |
 | Auto selection | Unsupported AV1, failed HEVC FPS gate, lower-bandwidth healthy HEVC, hardware fallback, stale encoder identity | PASS | Core and capture unit tests |
 | Video setting synchronization | Host/iPad revision update, stale revision rejection, invalid remote values | PASS | Authenticated control tests and live Auto E2E |
-| Input setting synchronization | iPad Touch/Gesture edits update the host-authoritative native injector gate; stale revisions reject | SOURCE VERIFIED | Browser control test and server revision test; native build/user validation pending |
+| Input setting synchronization | iPad Touch/Gesture edits update the host-authoritative native injector gate; stale revisions reject | PASS | Browser control, server revision, and native injector-gate tests; user-run release build and native smoke passed |
 | PIN entry | Six digits auto-submit once; paste is normalized; partial entry stays local | PASS | PIN normalization unit tests plus live-host E2E with no Connect click |
 | Browser coalescing | Use coalesced samples exactly once and in chronological order | PASS | Exact binary packet test with pressure, tilt, twist, coordinates, and sequences |
 | Browser lifecycle | Preserve exactly one primary Down/Up across fit letterboxes and unusual coalesced/duplicate events | PASS | Deterministic edge-entry, edge-exit, duplicate-Down, and coalesced-lifecycle tests |
@@ -49,7 +49,7 @@ Last updated: 2026-08-19. Development host: Windows 11 Pro x64 build 22631, Inte
 | Recovery IDR under load | Bound corruption recovery without allowing keyframes to dominate an overloaded encoder | PASS | Five-second recovery cadence; repeated 4K→1080p run ~27 encoded/~25 mean decoded fps, four interval keyframes, zero freezes/loss/gaps/skips |
 | WebRTC startup | Join an already-running H.264 stream at an arbitrary frame | PASS | First pre-IDR delta rejected; requested IDR in 65.091 ms; first browser frame in 99.3 ms; automated limit 5 s |
 | Safari first-frame recovery | Connected peer/video track without a presented frame requests fresh IDRs until presentation | PASS | Final packaged real-monitor test: 144.7 ms startup; forced request counter 0→1; host keyframe and browser decoded-keyframe counts each advanced; browser watchdog and DataChannel fallback covered |
-| Portable runtime | Extract ZIP and run with no repo assets or Node runtime | PASS | Embedded HTML/JS served and video encoded from extracted EXE; direct dependency audit found Windows system DLLs only |
+| Portable runtime | Extract ZIP and run with no repo assets or Node runtime | PASS | User-run release validation: embedded HTML/JS served and video encoded from extracted EXE; direct dependency audit found Windows system DLLs only; post-build resume repeated packaging/smokes without recompilation |
 | WGC monitor capture | Real desktop produces capture/encoded/decoded frames | PASS | Isolated 3840×2160 → 1920×1080 production path: first browser frame 96.4 ms, host IDR wait 62.549 ms, zero RTP loss/decoder drops/freezes/transport drops |
 | Workspace | fmt, check all targets, Clippy `-D warnings`, all Rust tests | PASS | local Windows build and GitHub Actions |
 | iPad Safari video/touch | Real LAN pairing, touch transport, initial video | PASS | Cache-safe v0.3.2 client identified itself, recorded at 1 Hz, and started physical video in 71 ms after rejecting one pre-IDR delta |

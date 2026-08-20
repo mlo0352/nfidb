@@ -12,7 +12,7 @@ From a clean Windows checkout with the documented toolchain:
 .\scripts\test.ps1
 .\scripts\build-release.ps1
 .\scripts\portable-smoke.ps1
-.\scripts\file-transfer-smoke.ps1 -SkipBuild -ExecutablePath .\build\packages\NFiDB-windows-x64\nfidb.exe
+.\scripts\file-transfer-smoke.ps1 -SkipBuild -ExecutablePath .\target\release\nfidb.exe
 ```
 
 For unattended user-run validation and a resumable result, the equivalent supported handoff is:
@@ -22,6 +22,14 @@ For unattended user-run validation and a resumable result, the equivalent suppor
 ```
 
 The script records the commit, dirty-tree fingerprint, step timings/errors, release checksum, and transcript under `build\user-validation`, with the latest result always at `build\user-validation\latest.json`.
+
+When compilation has already succeeded and only packaging or a smoke check needs to be resumed, use:
+
+```powershell
+.\scripts\validate-for-codex.ps1 -ResumeAfterBuild
+```
+
+This reuses `target\release`, rebuilds the portable archive from a unique staging directory, and runs the native, portable, and file-transfer smoke checks without invoking npm or Cargo. Unique staging also lets an older portable copy remain open while a new ZIP is produced.
 
 The build script creates `build\packages\NFiDB-windows-x64.zip` and a sibling `.sha256` file. It contains the GUI host, pointer sink, README, changelog, licenses, third-party notice, and operating documentation. An installer is explicitly deferred; the ZIP is portable and unsigned.
 
