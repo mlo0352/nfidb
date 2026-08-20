@@ -17,6 +17,7 @@ NFiDB is pre-release software. Releases remain GitHub prereleases until the phys
 
 - Added a real Windows GUI startup smoke that requires both an NFiDB window and a responsive local status API. It runs during user handoff validation, CI, and release publication.
 - Confirmed the regression test rejects the published v0.6.1 binary with the captured `OleInitialize` panic before accepting a replacement build.
+- Validation now disables Cargo's transient progress renderer, prints the concrete failure reason, and can resume after source validation or after release compilation without repeating completed stages.
 
 ## 0.6.1 — 2026-08-20 — Withdrawn Alpha
 

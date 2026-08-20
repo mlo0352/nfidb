@@ -96,6 +96,8 @@ It writes `build\user-validation\latest.json` plus a full transcript. After it f
 
 If compilation completed but a later packaging or smoke step failed, Codex can resume from the existing release binaries with `-ResumeAfterBuild`. That path skips npm, Cargo, and the source suite instead of burning another full compile.
 
+If source validation is already complete but the optimized release binary has not been built, `-ResumeAfterSourceValidation` skips the repeated source suite and frontend build while still compiling and testing the final release artifact.
+
 The browser client is built into `nfidb.exe`; GitHub Pages is the public download/documentation site, not the drawing client. The actual iPad page is served directly by the Windows host on the trusted LAN.
 
 ## Diagnostics and CLI

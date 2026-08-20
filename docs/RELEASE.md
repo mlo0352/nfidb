@@ -32,6 +32,8 @@ When compilation has already succeeded and only packaging or a smoke check needs
 
 This reuses `target\release`, rebuilds the portable archive from a unique staging directory, and runs the native, GUI-startup, portable, and file-transfer smoke checks without invoking npm or Cargo. Unique staging also lets an older portable copy remain open while a new ZIP is produced.
 
+When source validation is complete but the optimized executable has not been built, use `validate-for-codex.ps1 -ResumeAfterSourceValidation`. It skips repeated source/frontend validation, performs the release build, then runs every package and smoke gate.
+
 The build script creates `build\packages\NFiDB-windows-x64.zip` and a sibling `.sha256` file. It contains the GUI host, pointer sink, README, changelog, licenses, third-party notice, and operating documentation. An installer is explicitly deferred; the ZIP is portable and unsigned.
 
 ## GitHub automation

@@ -1,6 +1,7 @@
 param(
     [switch] $SkipRelease,
     [switch] $SkipSmoke,
+    [switch] $ResumeAfterSourceValidation,
     [switch] $ResumeAfterBuild,
     [int] $PortableSmokePort = 49120,
     [int] $GuiSmokePort = 49121
@@ -16,6 +17,10 @@ $latestPath = Join-Path $repoRoot 'build\user-validation\latest.json'
 $logPath = Join-Path $resultRoot 'validation.log'
 $steps = [Collections.Generic.List[object]]::new()
 $failure = $null
+
+if ($ResumeAfterSourceValidation -and $ResumeAfterBuild) {
+    throw '-ResumeAfterSourceValidation and -ResumeAfterBuild cannot be used together'
+}
 
 New-Item -ItemType Directory -Force -Path $resultRoot | Out-Null
 
@@ -53,7 +58,7 @@ Push-Location $repoRoot
 try {
     Start-Transcript -LiteralPath $logPath -Force | Out-Null
     try {
-        if (-not $ResumeAfterBuild) {
+        if (-not $ResumeAfterSourceValidation -and -not $ResumeAfterBuild) {
             Invoke-ValidationStep 'Complete source validation' {
                 & (Join-Path $PSScriptRoot 'test.ps1')
             }
@@ -63,6 +68,8 @@ try {
             Invoke-ValidationStep 'Portable release build' {
                 if ($ResumeAfterBuild) {
                     & (Join-Path $PSScriptRoot 'build-release.ps1') -SkipTests -SkipFrontend -SkipBuild
+                } elseif ($ResumeAfterSourceValidation) {
+                    & (Join-Path $PSScriptRoot 'build-release.ps1') -SkipTests -SkipFrontend
                 } else {
                     & (Join-Path $PSScriptRoot 'build-release.ps1') -SkipTests
                 }
@@ -152,6 +159,7 @@ Set-Content -LiteralPath $latestPath -Value $json -Encoding utf8
 if ($failure) {
     Write-Host "`nValidation failed. Tell Codex to resume; it can inspect:" -ForegroundColor Red
     Write-Host $latestPath
+    Write-Host "Reason: $failure" -ForegroundColor Red
     exit 1
 }
 

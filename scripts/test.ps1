@@ -17,17 +17,23 @@ finally {
     Pop-Location
 }
 
+$previousCargoColor = [Environment]::GetEnvironmentVariable('CARGO_TERM_COLOR', 'Process')
+$previousCargoProgress = [Environment]::GetEnvironmentVariable('CARGO_TERM_PROGRESS_WHEN', 'Process')
 Push-Location $repoRoot
 try {
+    $env:CARGO_TERM_COLOR = 'never'
+    $env:CARGO_TERM_PROGRESS_WHEN = 'never'
     cargo fmt --all -- --check
     if ($LASTEXITCODE -ne 0) { throw 'cargo fmt check failed' }
-    cargo check --workspace --all-targets
+    cargo check --workspace --all-targets --locked
     if ($LASTEXITCODE -ne 0) { throw 'cargo check failed' }
-    cargo clippy --workspace --all-targets --all-features -- -D warnings
+    cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
     if ($LASTEXITCODE -ne 0) { throw 'cargo clippy failed' }
-    cargo test --workspace
-    if ($LASTEXITCODE -ne 0) { throw 'cargo test failed' }
+    cargo test --workspace --locked
+    if ($LASTEXITCODE -ne 0) { throw "cargo test failed with exit code $LASTEXITCODE" }
 }
 finally {
+    if ($null -eq $previousCargoColor) { Remove-Item Env:CARGO_TERM_COLOR -ErrorAction SilentlyContinue } else { $env:CARGO_TERM_COLOR = $previousCargoColor }
+    if ($null -eq $previousCargoProgress) { Remove-Item Env:CARGO_TERM_PROGRESS_WHEN -ErrorAction SilentlyContinue } else { $env:CARGO_TERM_PROGRESS_WHEN = $previousCargoProgress }
     Pop-Location
 }
