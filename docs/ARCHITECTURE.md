@@ -2,6 +2,8 @@
 
 NFiDB is a single-PC, single-browser, trusted-LAN bridge. The Windows executable owns capture, capability discovery, codec-neutral encoding, signaling, WebRTC, native pointer injection, configuration, and the desktop UI. The iPad side is a small TypeScript application embedded in that executable.
 
+The Windows desktop shell is rendered by eframe through `wgpu`, allowing the native Windows graphics backend or its software adapter to be used without requiring a vendor OpenGL installation. This renderer is separate from monitor capture and video encoding.
+
 ```text
 Windows monitor -> WGC newest-frame slot -> scale/YUV newest-frame slot -> H.264/HEVC/AV1 -> WebRTC -> Safari <video>
 Windows PT_PEN <- native injector <- binary batches <- DataChannel <- Safari Pointer Events

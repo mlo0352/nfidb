@@ -26,7 +26,7 @@ bytes = "1.10"
 chrono = { version = "0.4", features = ["clock", "serde"] }
 clap = { version = "4.5", features = ["derive"] }
 dirs = "6.0"
-eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "wgpu"] }
 fast_image_resize = { version = "6.1", features = ["rayon"] }
 futures-util = "0.3"
 hostname = "0.4"

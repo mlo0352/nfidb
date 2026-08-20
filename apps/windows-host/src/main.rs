@@ -415,6 +415,10 @@ fn run() -> Result<()> {
     }
 
     let native_options = eframe::NativeOptions {
+        // Use Windows' native graphics stack (or its software adapter) rather
+        // than requiring a vendor OpenGL 2+ driver. This also makes the real
+        // desktop shell testable on clean hosted-Windows environments.
+        renderer: eframe::Renderer::Wgpu,
         viewport: egui::ViewportBuilder::default()
             .with_title("NFiDB — No Frills iPad Drawing Bridge")
             .with_inner_size([980.0, 690.0])
@@ -631,7 +635,7 @@ impl eframe::App for HostApp {
             });
     }
 
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+    fn on_exit(&mut self) {
         if let Some(injector) = &self.injector {
             let _ = injector.reset_all();
         }
