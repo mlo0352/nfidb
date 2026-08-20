@@ -2,7 +2,7 @@
 
 **No Frills iPad Drawing Bridge** turns an iPad and Apple Pencil into a local-network pen display for a Windows 11 PC. Extract one portable Windows app, open the address it shows in Safari, enter the six-digit PIN, and draw. There is no iPad app, account, subscription, cloud relay, or internet service involved in a session.
 
-> NFiDB 0.6.1 is a solid alpha. Its protocol, native input, Windows capture, browser pairing, remote-control, multi-codec WebRTC, and bidirectional file-transfer paths have automated coverage. H.264, HEVC, and AV1 hardware encoding work on the development RTX 4090; actual HEVC/AV1 availability remains a PC-and-browser capability decision. Apple Pencil behavior in individual art apps, physical iPad codec validation, and the Files panel still need field validation; see [the test matrix](docs/TEST_MATRIX.md) before relying on it for production work.
+> NFiDB 0.6.2 is a solid alpha. Its protocol, native input, Windows capture, browser pairing, remote-control, multi-codec WebRTC, GUI startup, and bidirectional file-transfer paths have automated coverage. H.264, HEVC, and AV1 hardware encoding work on the development RTX 4090; actual HEVC/AV1 availability remains a PC-and-browser capability decision. Apple Pencil behavior in individual art apps, physical iPad codec validation, and the Files panel still need field validation; see [the test matrix](docs/TEST_MATRIX.md) before relying on it for production work.
 
 ## What works
 
@@ -83,6 +83,7 @@ Create the portable ZIP and SHA-256 file with:
 
 ```powershell
 .\scripts\build-release.ps1
+.\scripts\gui-smoke.ps1
 ```
 
 For a single long-running handoff that another Codex turn can verify without spending the turn waiting on compilation, run:
@@ -116,6 +117,8 @@ Run `nfidb --diagnostics` to open the diagnostic page directly, or select **DIAG
 The live iPad panel separates network RTT/bandwidth, decoder and presentation rate, RTP loss, jitter-buffer/decode cost, frame gaps, startup-to-first-frame, estimated pipeline delay, input continuity, pressure/tilt, mouse/wheel/key/text/gesture counters, and browser/host buffering. Safari supplies exact capture-to-presentation timing only when its WebRTC frame metadata exposes it; otherwise NFiDB labels and uses a component estimate. Exact Pencil-contact-to-Windows-photon latency still requires a synchronized high-speed camera.
 
 The host stores user settings in `%APPDATA%\NFiDB\config.toml`. Full flags are available with `nfidb --help`; release builds normally launch as a GUI application. The measured release-mode resolution and frame-rate envelope is published in [Performance notes](docs/PERFORMANCE.md).
+
+If the Windows GUI cannot initialize, NFiDB displays the startup error and saves the same details to `%APPDATA%\NFiDB\startup-error.log` for diagnosis.
 
 ## Documentation
 

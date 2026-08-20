@@ -26,6 +26,8 @@ jobs:
         run: .\scripts\test.ps1
       - name: Build portable package
         run: .\scripts\build-release.ps1 -SkipTests
+      - name: GUI startup smoke
+        run: .\scripts\gui-smoke.ps1 -ArchivePath .\build\packages\NFiDB-windows-x64.zip
       - name: Publish release assets
         uses: softprops/action-gh-release@v2
         with:

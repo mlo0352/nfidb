@@ -32,6 +32,8 @@ A newly connected peer starts at the broadcast tail, requests a keyframe, and di
 
 Windows enumerates hardware MFTs with `MFTEnumEx`, reads the associated DXGI adapter where exposed, initializes media types, and requires an actual encoded output sample before a mode becomes functional. Safari reports receiver codecs, SDP inclusion/negotiation is tracked separately, and a mode becomes playback-verified only after a browser presents its first frame. Auto combines those facts with locally cached benchmark gates and scores. Cache keys include NFiDB version, receiver runtime, encoder identity, profile, width, and FPS, so material changes cause a retest.
 
+Media Foundation discovery runs on a named MTA worker and returns data-only capabilities to the GUI. COM apartment state is initialized and balanced per encoder/discovery worker, while `MFStartup` remains process-wide. The egui/winit main thread is never claimed by encoder discovery, and the unused Windows file-drop hook is disabled as a second boundary against OLE apartment conflicts.
+
 The present hardware path is CPU preprocessing: WGC copies BGRA to a bounded CPU frame, resize/BGRA-to-I420 runs on CPU, and I420 is interleaved to an NV12 memory buffer for the hardware MFT. It is accurately reported as `cpu-preprocessing`, not zero-copy. The capture crate exposes a D3D texture, but GPU resize/color conversion and D3D-surface encoder input remain a future optimization.
 
 ## Input path

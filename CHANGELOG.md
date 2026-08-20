@@ -4,7 +4,23 @@ NFiDB is pre-release software. Releases remain GitHub prereleases until the phys
 
 ## Unreleased
 
-## 0.6.1 — 2026-08-20 — Alpha
+## 0.6.2 — 2026-08-20 — Alpha
+
+### Fixed
+
+- Fixed the release GUI aborting before its first window with `RPC_E_CHANGED_MODE`. Media Foundation discovery now runs on a dedicated MTA worker instead of changing the GUI thread's COM apartment.
+- Media Foundation COM initialization is now tracked per worker thread and balanced when that thread exits; the process-wide Media Foundation runtime remains separately initialized once.
+- Disabled winit's unused Windows file-drop hook so an unrelated COM user cannot reintroduce an OLE apartment conflict at window creation.
+- GUI startup errors and panics now write `%APPDATA%\NFiDB\startup-error.log` and display a native error dialog instead of disappearing without an explanation.
+
+### Validation
+
+- Added a real Windows GUI startup smoke that requires both an NFiDB window and a responsive local status API. It runs during user handoff validation, CI, and release publication.
+- Confirmed the regression test rejects the published v0.6.1 binary with the captured `OleInitialize` panic before accepting a replacement build.
+
+## 0.6.1 — 2026-08-20 — Withdrawn Alpha
+
+The portable v0.6.1 GUI aborts during window creation because hardware discovery initializes the main thread as MTA before winit requests an OLE STA for file dropping. Headless mode is unaffected, but the release should not be used as a desktop build.
 
 ### Fixed
 

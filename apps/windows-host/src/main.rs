@@ -22,6 +22,7 @@ use qrcode::QrCode;
 use qrcode::types::Color;
 use tokio::sync::broadcast;
 use tracing_subscriber::EnvFilter;
+use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
 
 #[derive(Debug, Parser)]
 #[command(name = "NFiDB", version, about = "No Frills iPad Drawing Bridge")]
@@ -166,7 +167,18 @@ impl From<EncoderModeChoice> for EncoderMode {
     }
 }
 
-fn main() -> Result<()> {
+fn main() {
+    let interactive_gui = is_interactive_gui_invocation();
+    install_fatal_error_reporter(interactive_gui);
+    if let Err(error) = run() {
+        let message = format!("{error:#}");
+        tracing::error!(%message, "NFiDB startup failed");
+        report_fatal_error("NFiDB could not start", &message, interactive_gui);
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<()> {
     let cli = Cli::parse();
     let filter = EnvFilter::try_new(&cli.log_level).unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt()
@@ -406,7 +418,11 @@ fn main() -> Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_title("NFiDB — No Frills iPad Drawing Bridge")
             .with_inner_size([980.0, 690.0])
-            .with_min_inner_size([760.0, 560.0]),
+            .with_min_inner_size([760.0, 560.0])
+            // Windows file dropping is not an NFiDB input path. Disabling the
+            // unused winit hook also prevents it from imposing an OLE/STA
+            // apartment requirement on the host's media and capture process.
+            .with_drag_and_drop(false),
         ..Default::default()
     };
     eframe::run_native(
@@ -440,6 +456,52 @@ fn main() -> Result<()> {
     )
     .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     Ok(())
+}
+
+fn is_interactive_gui_invocation() -> bool {
+    !std::env::args_os().skip(1).any(|argument| {
+        let argument = argument.to_string_lossy();
+        argument == "--headless" || argument == "--benchmark" || argument.starts_with("--benchmark=")
+    })
+}
+
+fn install_fatal_error_reporter(show_dialog: bool) {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        default_hook(panic_info);
+        report_fatal_error("NFiDB stopped unexpectedly", &format!("{panic_info}"), show_dialog);
+    }));
+}
+
+fn report_fatal_error(title: &str, message: &str, show_dialog: bool) {
+    let log_path = AppConfig::path().ok().and_then(|config_path| {
+        let directory = config_path.parent()?;
+        fs::create_dir_all(directory).ok()?;
+        let path = directory.join("startup-error.log");
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        fs::write(&path, format!("unix_time={timestamp}\n{title}\n\n{message}\n")).ok()?;
+        Some(path)
+    });
+    if !show_dialog {
+        return;
+    }
+    let detail = log_path.map_or_else(
+        || message.to_owned(),
+        |path| format!("{message}\n\nDiagnostic details were saved to:\n{}", path.display()),
+    );
+    let title: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+    let detail: Vec<u16> = detail.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            detail.as_ptr(),
+            title.as_ptr(),
+            MB_OK | MB_ICONERROR,
+        );
+    }
 }
 
 fn write_json(path: &PathBuf, value: &impl serde::Serialize) -> Result<()> {

@@ -11,6 +11,7 @@ From a clean Windows checkout with the documented toolchain:
 ```powershell
 .\scripts\test.ps1
 .\scripts\build-release.ps1
+.\scripts\gui-smoke.ps1 -ArchivePath .\build\packages\NFiDB-windows-x64.zip
 .\scripts\portable-smoke.ps1
 .\scripts\file-transfer-smoke.ps1 -SkipBuild -ExecutablePath .\target\release\nfidb.exe
 ```
@@ -29,15 +30,15 @@ When compilation has already succeeded and only packaging or a smoke check needs
 .\scripts\validate-for-codex.ps1 -ResumeAfterBuild
 ```
 
-This reuses `target\release`, rebuilds the portable archive from a unique staging directory, and runs the native, portable, and file-transfer smoke checks without invoking npm or Cargo. Unique staging also lets an older portable copy remain open while a new ZIP is produced.
+This reuses `target\release`, rebuilds the portable archive from a unique staging directory, and runs the native, GUI-startup, portable, and file-transfer smoke checks without invoking npm or Cargo. Unique staging also lets an older portable copy remain open while a new ZIP is produced.
 
 The build script creates `build\packages\NFiDB-windows-x64.zip` and a sibling `.sha256` file. It contains the GUI host, pointer sink, README, changelog, licenses, third-party notice, and operating documentation. An installer is explicitly deferred; the ZIP is portable and unsigned.
 
 ## GitHub automation
 
-- `ci.yml` runs frontend install/typecheck/unit/build plus Rust fmt/check/Clippy/test/release-build on Windows and uploads the executables.
+- `ci.yml` runs frontend install/typecheck/unit/build plus Rust fmt/check/Clippy/test/release-build and a real GUI-window/status smoke on Windows before uploading the executables.
 - `pages.yml` publishes the static `site/` download/documentation landing page to GitHub Pages.
-- `release.yml` runs for `v*` tags, rebuilds on Windows, packages the portable ZIP, generates SHA-256, and attaches both to the GitHub Release.
+- `release.yml` runs for `v*` tags, rebuilds on Windows, packages the portable ZIP, requires the GUI startup smoke, generates SHA-256, and only then attaches both to the GitHub Release.
 
 The repository's Pages source must be set to **GitHub Actions**. Workflows need read contents permission; release needs write contents; Pages needs its generated Pages permissions.
 
@@ -45,6 +46,7 @@ The repository's Pages source must be set to **GitHub Actions**. Workflows need 
 
 - Clean checkout and all CI checks pass.
 - `pointer-sink --self-test` passes on the release machine.
+- The release executable creates its GUI window and serves `/api/status` under `scripts/gui-smoke.ps1`.
 - No secret, developer IP, local path, or test PIN is tracked.
 - Dependency/license table matches direct shipped dependencies.
 - Private-network firewall language and HTTP LAN limitation are visible.

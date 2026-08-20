@@ -2895,7 +2895,7 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "nfidb"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -2913,12 +2913,13 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "windows-sys 0.61.2",
  "winresource",
 ]
 
 [[package]]
 name = "nfidb-core"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "base64",
  "chrono",
@@ -2936,7 +2937,7 @@ dependencies = [
 
 [[package]]
 name = "nfidb-host-windows"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "fast_image_resize",
  "nfidb-core",
@@ -2955,7 +2956,7 @@ dependencies = [
 
 [[package]]
 name = "nfidb-protocol"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "approx",
  "serde",
@@ -2964,7 +2965,7 @@ dependencies = [
 
 [[package]]
 name = "nfidb-transport"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "axum",
@@ -3654,7 +3655,7 @@ dependencies = [
 
 [[package]]
 name = "pointer-sink"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "clap",
  "nfidb-core",

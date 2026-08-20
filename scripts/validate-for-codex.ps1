@@ -2,7 +2,8 @@ param(
     [switch] $SkipRelease,
     [switch] $SkipSmoke,
     [switch] $ResumeAfterBuild,
-    [int] $PortableSmokePort = 49120
+    [int] $PortableSmokePort = 49120,
+    [int] $GuiSmokePort = 49121
 )
 
 $ErrorActionPreference = 'Stop'
@@ -83,6 +84,9 @@ try {
             }
             Invoke-ValidationStep 'Native pointer self-test' {
                 & $pointerSink --self-test
+            }
+            Invoke-ValidationStep 'Windows GUI startup smoke' {
+                & (Join-Path $PSScriptRoot 'gui-smoke.ps1') -ArchivePath $archive -Port $GuiSmokePort
             }
             Invoke-ValidationStep 'Downloaded-style portable smoke' {
                 & (Join-Path $PSScriptRoot 'portable-smoke.ps1') -Archive $archive -Port $PortableSmokePort

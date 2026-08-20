@@ -1,5 +1,7 @@
+use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::sync::OnceLock;
+use std::thread;
 
 use nfidb_core::{CapabilityState, EncoderBackend, EncoderCapability, VideoCodec};
 use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1};
@@ -14,10 +16,29 @@ use windows::Win32::Media::MediaFoundation::{
     MFVideoFormat_HEVC, MFVideoFormat_I420, MFVideoFormat_IYUV, MFVideoFormat_NV12, MFVideoFormat_YV12,
     MFVideoInterlace_Progressive, eAVEncH264VProfile_ConstrainedBase, eAVEncH265VProfile_Main_420_8,
 };
-use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoTaskMemFree};
+use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoTaskMemFree, CoUninitialize};
 use windows::core::{GUID, Interface};
 
 static MEDIA_FOUNDATION: OnceLock<Result<(), String>> = OnceLock::new();
+
+thread_local! {
+    /// COM apartments belong to threads, not processes. Keeping the guard in
+    /// thread-local storage both avoids repeated CoInitializeEx calls and
+    /// balances a successful initialization when the worker exits.
+    static MEDIA_FOUNDATION_COM: OnceCell<Result<ComApartmentGuard, String>> = const { OnceCell::new() };
+}
+
+struct ComApartmentGuard {
+    owned: bool,
+}
+
+impl Drop for ComApartmentGuard {
+    fn drop(&mut self) {
+        if self.owned {
+            unsafe { CoUninitialize() };
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 struct AdapterIdentity {
@@ -30,6 +51,20 @@ struct AdapterIdentity {
 /// not promoted to `Functional` here: that state is reserved for a transform
 /// that has returned encoded bytes from the runtime/benchmark probe.
 pub fn discover_video_encoders() -> Vec<EncoderCapability> {
+    match thread::Builder::new()
+        .name("nfidb-mf-discovery".to_owned())
+        .spawn(discover_video_encoders_on_current_thread)
+    {
+        Ok(worker) => worker
+            .join()
+            .unwrap_or_else(|_| unavailable_discovery_results("Media Foundation discovery worker panicked".to_owned())),
+        Err(error) => {
+            unavailable_discovery_results(format!("Media Foundation discovery worker could not start: {error}"))
+        }
+    }
+}
+
+fn discover_video_encoders_on_current_thread() -> Vec<EncoderCapability> {
     let adapters = enumerate_adapters();
     let mut capabilities = vec![software_h264_capability()];
     let Some(startup_error) = initialize_media_foundation().err() else {
@@ -73,15 +108,36 @@ pub fn discover_video_encoders() -> Vec<EncoderCapability> {
     capabilities
 }
 
+fn unavailable_discovery_results(reason: String) -> Vec<EncoderCapability> {
+    let mut capabilities = vec![software_h264_capability()];
+    for codec in [VideoCodec::H264, VideoCodec::Hevc, VideoCodec::Av1] {
+        capabilities.push(unavailable_hardware(codec, reason.clone()));
+    }
+    capabilities
+}
+
 pub(crate) fn initialize_media_foundation() -> Result<(), String> {
+    MEDIA_FOUNDATION_COM.with(|state| {
+        state
+            .get_or_init(|| unsafe {
+                let com = CoInitializeEx(None, COINIT_MULTITHREADED);
+                if com.is_ok() {
+                    return Ok(ComApartmentGuard { owned: true });
+                }
+                // Another library may already own this thread as an STA. Media
+                // Foundation supports either apartment; do not uninitialize an
+                // apartment that NFiDB did not create.
+                if com.0 == 0x8001_0106_u32 as i32 {
+                    return Ok(ComApartmentGuard { owned: false });
+                }
+                Err(format!("COM initialization failed: 0x{:08x}", com.0 as u32))
+            })
+            .as_ref()
+            .map(|_| ())
+            .map_err(Clone::clone)
+    })?;
     MEDIA_FOUNDATION
         .get_or_init(|| unsafe {
-            // RPC_E_CHANGED_MODE is harmless here: Media Foundation only needs
-            // COM to be initialized on the calling thread in either apartment.
-            let com = CoInitializeEx(None, COINIT_MULTITHREADED);
-            if com.is_err() && com.0 != 0x8001_0106_u32 as i32 {
-                return Err(format!("COM initialization failed: 0x{:08x}", com.0 as u32));
-            }
             MFStartup(MF_VERSION, MFSTARTUP_FULL).map_err(|error| format!("Media Foundation startup failed: {error}"))
         })
         .clone()
@@ -424,6 +480,7 @@ fn software_h264_capability() -> EncoderCapability {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use windows::Win32::System::Com::COINIT_APARTMENTTHREADED;
 
     #[test]
     fn discovery_always_keeps_software_fallback() {
@@ -432,5 +489,24 @@ mod tests {
         assert!(capabilities.iter().any(|item| {
             item.mode() == nfidb_core::EncoderMode::H264Software && item.state == CapabilityState::Functional
         }));
+    }
+
+    #[test]
+    fn discovery_does_not_claim_the_callers_com_apartment() {
+        thread::Builder::new()
+            .name("nfidb-gui-apartment-regression".to_owned())
+            .spawn(|| {
+                let _ = discover_video_encoders();
+                let apartment = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+                assert!(
+                    apartment.is_ok(),
+                    "encoder discovery changed the caller's COM apartment: 0x{:08x}",
+                    apartment.0 as u32
+                );
+                unsafe { CoUninitialize() };
+            })
+            .expect("GUI apartment regression thread should start")
+            .join()
+            .expect("GUI apartment regression thread should not panic");
     }
 }
