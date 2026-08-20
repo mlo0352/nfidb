@@ -50,6 +50,13 @@ jobs:
         run: cargo build --release --locked -p nfidb -p pointer-sink
       - name: GUI startup smoke
         run: .\scripts\gui-smoke.ps1 -ExecutablePath .\target\release\nfidb.exe
+      - name: Upload GUI smoke diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nfidb-gui-smoke-ci
+          if-no-files-found: warn
+          path: build/gui-smoke
       - uses: actions/upload-artifact@v7
         with:
           name: NFiDB-windows-x64-ci

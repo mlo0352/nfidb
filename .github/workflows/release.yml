@@ -28,6 +28,13 @@ jobs:
         run: .\scripts\build-release.ps1 -SkipTests
       - name: GUI startup smoke
         run: .\scripts\gui-smoke.ps1 -ArchivePath .\build\packages\NFiDB-windows-x64.zip
+      - name: Upload GUI smoke diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nfidb-gui-smoke-release
+          if-no-files-found: warn
+          path: build/gui-smoke
       - name: Publish release assets
         uses: softprops/action-gh-release@v2
         with:
