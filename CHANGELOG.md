@@ -19,6 +19,7 @@ NFiDB is pre-release software. Releases remain GitHub prereleases until the phys
 - Made that smoke's Unicode title check reliable in Windows PowerShell 5.1 and PowerShell 7, and replaced `Compress-Archive` with a scanner-tolerant ZIP writer so temporary antivirus/indexer locks no longer print false-looking packaging errors.
 - Fixed the GUI smoke's hosted-Windows port race: it no longer reserves and immediately releases the requested port, discovers the listener actually owned by NFiDB when the server selects a fallback port, bypasses loopback proxies, and retains actionable listener/stdout/stderr diagnostics in CI artifacts.
 - Moved the Windows desktop shell from the OpenGL-only `glow` renderer to `wgpu`. NFiDB now uses the native Windows graphics stack or its software adapter instead of aborting on systems—such as clean hosted-Windows runners—that expose only OpenGL 1.1.
+- Updated the portable dependency audit for `setupapi.dll`, the signed Windows system component used by the new graphics adapter discovery path; third-party runtime DLLs remain rejected.
 - Confirmed the regression test rejects the published v0.6.1 binary with the captured `OleInitialize` panic before accepting a replacement build.
 - Validation now disables Cargo's transient progress renderer, prints the concrete failure reason, and can resume after source validation or after release compilation without repeating completed stages.
 

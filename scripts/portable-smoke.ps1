@@ -85,7 +85,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'pointer-sink.exe dependency inspection failed' }
     $dependencyOutput | Set-Content -LiteralPath $dependencyPath -Encoding utf8
     $nonSystemDependencies = $dependencyOutput | Where-Object {
-        $_ -match '^\s+[^\s]+\.dll\s*$' -and $_ -notmatch '(?i)(api-ms-win-[^\s]+|kernel32|user32|gdi32|advapi32|ole32|oleaut32|combase|shell32|comdlg32|ws2_32|dwmapi|shcore|bcrypt|bcryptprimitives|crypt32|iphlpapi|ntdll|secur32|userenv|winmm|version|uxtheme|winhttp|coremessaging|d3d11|dxgi|mfplat|psapi|opengl32|imm32)\.dll'
+        $_ -match '^\s+[^\s]+\.dll\s*$' -and $_ -notmatch '(?i)(api-ms-win-[^\s]+|kernel32|user32|gdi32|advapi32|ole32|oleaut32|combase|shell32|comdlg32|ws2_32|dwmapi|shcore|bcrypt|bcryptprimitives|crypt32|iphlpapi|ntdll|secur32|setupapi|userenv|winmm|version|uxtheme|winhttp|coremessaging|d3d11|dxgi|mfplat|psapi|opengl32|imm32)\.dll'
     }
     if ($nonSystemDependencies) {
         throw "Unexpected non-system DLL dependencies: $($nonSystemDependencies -join ', ')"
