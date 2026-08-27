@@ -10,7 +10,7 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "0.6.2"
+version = "0.7.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
@@ -58,6 +58,7 @@ webrtc = "0.17.1"
 windows-capture = "2.0.1"
 windows = { version = "0.62.2", features = [
     "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
     "Win32_Graphics_Direct3D11",
     "Win32_Graphics_Dxgi",
     "Win32_Graphics_Dxgi_Common",

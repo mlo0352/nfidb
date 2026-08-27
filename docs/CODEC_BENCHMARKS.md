@@ -2,7 +2,7 @@
 
 NFiDB has two deliberately separate benchmark levels.
 
-- The host benchmark needs no receiver. It renders deterministic screen-detail, drawing, and high-motion frames; performs the same CPU resize/color conversion as live capture; feeds each functional encoder; and records throughput, bytes, startup, preprocess/encode distributions, process CPU, working set, and Auto score.
+- The host benchmark needs no receiver. It renders deterministic screen-detail, drawing, and high-motion frames. Hardware rows upload the known BGRA source, then exercise the same D3D11 resize/BGRA-to-NV12 and Media Foundation DXGI-surface path as live monitor capture; software H.264 exercises CPU resize/I420. It records the actual memory path, throughput, bytes, startup, preprocess/encode distributions, process CPU, working set, and Auto score.
 - Quick Auto Test runs from a paired browser. It switches only among mutually supported modes, waits for a presented frame, samples the real capture/WebRTC/decode/presentation path for four seconds, stores the observation locally, and returns the host to Auto. Desktop browser automation is always labeled as Edge, never iPad Safari.
 
 `scripts/benchmark.ps1` exports `environment.json`, `capabilities.json`, `results.json`, `results.csv`, and `summary.md` for host runs. Receiver runs add raw, CSV, and Markdown Edge reports. `build/benchmarks/latest.json` remains the machine-readable latest host result.
@@ -34,9 +34,24 @@ Measured 2026-08-19 in optimized mode:
 
 Windows also enumerated a Microsoft `H264 Encoder MFT`, but it was only initializeable in this run and was not promoted to functional because it was not the transform that returned the encoded probe sample.
 
+## D3D11 surface-path validation
+
+Measured 2026-08-22 from the optimized 0.7.0 candidate. The live-monitor check reported `gpu-zero-copy` with 184 WGC frames captured and 180 frames encoded by `NVIDIA H.264 Encoder MFT`. A separate hardware-conditional test submitted one D3D11 NV12 surface successfully to every functional NVIDIA encoder: H.264, HEVC, and AV1.
+
+The Quick host run below used 30 deterministic 1920×1080 drawing frames. Hardware preprocessing includes CPU pattern generation/upload, then the same D3D11 video processor and direct Media Foundation DXGI-surface input as live capture. Throughput is unpaced host capacity. The sequence is too short for quality-equivalent bitrate conclusions, and it includes startup outliers in the mean/max; p95 describes the steady frames.
+
+| Encoder | Path | Throughput | Preprocess mean/p95 | Encode mean/p95 | CPU | Mean/peak RAM | Actual Mbps | Auto score |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| NVIDIA H.264 | `gpu-zero-copy` | 121.05 fps | 2.27 / 3.48 ms | 5.75 / 3.71 ms | 1.18% | 100.57 / 103.83 MiB | 3.14 | 85.97 |
+| NVIDIA HEVC | `gpu-zero-copy` | 111.98 fps | 2.37 / 2.89 ms | 6.32 / 4.30 ms | 0.91% | 124.78 / 127.61 MiB | 8.13 | 80.19 |
+| NVIDIA AV1 | `gpu-zero-copy` | 121.68 fps | 2.30 / 2.87 ms | 5.68 / 3.36 ms | 0.40% | 136.43 / 137.51 MiB | 1.66 | 88.01 |
+| OpenH264 | `cpu-preprocessing` | 29.30 fps | 2.14 / 2.26 ms | 31.64 / 34.96 ms | 2.72% | 151.11 / 151.32 MiB | 0.22 | rejected |
+
+The host-only score ranks AV1 first for this synthetic case. That is not the session Auto decision: AV1 still requires receiver support, successful negotiation and presentation, and a passing end-to-end observation before Auto can prefer it.
+
 ## Full host benchmark
 
-These are 60-frame drawing-workload rows from the first optimized 48-row run. FPS is unpaced end-to-end host throughput, including deterministic rendering, resize, color conversion, and encode. CPU is normalized to total logical processor capacity, matching a whole-process system percentage. Bitrate reflects actual bytes produced for this synthetic content and is not a quality-equivalent codec comparison. Startup outliers remain in the mean/max while p95 describes steady frames.
+These are 60-frame drawing-workload rows from the first optimized 48-row run and are retained as the pre-GPU-preprocessing baseline. FPS is unpaced end-to-end host throughput, including deterministic rendering, CPU resize, color conversion, and encode. CPU is normalized to total logical processor capacity, matching a whole-process system percentage. Bitrate reflects actual bytes produced for this synthetic content and is not a quality-equivalent codec comparison. Startup outliers remain in the mean/max while p95 describes steady frames.
 
 | Source → output | Encoder | Throughput | Encode p95 | Peak RAM | Actual Mbps | Auto score |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
@@ -78,12 +93,13 @@ The preserved OpenH264 release `0.2.0` end-to-end baseline was 53.8 encoded fps 
 - No physical iPad Safari codec benchmark was collected for 0.6.0. Previous physical-iPad H.264/input checks remain valid but are not relabeled as HEVC or AV1 evidence.
 - Objective decoded-frame PSNR/SSIM is not yet implemented, so quality is unavailable. The low synthetic bitrates must not be read as equal-quality comparisons.
 - Safari/Edge may omit capture-time frame metadata. In that case the report records a component-derived pipeline estimate, not glass-to-glass latency.
-- The active hardware pipeline still performs CPU preprocessing and memory copies. GPU encode acceleration is real; GPU zero-copy is not claimed.
+- Direct GPU input is verified only on the NVIDIA RTX 4090/MFT combination above. Intel and AMD hardware may select the measured `gpu-assisted` fallback until their direct-surface behavior is tested.
 
 ## Primary references
 
 - [Microsoft: MFTEnumEx](https://learn.microsoft.com/en-us/windows/win32/api/mfapi/nf-mfapi-mftenumex) documents category/type filtering, hardware enumeration flags, activation objects, and `ActivateObject`.
 - [Microsoft: Hardware MFTs](https://learn.microsoft.com/en-us/windows/win32/medfound/hardware-mfts) documents the asynchronous hardware-transform model and the separation of encode from video processing.
 - [Microsoft: CODECAPI_AVLowLatencyMode](https://learn.microsoft.com/en-us/windows/win32/medfound/codecapi-avlowlatencymode) describes real-time low-latency operation and the no-reordering expectation.
+- [Microsoft: Direct3D-aware MFTs](https://learn.microsoft.com/en-us/windows/win32/medfound/direct3d-aware-mfts) documents `MF_SA_D3D11_AWARE`, the DXGI device manager, and surface-backed samples. [Microsoft: `VideoProcessorBlt`](https://learn.microsoft.com/en-us/windows/win32/api/d3d11/nf-d3d11-id3d11videocontext-videoprocessorblt) documents the GPU video-processing operation used for scale and conversion.
 - [W3C WebRTC](https://www.w3.org/TR/webrtc/) defines `RTCRtpReceiver.getCapabilities()` as an optimistic receive-capability view and defines `setCodecPreferences()` negotiation behavior. That optimistic wording is why NFiDB requires SDP, negotiation, keyframe, and presentation evidence separately.
 - [WebKit: Safari 18 beta WebRTC HEVC](https://webkit.org/blog/15443/news-from-wwdc24-webkit-in-safari-18-beta/) documents RFC 7789 HEVC RTP support. [WebKit: Safari 18.4 media formats](https://webkit.org/blog/16574/webkit-features-in-safari-18-4/) documents H.264, HEVC, and hardware-dependent AV1 video-track support. NFiDB still trusts the actual browser report and playback test rather than the platform version alone.

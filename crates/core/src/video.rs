@@ -30,6 +30,18 @@ pub enum PipelineMemoryMode {
     CpuPreprocessing,
 }
 
+impl PipelineMemoryMode {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::GpuZeroCopy => "GPU zero-copy",
+            Self::GpuAssisted => "GPU assisted",
+            Self::CpuCopy => "CPU copy",
+            Self::CpuPreprocessing => "CPU preprocess",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CapabilityState {

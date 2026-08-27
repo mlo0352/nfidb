@@ -1,6 +1,6 @@
 # Test matrix
 
-Last updated: 2026-08-20. Development host: Windows 11 Pro x64 build 22631, Intel Core i9-13900K, NVIDIA GeForce RTX 4090, Rust 1.97.1 (`x86_64-pc-windows-msvc`), Node 22.22.3, npm 10.9.8, Microsoft Edge headless. Historical OpenH264 profile/soak results are release `0.2.0`; physical remote-control and file-transfer rows are the `0.4.0`–`0.5.1` alphas. Multi-codec capability, host benchmark, and Edge Auto rows are the `0.6.0` candidate.
+Last updated: 2026-08-22. Development host: Windows 11 Pro x64 build 22631, Intel Core i9-13900K, NVIDIA GeForce RTX 4090, Rust 1.97.1 (`x86_64-pc-windows-msvc`), Node 22.22.3, npm 10.9.8, Microsoft Edge headless. Historical OpenH264 profile/soak results are release `0.2.0`; physical remote-control and file-transfer rows are the `0.4.0`–`0.5.1` alphas. Multi-codec capability, host benchmark, and Edge Auto rows began with `0.6.0`; the D3D11 surface-path evidence was collected from the optimized `0.7.0` candidate.
 
 | Layer | Test | Result | Evidence |
 | --- | --- | --- | --- |
@@ -23,6 +23,7 @@ Last updated: 2026-08-20. Development host: Windows 11 Pro x64 build 22631, Inte
 | Native remote mapping | DOM key rows/modifiers/navigation/F1–F24/numpad, virtual-desktop mouse buttons, fractional wheel accumulation, held-state reset construction | PASS | Rust host unit tests |
 | Browser build | strict TypeScript + Safari 16.4 Vite target | PASS | 35 Vitest tests across 7 files; typecheck and production build |
 | Hardware encoder discovery | Enumerated candidate is activated, initialized, and must return encoded bytes before use | PASS | NVIDIA H.264/HEVC/AV1 MFT functional probes; Microsoft H264 MFT remains initializeable only |
+| GPU video pipeline | Bounded WGC D3D texture copy, GPU BGRA→NV12 scale/conversion, direct DXGI MFT input with assisted fallback | PASS (NVIDIA) | Live monitor reported `gpu-zero-copy` with 184 captured/180 encoded frames; hardware-conditional test passed H.264/HEVC/AV1; optimized 1080p Quick rows all reported `gpu-zero-copy` |
 | Host codec matrix | Four modes × four geometries × three deterministic workloads | PASS | 48/48 rows completed in optimized mode; JSON/CSV/Markdown exports |
 | Live codec switching | H.264 HW → AV1 HW → H.264 SW → Auto while capture stays alive | PASS | Edge Quick Auto E2E passed in 18.1 s; capture advanced throughout; authenticated session retained |
 | HEVC receiver negotiation | Functional host HEVC plus receiver report/SDP/presentation | PARTIAL | Host encode passes; Edge 151 did not report H.265, so it was correctly excluded; physical Safari pending |

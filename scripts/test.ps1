@@ -2,6 +2,37 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'msvc-env.ps1')
 
+function Invoke-NativeValidation {
+    param(
+        [Parameter(Mandatory)] [string] $FailureMessage,
+        [Parameter(Mandatory)] [scriptblock] $Command
+    )
+    # Windows PowerShell 5.1 wraps native stderr as ErrorRecord instances.
+    # Cargo writes normal progress and every compiler diagnostic to stderr, so
+    # normalize those records while preserving the real native exit code. This
+    # keeps validation transcripts useful instead of reducing a failure to the
+    # generic message below.
+    $previousErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $Command 2>&1 | ForEach-Object {
+            if ($_ -is [System.Management.Automation.ErrorRecord]) {
+                $_.Exception.Message
+            }
+            else {
+                $_
+            }
+        }
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorAction
+    }
+    if ($exitCode -ne 0) {
+        throw "$FailureMessage (exit code $exitCode)"
+    }
+}
+
 Push-Location (Join-Path $repoRoot 'apps\ipad-web')
 try {
     npm ci
@@ -23,14 +54,12 @@ Push-Location $repoRoot
 try {
     $env:CARGO_TERM_COLOR = 'never'
     $env:CARGO_TERM_PROGRESS_WHEN = 'never'
-    cargo fmt --all -- --check
-    if ($LASTEXITCODE -ne 0) { throw 'cargo fmt check failed' }
-    cargo check --workspace --all-targets --locked
-    if ($LASTEXITCODE -ne 0) { throw 'cargo check failed' }
-    cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-    if ($LASTEXITCODE -ne 0) { throw 'cargo clippy failed' }
-    cargo test --workspace --locked
-    if ($LASTEXITCODE -ne 0) { throw "cargo test failed with exit code $LASTEXITCODE" }
+    Invoke-NativeValidation 'cargo fmt check failed' { cargo fmt --all -- --check }
+    Invoke-NativeValidation 'cargo check failed' { cargo check --workspace --all-targets --locked }
+    Invoke-NativeValidation 'cargo clippy failed' {
+        cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+    }
+    Invoke-NativeValidation 'cargo test failed' { cargo test --workspace --locked }
 }
 finally {
     if ($null -eq $previousCargoColor) { Remove-Item Env:CARGO_TERM_COLOR -ErrorAction SilentlyContinue } else { $env:CARGO_TERM_COLOR = $previousCargoColor }

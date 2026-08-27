@@ -4,14 +4,17 @@ use std::time::Instant;
 
 use fast_image_resize::images::{Image, ImageRef};
 use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
-use nfidb_core::{AutoScore, BenchmarkMetrics, EncoderCapability, EncoderMode, VideoCodec, score_auto_candidate};
+use nfidb_core::{
+    AutoScore, BenchmarkMetrics, EncoderCapability, EncoderMode, PipelineMemoryMode, VideoCodec, score_auto_candidate,
+};
 use openh264::formats::{BgraSliceU8, YUVBuffer};
 use serde::{Deserialize, Serialize};
 use windows::Win32::Foundation::FILETIME;
 use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
 use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
 
-use crate::{VideoEncoderConfig, VideoFrame, create_video_encoder};
+use crate::gpu_preprocess::GpuBenchmarkPipeline;
+use crate::{VideoEncoderConfig, VideoFrame, VideoFrameData, create_video_encoder};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -54,6 +57,7 @@ pub struct HostBenchmarkResult {
     pub backend: String,
     pub encoder_name: String,
     pub hardware: bool,
+    pub pipeline_memory_mode: PipelineMemoryMode,
     pub state: String,
     pub reason: Option<String>,
     pub output_width: u32,
@@ -201,6 +205,17 @@ fn run_functional_case(
 
     let resize_options = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::Bilinear));
     let mut resizer = Resizer::new();
+    let mut gpu_pipeline = if mode.requires_hardware() {
+        Some(GpuBenchmarkPipeline::new(
+            case.source_width,
+            case.source_height,
+            output_width,
+            output_height,
+            case.requested_fps,
+        )?)
+    } else {
+        None
+    };
     let background = render_background(case.source_width, case.source_height);
     let process_start = process_sample();
     let started = Instant::now();
@@ -215,24 +230,37 @@ fn run_functional_case(
     for frame_number in 0..case.frames {
         let preprocess_started = Instant::now();
         let bgra = render_workload_frame(&background, case, frame_number);
-        let (bgra, width, height) = resize_bgra(
-            bgra,
-            case.source_width,
-            case.source_height,
-            case.max_width,
-            &mut resizer,
-            &resize_options,
-        )?;
-        let yuv = YUVBuffer::from_bgra8_source(BgraSliceU8::new(&bgra, (width as usize, height as usize)));
-        preprocess_ms.push(preprocess_started.elapsed().as_secs_f64() * 1000.0);
-
-        let encode_started = Instant::now();
-        let encoded = encoder.encode(VideoFrame {
-            width,
-            height,
-            yuv: &yuv,
-        })?;
-        encode_ms.push(encode_started.elapsed().as_secs_f64() * 1000.0);
+        let encoded = if let Some(gpu_pipeline) = gpu_pipeline.as_mut() {
+            let surface = gpu_pipeline.process_bgra(&bgra)?;
+            preprocess_ms.push(preprocess_started.elapsed().as_secs_f64() * 1000.0);
+            let encode_started = Instant::now();
+            let encoded = encoder.encode(VideoFrame {
+                width: output_width,
+                height: output_height,
+                data: VideoFrameData::D3D11Nv12(&surface),
+            })?;
+            encode_ms.push(encode_started.elapsed().as_secs_f64() * 1000.0);
+            encoded
+        } else {
+            let (bgra, width, height) = resize_bgra(
+                bgra,
+                case.source_width,
+                case.source_height,
+                case.max_width,
+                &mut resizer,
+                &resize_options,
+            )?;
+            let yuv = YUVBuffer::from_bgra8_source(BgraSliceU8::new(&bgra, (width as usize, height as usize)));
+            preprocess_ms.push(preprocess_started.elapsed().as_secs_f64() * 1000.0);
+            let encode_started = Instant::now();
+            let encoded = encoder.encode(VideoFrame {
+                width,
+                height,
+                data: VideoFrameData::I420(&yuv),
+            })?;
+            encode_ms.push(encode_started.elapsed().as_secs_f64() * 1000.0);
+            encoded
+        };
         if let Some(encoded) = encoded {
             if startup_to_first_frame_ms.is_none() {
                 startup_to_first_frame_ms = Some(started.elapsed().as_secs_f64() * 1000.0);
@@ -245,6 +273,7 @@ fn run_functional_case(
             working_sets.push(sample.working_set_mib);
         }
     }
+    let pipeline_memory_mode = encoder.pipeline_memory_mode();
     encoder.shutdown();
     let elapsed = started.elapsed().as_secs_f64().max(0.000_001);
     let process_end = process_sample();
@@ -286,6 +315,7 @@ fn run_functional_case(
         backend: encoder.backend().label().to_owned(),
         encoder_name: encoder_name.to_owned(),
         hardware: mode.requires_hardware(),
+        pipeline_memory_mode,
         state: "completed".to_owned(),
         reason: None,
         output_width,
@@ -332,6 +362,7 @@ fn empty_result(
         },
         encoder_name: mode.label().to_owned(),
         hardware: mode.requires_hardware(),
+        pipeline_memory_mode: PipelineMemoryMode::CpuPreprocessing,
         state: state.to_owned(),
         reason,
         output_width: 0,
@@ -368,7 +399,7 @@ pub fn write_benchmark_exports(directory: &Path, report: &HostBenchmarkReport) -
         "architecture": std::env::consts::ARCH,
         "logical_processors": std::thread::available_parallelism().map_or(1, std::num::NonZero::get),
         "adapters": report.capabilities.iter().filter_map(|capability| capability.adapter_name.as_ref()).collect::<std::collections::BTreeSet<_>>(),
-        "measurement_scope": "host encoder and CPU preprocessing; no receiver decode or presentation metrics",
+        "measurement_scope": "host preprocessing and encoder; hardware modes use CPU pattern generation/upload followed by the live D3D11 video-processor and MF surface path; no receiver decode or presentation metrics",
         "generated_unix_ms": report.generated_unix_ms,
     });
     fs::write(
@@ -392,22 +423,20 @@ pub fn write_benchmark_exports(directory: &Path, report: &HostBenchmarkReport) -
 }
 
 fn report_csv(report: &HostBenchmarkReport) -> String {
-    let mut csv = "case,workload,mode,codec,backend,state,source,output,requested_fps,actual_fps,encode_mean_ms,encode_p95_ms,preprocess_mean_ms,preprocess_p95_ms,cpu_percent,working_set_mean_mib,working_set_peak_mib,actual_mbps,auto_score,reason\n".to_owned();
+    let mut csv = "case,workload,mode,codec,backend,memory_path,state,source,output,requested_fps,actual_fps,encode_mean_ms,encode_p95_ms,preprocess_mean_ms,preprocess_p95_ms,cpu_percent,working_set_mean_mib,working_set_peak_mib,actual_mbps,auto_score,reason\n".to_owned();
     for result in &report.results {
         let field = |value: Option<f64>| value.map(|value| format!("{value:.4}")).unwrap_or_default();
-        csv.push_str(&format!(
-            "{},{},{:?},{:?},{},{},{:}x{:},{:}x{:},{},{},{},{},{},{},{},{},{},{},{},{}\n",
-            result.case.name,
-            result.case.workload.label(),
-            result.mode,
-            result.codec,
-            result.backend,
-            result.state,
-            result.case.source_width,
-            result.case.source_height,
-            result.output_width,
-            result.output_height,
-            result.case.requested_fps,
+        let row = [
+            result.case.name.clone(),
+            result.case.workload.label().to_owned(),
+            format!("{:?}", result.mode),
+            format!("{:?}", result.codec),
+            result.backend.clone(),
+            result.pipeline_memory_mode.label().to_owned(),
+            result.state.clone(),
+            format!("{}x{}", result.case.source_width, result.case.source_height),
+            format!("{}x{}", result.output_width, result.output_height),
+            result.case.requested_fps.to_string(),
             field(result.actual_fps),
             field(result.encode_mean_ms),
             field(result.encode_p95_ms),
@@ -419,13 +448,15 @@ fn report_csv(report: &HostBenchmarkReport) -> String {
             field(result.actual_mbps),
             field(result.auto_score.as_ref().and_then(|score| score.score)),
             result.reason.as_deref().unwrap_or("").replace(',', ";"),
-        ));
+        ];
+        csv.push_str(&row.join(","));
+        csv.push('\n');
     }
     csv
 }
 
 fn report_markdown(report: &HostBenchmarkReport) -> String {
-    let mut markdown = "# NFiDB codec benchmark\n\nHost-only deterministic benchmark. Missing end-to-end values are unavailable, not zero.\n\n| Case | Workload | Encoder | State | FPS | Encode p95 | CPU | RAM peak | Mbps | Auto score |\n| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |\n".to_owned();
+    let mut markdown = "# NFiDB codec benchmark\n\nHost-only deterministic benchmark. Hardware rows upload the deterministic pattern, then use the same D3D11 GPU preprocessing and Media Foundation surface path as live capture. Missing end-to-end values are unavailable, not zero.\n\n| Case | Workload | Encoder | Memory path | State | FPS | Encode p95 | CPU | RAM peak | Mbps | Auto score |\n| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |\n".to_owned();
     for result in &report.results {
         let f = |value: Option<f64>, suffix: &str| {
             value
@@ -433,10 +464,11 @@ fn report_markdown(report: &HostBenchmarkReport) -> String {
                 .unwrap_or_else(|| "—".to_owned())
         };
         markdown.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             result.case.name,
             result.case.workload.label(),
             result.mode.label(),
+            result.pipeline_memory_mode.label(),
             result.state,
             f(result.actual_fps, ""),
             f(result.encode_p95_ms, " ms"),

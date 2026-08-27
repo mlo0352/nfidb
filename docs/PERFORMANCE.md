@@ -22,6 +22,17 @@ The iPad sends a structured sample once per second. The host retains approximate
 
 ## Multi-codec release measurements
 
+The full matrix below predates the Unreleased D3D11 preprocessing change and is preserved as the CPU-preprocessing baseline. Current benchmark exports include a `memory_path` column and hardware rows exercise deterministic BGRA upload, D3D11 scale/conversion, and direct-or-assisted Media Foundation input.
+
+The optimized 2026-08-22 GPU validation ran 30 deterministic drawing frames at 1920×1080. All three NVIDIA Media Foundation encoders used direct DXGI surfaces and reported `gpu-zero-copy`; the live WGC monitor check independently captured 184 and encoded 180 frames through the same path. Host throughput is intentionally unpaced, so values above 60 fps indicate headroom rather than transmitted frame rate. Bitrates describe this short synthetic sequence and are not equal-quality codec comparisons.
+
+| Encoder | Memory path | Host throughput | Preprocess p95 | Encode p95 | Process CPU | Peak RAM | Actual Mbps | Auto score |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| NVIDIA H.264 | `gpu-zero-copy` | 121.05 fps | 3.48 ms | 3.71 ms | 1.18% | 103.83 MiB | 3.14 | 85.97 |
+| NVIDIA HEVC | `gpu-zero-copy` | 111.98 fps | 2.89 ms | 4.30 ms | 0.91% | 127.61 MiB | 8.13 | 80.19 |
+| NVIDIA AV1 | `gpu-zero-copy` | 121.68 fps | 2.87 ms | 3.36 ms | 0.40% | 137.51 MiB | 1.66 | 88.01 |
+| OpenH264 | `cpu-preprocessing` | 29.30 fps | 2.26 ms | 34.96 ms | 2.72% | 151.32 MiB | 0.22 | rejected |
+
 The 0.6.0 development host exposes functional NVIDIA Media Foundation H.264, HEVC, and AV1 encoders on an RTX 4090. The 60-frame full host matrix covered four source/output geometries and three deterministic workloads for all four usable modes. At 1080p Balanced with the drawing workload, steady encode p95 was 4.94 ms H.264 hardware, 5.54 ms HEVC hardware, 4.76 ms AV1 hardware, and 34.60 ms OpenH264. Unpaced complete host-pipeline throughput was 109.59, 102.12, 110.87, and 28.97 fps respectively. See [Codec benchmarks](CODEC_BENCHMARKS.md) for the complete method, representative tables, Auto formula, browser evidence, and limitations.
 
 The paired packaged Edge Quick Auto Test verified actual presentation for H.264 hardware, AV1 hardware, and OpenH264. Edge did not report HEVC and it was therefore excluded rather than forced. The final run measured 56.25/53.5 encoded/presented fps for hardware H.264, 57.25/57.25 for AV1, and 16.25/16.25 for OpenH264. Edge headless also reported 47.6–50% compositor presentation drops on the hardware paths, so every observation failed at least one strict end-to-end gate and Auto retained the conservative H.264 hardware choice. No physical iPad Safari multi-codec number is claimed.
@@ -53,7 +64,7 @@ The v0.4.0 mixed-input candidate added mouse, wheel, keyboard, Unicode text, and
 
 The 10-minute 4K→720p Fast soak delivered 144,002 exact input samples at 240.001 samples/s, decoded 30,508 frames, advanced media time by 599.997 seconds, and reported zero RTP loss, decoder drops, freezes, transport drops, or integrity mismatches. The encoder averaged about 51 fps over the run. Edge's headless 4K compositor presented only about 18 fps and reported 40.9% presentation drops even though WebRTC decoded every received frame; this is recorded as a test-environment compositor limit, not hidden as network loss.
 
-NFiDB therefore makes no “zero latency,” guaranteed 60/120 fps, color-accuracy, or native-Pencil-latency claim. Actual performance depends on PC CPU/GPU, source motion, Wi-Fi, iPad, codec, and drawing app. Media Foundation hardware encoding is now implemented; moving resize/color conversion and encoder input to GPU surfaces is the next major video optimization.
+NFiDB therefore makes no “zero latency,” guaranteed 60/120 fps, color-accuracy, or native-Pencil-latency claim. Actual performance depends on PC CPU/GPU, source motion, Wi-Fi, iPad, codec, and drawing app. Media Foundation hardware encoding and D3D11 monitor preprocessing/surface input are implemented; diagnostics distinguish direct and assisted GPU paths from the CPU compatibility path.
 
 ## File-transfer smoke
 

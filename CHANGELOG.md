@@ -2,7 +2,22 @@
 
 NFiDB is pre-release software. Releases remain GitHub prereleases until the physical drawing-app/multi-codec matrix, longer stability run, and broader hardware coverage are complete.
 
-## Unreleased
+## 0.7.0 — 2026-08-22 — Alpha
+
+### GPU video path
+
+- Monitor capture now remains in D3D11: WGC frames are copied into a four-surface bounded GPU pool, scaled and converted from BGRA to NV12 by the D3D11 video processor, then submitted to D3D11-aware Media Foundation encoders as DXGI surface buffers.
+- Added a driver-compatible `gpu-assisted` fallback. If an otherwise functional hardware MFT rejects direct DXGI input, NFiDB reads back the already resized/converted NV12 surface and keeps hardware encoding active. OpenH264 and all GPU failures retain the established CPU path.
+- Preserved newest-frame replacement at both live pipeline boundaries. GPU surface exhaustion drops stale video instead of allocating without a bound or growing latency.
+- Runtime diagnostics and benchmark rows now report the path actually used: `gpu-zero-copy`, `gpu-assisted`, or `cpu-preprocessing`.
+- Hardware host benchmarks now exercise the D3D11 upload, GPU video processor, and Media Foundation surface path; software H.264 continues to measure the compatibility CPU path.
+- Added a hardware-conditional test that feeds one GPU-preprocessed NV12 surface through every locally available H.264, HEVC, and AV1 hardware encoder.
+- Validated the live monitor path as `gpu-zero-copy` on the development RTX 4090 and fed GPU NV12 surfaces successfully to its NVIDIA H.264, HEVC, and AV1 Media Foundation encoders. The 1080p drawing Quick run sustained well above the 60 fps gate for all three hardware paths; OpenH264 remained below it.
+
+### Validation
+
+- Preserved native Cargo and Clippy diagnostics in Windows PowerShell 5.1 validation transcripts instead of collapsing failures into a generic exit message.
+- Made the bidirectional transfer smoke compatible with the .NET Framework runtime included with Windows PowerShell 5.1; its SHA-256 checks no longer require modern static .NET APIs.
 
 ## 0.6.2 — 2026-08-20 — Alpha
 

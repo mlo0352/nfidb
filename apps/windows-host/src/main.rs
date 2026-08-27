@@ -65,6 +65,12 @@ struct Cli {
     session_info: Option<PathBuf>,
     #[arg(long, requires_all = ["headless", "run_seconds"], help = "Write final host metrics JSON for benchmarks")]
     metrics_output: Option<PathBuf>,
+    #[arg(
+        long,
+        requires_all = ["headless", "run_seconds"],
+        help = "Write final capture, encoder, memory-path, and metrics JSON for automation"
+    )]
+    runtime_output: Option<PathBuf>,
     #[arg(long, requires = "headless", help = "Use this transfer Inbox for automation")]
     file_inbox: Option<PathBuf>,
     #[arg(long, value_enum, help = "Run a deterministic host codec benchmark and exit")]
@@ -409,6 +415,24 @@ fn run() -> Result<()> {
         capture.stop();
         if let Some(path) = &cli.metrics_output {
             write_json(path, &metrics.snapshot())?;
+        }
+        if let Some(path) = &cli.runtime_output {
+            let capture_status = capture.status();
+            write_json(
+                path,
+                &serde_json::json!({
+                    "product": "NFiDB",
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "capture": {
+                        "running_at_shutdown": capture_status.running,
+                        "source": capture_status.source,
+                        "encoder": capture_status.encoder,
+                        "error": capture_status.error,
+                    },
+                    "video": capture.video_runtime_status(),
+                    "metrics": metrics.snapshot(),
+                }),
+            )?;
         }
         server.stop();
         return Ok(());
@@ -1818,15 +1842,16 @@ impl HostApp {
             if let Some(report) = &report {
                 ui.add_space(10.0);
                 egui::Grid::new("codec_benchmark_results")
-                    .num_columns(8)
+                    .num_columns(9)
                     .striped(true)
                     .show(ui, |ui| {
-                        for heading in ["ENCODER", "STATE", "FPS", "P95", "CPU", "RAM", "MBPS", "SCORE"] {
+                        for heading in ["ENCODER", "PATH", "STATE", "FPS", "P95", "CPU", "RAM", "MBPS", "SCORE"] {
                             ui.label(egui::RichText::new(heading).size(9.0).strong().color(muted()));
                         }
                         ui.end_row();
                         for result in &report.results {
                             ui.label(result.mode.label());
+                            ui.label(result.pipeline_memory_mode.label());
                             ui.label(&result.state);
                             ui.label(optional_number(result.actual_fps, ""));
                             ui.label(optional_number(result.encode_p95_ms, " ms"));

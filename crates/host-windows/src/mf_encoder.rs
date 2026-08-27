@@ -3,18 +3,21 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use nfidb_core::VideoCodec;
+use windows::Win32::Graphics::Direct3D11::{ID3D11Device, ID3D11Texture2D};
 use windows::Win32::Media::MediaFoundation::{
-    IMFActivate, IMFMediaEventGenerator, IMFTransform, METransformHaveOutput, METransformNeedInput,
-    MF_E_NO_EVENTS_AVAILABLE, MF_EVENT_FLAG_NO_WAIT, MF_LOW_LATENCY, MFCreateMemoryBuffer, MFCreateSample,
-    MFMediaType_Video, MFSampleExtension_CleanPoint, MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG, MFT_ENUM_FLAG_ASYNCMFT,
-    MFT_ENUM_FLAG_HARDWARE, MFT_ENUM_FLAG_LOCALMFT, MFT_ENUM_FLAG_SORTANDFILTER, MFT_ENUM_FLAG_SYNCMFT,
-    MFT_FRIENDLY_NAME_Attribute, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, MFT_MESSAGE_NOTIFY_START_OF_STREAM,
-    MFT_OUTPUT_DATA_BUFFER, MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES, MFT_OUTPUT_STREAM_PROVIDES_SAMPLES,
-    MFT_REGISTER_TYPE_INFO,
+    IMFActivate, IMFDXGIDeviceManager, IMFMediaEventGenerator, IMFSample, IMFTransform, METransformHaveOutput,
+    METransformNeedInput, MF_E_NO_EVENTS_AVAILABLE, MF_EVENT_FLAG_NO_WAIT, MF_LOW_LATENCY, MF_SA_D3D11_AWARE,
+    MF_TRANSFORM_ASYNC_UNLOCK, MFCreateDXGIDeviceManager, MFCreateDXGISurfaceBuffer, MFCreateMemoryBuffer,
+    MFCreateSample, MFMediaType_Video, MFSampleExtension_CleanPoint, MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG,
+    MFT_ENUM_FLAG_ASYNCMFT, MFT_ENUM_FLAG_HARDWARE, MFT_ENUM_FLAG_LOCALMFT, MFT_ENUM_FLAG_SORTANDFILTER,
+    MFT_ENUM_FLAG_SYNCMFT, MFT_FRIENDLY_NAME_Attribute, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING,
+    MFT_MESSAGE_NOTIFY_START_OF_STREAM, MFT_MESSAGE_SET_D3D_MANAGER, MFT_OUTPUT_DATA_BUFFER,
+    MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES, MFT_OUTPUT_STREAM_PROVIDES_SAMPLES, MFT_REGISTER_TYPE_INFO,
 };
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::core::Interface;
 
+use crate::gpu_preprocess::GpuSurface;
 use crate::hardware::{attribute_string, codec_subtype, configure_probe, initialize_media_foundation};
 
 pub struct MediaFoundationEncoder {
@@ -24,6 +27,7 @@ pub struct MediaFoundationEncoder {
     output_buffer_size: u32,
     frame_duration_100ns: i64,
     next_timestamp_100ns: i64,
+    _d3d_manager: Option<IMFDXGIDeviceManager>,
     pub encoder_name: String,
     pub codec: VideoCodec,
 }
@@ -35,6 +39,28 @@ pub struct HardwareEncodedFrame {
 
 impl MediaFoundationEncoder {
     pub fn new(codec: VideoCodec, width: u32, height: u32, fps: u32, bitrate: u32) -> Result<Self, String> {
+        Self::new_internal(codec, width, height, fps, bitrate, None)
+    }
+
+    pub(crate) fn new_with_d3d11(
+        codec: VideoCodec,
+        width: u32,
+        height: u32,
+        fps: u32,
+        bitrate: u32,
+        device: &ID3D11Device,
+    ) -> Result<Self, String> {
+        Self::new_internal(codec, width, height, fps, bitrate, Some(device))
+    }
+
+    fn new_internal(
+        codec: VideoCodec,
+        width: u32,
+        height: u32,
+        fps: u32,
+        bitrate: u32,
+        device: Option<&ID3D11Device>,
+    ) -> Result<Self, String> {
         initialize_media_foundation()?;
         let activation = first_activation(codec)?;
         let encoder_name = attribute_string(&activation, &MFT_FRIENDLY_NAME_Attribute)
@@ -43,7 +69,34 @@ impl MediaFoundationEncoder {
             .map_err(|error| format!("activate {encoder_name}: {error}"))?;
         if let Ok(attributes) = unsafe { transform.GetAttributes() } {
             let _ = unsafe { attributes.SetUINT32(&MF_LOW_LATENCY, 1) };
+            let _ = unsafe { attributes.SetUINT32(&MF_TRANSFORM_ASYNC_UNLOCK, 1) };
         }
+        let d3d_manager = if let Some(device) = device {
+            let attributes = unsafe { transform.GetAttributes() }
+                .map_err(|error| format!("query {encoder_name} D3D11 support: {error}"))?;
+            let aware = unsafe { attributes.GetUINT32(&MF_SA_D3D11_AWARE).unwrap_or(0) };
+            if aware == 0 {
+                return Err(format!("{encoder_name} does not advertise D3D11 surface input"));
+            }
+            let mut reset_token = 0_u32;
+            let mut manager = None;
+            unsafe {
+                MFCreateDXGIDeviceManager(&mut reset_token, &mut manager)
+                    .map_err(|error| format!("create DXGI device manager for {encoder_name}: {error}"))?;
+            }
+            let manager = manager.ok_or_else(|| "Media Foundation returned a null DXGI device manager".to_owned())?;
+            unsafe {
+                manager
+                    .ResetDevice(device, reset_token)
+                    .map_err(|error| format!("attach capture GPU to {encoder_name}: {error}"))?;
+                transform
+                    .ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, Interface::as_raw(&manager) as usize)
+                    .map_err(|error| format!("enable D3D11 input on {encoder_name}: {error}"))?;
+            }
+            Some(manager)
+        } else {
+            None
+        };
         configure_probe(&transform, codec, width, height, fps, bitrate)?;
         let stream_info = unsafe { transform.GetOutputStreamInfo(0) }
             .map_err(|error| format!("query {encoder_name} output allocation: {error}"))?;
@@ -67,14 +120,13 @@ impl MediaFoundationEncoder {
             output_buffer_size: stream_info.cbSize.max(width.saturating_mul(height)),
             frame_duration_100ns: 10_000_000_i64 / i64::from(fps.max(1)),
             next_timestamp_100ns: 0,
+            _d3d_manager: d3d_manager,
             encoder_name,
             codec,
         })
     }
 
     pub fn encode_nv12(&mut self, nv12: &[u8]) -> Result<HardwareEncodedFrame, String> {
-        let timestamp = self.next_timestamp_100ns;
-        self.next_timestamp_100ns = self.next_timestamp_100ns.saturating_add(self.frame_duration_100ns);
         let input = unsafe { MFCreateSample() }.map_err(|error| format!("create input sample: {error}"))?;
         let buffer = unsafe { MFCreateMemoryBuffer(nv12.len() as u32) }
             .map_err(|error| format!("allocate NV12 input buffer: {error}"))?;
@@ -93,6 +145,26 @@ impl MediaFoundationEncoder {
             input
                 .AddBuffer(&buffer)
                 .map_err(|error| format!("attach NV12 input buffer: {error}"))?;
+        }
+        self.encode_sample(input)
+    }
+
+    pub(crate) fn encode_nv12_surface(&mut self, surface: &GpuSurface) -> Result<HardwareEncodedFrame, String> {
+        if self._d3d_manager.is_none() {
+            return Err("hardware encoder was not configured for D3D11 surface input".to_owned());
+        }
+        let input = unsafe { MFCreateSample() }.map_err(|error| format!("create GPU input sample: {error}"))?;
+        let buffer = unsafe { MFCreateDXGISurfaceBuffer(&ID3D11Texture2D::IID, &surface.texture, 0, false) }
+            .map_err(|error| format!("wrap NV12 texture as a Media Foundation buffer: {error}"))?;
+        unsafe { input.AddBuffer(&buffer) }
+            .map_err(|error| format!("attach NV12 texture to encoder sample: {error}"))?;
+        self.encode_sample(input)
+    }
+
+    fn encode_sample(&mut self, input: IMFSample) -> Result<HardwareEncodedFrame, String> {
+        let timestamp = self.next_timestamp_100ns;
+        self.next_timestamp_100ns = self.next_timestamp_100ns.saturating_add(self.frame_duration_100ns);
+        unsafe {
             input
                 .SetSampleTime(timestamp)
                 .map_err(|error| format!("timestamp input sample: {error}"))?;
@@ -100,7 +172,6 @@ impl MediaFoundationEncoder {
                 .SetSampleDuration(self.frame_duration_100ns)
                 .map_err(|error| format!("set input sample duration: {error}"))?;
         }
-
         let deadline = Instant::now() + Duration::from_millis(250);
         let mut input = Some(input);
         loop {

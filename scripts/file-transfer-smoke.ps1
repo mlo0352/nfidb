@@ -7,6 +7,21 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'msvc-env.ps1')
 
+function Get-ByteSha256 {
+    param([Parameter(Mandatory)] [byte[]] $Bytes)
+    # SHA256.HashData and Convert.ToHexString are modern .NET APIs that are
+    # absent from Windows PowerShell 5.1's .NET Framework runtime. Keep this
+    # smoke usable on the Windows version that ships with the OS.
+    $algorithm = [Security.Cryptography.SHA256]::Create()
+    try {
+        $hash = $algorithm.ComputeHash($Bytes)
+    }
+    finally {
+        $algorithm.Dispose()
+    }
+    ([BitConverter]::ToString($hash) -replace '-', '').ToLowerInvariant()
+}
+
 if (-not $SkipBuild -and $ExecutablePath) {
     throw '-ExecutablePath requires -SkipBuild because the selected binary must already exist'
 }
@@ -103,7 +118,7 @@ try {
         $count = [Math]::Min([int]$ticket.chunk_size_bytes, $uploadBytes.Length - $offset)
         $chunk = [byte[]]::new($count)
         [Array]::Copy($uploadBytes, $offset, $chunk, 0, $count)
-        $checksum = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($chunk)).ToLowerInvariant()
+        $checksum = Get-ByteSha256 $chunk
         $headers = @{ Origin = $origin; 'x-nfidb-offset' = $offset.ToString(); 'x-nfidb-chunk-sha256' = $checksum }
         $progress = Invoke-RestMethod -Uri "$origin/api/files/uploads/$($ticket.upload_id)" -Method Put -WebSession $web -Headers $headers -ContentType 'application/octet-stream' -Body $chunk
         $offset = [int64]$progress.uploaded_bytes
@@ -117,7 +132,7 @@ try {
     $inboxPath = Join-Path $inbox $complete.name
     if (-not (Test-Path -LiteralPath $inboxPath)) { throw 'completed upload did not appear in the Inbox' }
     $uploadedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $inboxPath).Hash.ToLowerInvariant()
-    $sourceUploadHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($uploadBytes)).ToLowerInvariant()
+    $sourceUploadHash = Get-ByteSha256 $uploadBytes
     if ($uploadedHash -ne $sourceUploadHash -or $complete.sha256 -ne $sourceUploadHash) {
         throw 'uploaded file checksum mismatch'
     }
@@ -129,7 +144,7 @@ try {
         name = 'cancel-me.bin'; mime = 'application/octet-stream'; size = 4096
     } | ConvertTo-Json -Compress)
     $cancelChunk = [byte[]]::new(1024)
-    $cancelHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($cancelChunk)).ToLowerInvariant()
+    $cancelHash = Get-ByteSha256 $cancelChunk
     $null = Invoke-RestMethod -Uri "$origin/api/files/uploads/$($cancelTicket.upload_id)" -Method Put -WebSession $web -Headers @{
         Origin = $origin; 'x-nfidb-offset' = '0'; 'x-nfidb-chunk-sha256' = $cancelHash
     } -ContentType 'application/octet-stream' -Body $cancelChunk

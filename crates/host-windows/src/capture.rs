@@ -22,7 +22,8 @@ use windows_capture::settings::{
     SecondaryWindowSettings, Settings,
 };
 
-use crate::{VideoEncoderConfig, VideoFrame, create_video_encoder};
+use crate::gpu_preprocess::{GpuSurface, GpuSurfacePool, GpuVideoProcessor, copy_capture_surface, read_bgra};
+use crate::{VideoEncoderConfig, VideoFrame, VideoFrameData, create_video_encoder};
 
 #[derive(Debug, Clone)]
 pub struct CaptureStatus {
@@ -56,21 +57,31 @@ struct RawFrame {
     bgra: Vec<u8>,
 }
 
+enum CapturedFrame {
+    Cpu(RawFrame),
+    Gpu(Arc<GpuSurface>),
+}
+
+enum PreparedFrameData {
+    I420(YUVBuffer),
+    D3D11Nv12(Arc<GpuSurface>),
+}
+
 struct PreparedFrame {
     width: u32,
     height: u32,
-    yuv: YUVBuffer,
+    data: PreparedFrameData,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct LatestFrame {
-    frame: Mutex<Option<RawFrame>>,
+    frame: Mutex<Option<CapturedFrame>>,
     ready: Condvar,
     stopped: AtomicBool,
 }
 
 impl LatestFrame {
-    fn submit(&self, frame: RawFrame, metrics: &Metrics) {
+    fn submit(&self, frame: CapturedFrame, metrics: &Metrics) {
         let mut current = self.frame.lock();
         if current.replace(frame).is_some() {
             metrics.dropped_frame();
@@ -78,7 +89,7 @@ impl LatestFrame {
         self.ready.notify_one();
     }
 
-    fn take(&self) -> Option<RawFrame> {
+    fn take(&self) -> Option<CapturedFrame> {
         let mut current = self.frame.lock();
         while current.is_none() && !self.stopped.load(Ordering::Acquire) {
             self.ready.wait_for(&mut current, Duration::from_millis(250));
@@ -127,11 +138,25 @@ struct CaptureFlags {
     slot: Arc<LatestFrame>,
     metrics: Arc<Metrics>,
     max_fps: Arc<AtomicU32>,
+    hardware_active: Arc<AtomicBool>,
+    status: Arc<Mutex<CaptureStatus>>,
+}
+
+struct EncodeLoopContext {
+    video_tx: broadcast::Sender<EncodedVideoFrame>,
+    metrics: Arc<Metrics>,
+    keyframe_request: KeyframeRequest,
+    pipeline: Arc<Mutex<PipelineSelection>>,
+    max_width: Arc<AtomicU32>,
+    memory_mode: Arc<AtomicU32>,
+    status: Arc<Mutex<CaptureStatus>>,
 }
 
 struct ScreenCapture {
     flags: CaptureFlags,
     scratch: Vec<u8>,
+    gpu_pool: GpuSurfacePool,
+    gpu_capture_unavailable: bool,
     last_frame: Instant,
 }
 
@@ -143,6 +168,8 @@ impl GraphicsCaptureApiHandler for ScreenCapture {
         Ok(Self {
             flags: ctx.flags,
             scratch: Vec::new(),
+            gpu_pool: GpuSurfacePool::default(),
+            gpu_capture_unavailable: false,
             last_frame: Instant::now() - Duration::from_secs(1),
         })
     }
@@ -163,6 +190,33 @@ impl GraphicsCaptureApiHandler for ScreenCapture {
         if width < 2 || height < 2 {
             return Ok(());
         }
+        if self.flags.hardware_active.load(Ordering::Relaxed) && !self.gpu_capture_unavailable {
+            match copy_capture_surface(
+                &mut self.gpu_pool,
+                frame.device(),
+                frame.device_context(),
+                frame.as_raw_texture(),
+                width,
+                height,
+                frame.desc().Format,
+            ) {
+                Ok(Some(surface)) => {
+                    self.flags.metrics.captured(width, height);
+                    self.flags.slot.submit(CapturedFrame::Gpu(surface), &self.flags.metrics);
+                    return Ok(());
+                }
+                Ok(None) => {
+                    self.flags.metrics.dropped_frame();
+                    return Ok(());
+                }
+                Err(error) => {
+                    self.gpu_capture_unavailable = true;
+                    self.flags.status.lock().error = Some(format!(
+                        "GPU capture copy is unavailable; using the CPU compatibility path: {error}"
+                    ));
+                }
+            }
+        }
         let buffer = frame.buffer().map_err(|error| error.to_string())?;
         let bytes = buffer.as_nopadding_buffer(&mut self.scratch);
         let source_stride = source_width as usize * 4;
@@ -172,9 +226,10 @@ impl GraphicsCaptureApiHandler for ScreenCapture {
             bgra.extend_from_slice(&row[..row_bytes]);
         }
         self.flags.metrics.captured(width, height);
-        self.flags
-            .slot
-            .submit(RawFrame { width, height, bgra }, &self.flags.metrics);
+        self.flags.slot.submit(
+            CapturedFrame::Cpu(RawFrame { width, height, bgra }),
+            &self.flags.metrics,
+        );
         Ok(())
     }
 
@@ -209,6 +264,8 @@ pub struct CaptureManager {
     pipeline: Arc<Mutex<PipelineSelection>>,
     live_max_fps: Arc<AtomicU32>,
     live_max_width: Arc<AtomicU32>,
+    live_hardware: Arc<AtomicBool>,
+    live_memory_mode: Arc<AtomicU32>,
     source: Mutex<Option<CaptureSource>>,
     status: Arc<Mutex<CaptureStatus>>,
 }
@@ -271,6 +328,8 @@ impl CaptureManager {
             pipeline,
             live_max_fps: Arc::new(AtomicU32::new(preset.max_fps)),
             live_max_width: Arc::new(AtomicU32::new(preset.max_width)),
+            live_hardware: Arc::new(AtomicBool::new(active_mode.requires_hardware())),
+            live_memory_mode: Arc::new(AtomicU32::new(memory_mode_value(PipelineMemoryMode::CpuPreprocessing))),
             source: Mutex::new(None),
             status: Arc::new(Mutex::new(CaptureStatus::default())),
         }
@@ -291,6 +350,7 @@ impl CaptureManager {
         let encoder_metrics = Arc::clone(&self.metrics);
         let pipeline = Arc::clone(&self.pipeline);
         let max_width = Arc::clone(&self.live_max_width);
+        let memory_mode = Arc::clone(&self.live_memory_mode);
         let status = Arc::clone(&self.status);
         let encoder_thread = thread::Builder::new()
             .name("nfidb-encoder".to_owned())
@@ -299,12 +359,15 @@ impl CaptureManager {
                 move || {
                     encode_loop(
                         encoder_slot,
-                        encoder_tx,
-                        encoder_metrics,
-                        keyframe_request,
-                        pipeline,
-                        max_width,
-                        status,
+                        EncodeLoopContext {
+                            video_tx: encoder_tx,
+                            metrics: encoder_metrics,
+                            keyframe_request,
+                            pipeline,
+                            max_width,
+                            memory_mode,
+                            status,
+                        },
                     )
                 }
             })
@@ -329,6 +392,8 @@ impl CaptureManager {
                 slot,
                 metrics: Arc::clone(&self.metrics),
                 max_fps: Arc::clone(&self.live_max_fps),
+                hardware_active: Arc::clone(&self.live_hardware),
+                status: Arc::clone(&self.status),
             },
         );
         match ScreenCapture::start_free_threaded(settings) {
@@ -369,6 +434,7 @@ impl CaptureManager {
         let encoder_metrics = Arc::clone(&self.metrics);
         let pipeline = Arc::clone(&self.pipeline);
         let max_width = Arc::clone(&self.live_max_width);
+        let memory_mode = Arc::clone(&self.live_memory_mode);
         let status = Arc::clone(&self.status);
         let encoder_thread = thread::Builder::new()
             .name("nfidb-encoder".to_owned())
@@ -377,12 +443,15 @@ impl CaptureManager {
                 move || {
                     encode_loop(
                         encoder_slot,
-                        encoder_tx,
-                        encoder_metrics,
-                        keyframe_request,
-                        pipeline,
-                        max_width,
-                        status,
+                        EncodeLoopContext {
+                            video_tx: encoder_tx,
+                            metrics: encoder_metrics,
+                            keyframe_request,
+                            pipeline,
+                            max_width,
+                            memory_mode,
+                            status,
+                        },
                     )
                 }
             })
@@ -505,6 +574,12 @@ impl VideoSettingsRuntime for CaptureManager {
         *self.browser.lock() = browser.clone();
         self.live_max_fps.store(preset.max_fps, Ordering::Relaxed);
         self.live_max_width.store(preset.max_width, Ordering::Relaxed);
+        self.live_hardware
+            .store(active_mode.requires_hardware(), Ordering::Relaxed);
+        self.live_memory_mode.store(
+            memory_mode_value(PipelineMemoryMode::CpuPreprocessing),
+            Ordering::Relaxed,
+        );
         {
             let mut pipeline = self.pipeline.lock();
             pipeline.generation = pipeline.generation.wrapping_add(1);
@@ -555,6 +630,7 @@ impl VideoSettingsRuntime for CaptureManager {
         let snapshot = self.metrics.snapshot();
         runtime.output_width = snapshot.output_width;
         runtime.output_height = snapshot.output_height;
+        runtime.pipeline_memory_mode = memory_mode_from_value(self.live_memory_mode.load(Ordering::Relaxed));
         runtime
     }
 
@@ -660,7 +736,7 @@ fn preflight_encoder(
     let result = encoder.encode(VideoFrame {
         width,
         height,
-        yuv: &yuv,
+        data: VideoFrameData::I420(&yuv),
     });
     encoder.shutdown();
     match result? {
@@ -678,6 +754,24 @@ fn output_dimensions(source_width: u32, source_height: u32, max_width: u32) -> (
     let width = max_width.max(2) & !1;
     let height = (((u64::from(source_height) * u64::from(width)) / u64::from(source_width)) as u32).max(2) & !1;
     (width, height)
+}
+
+const fn memory_mode_value(mode: PipelineMemoryMode) -> u32 {
+    match mode {
+        PipelineMemoryMode::GpuZeroCopy => 0,
+        PipelineMemoryMode::GpuAssisted => 1,
+        PipelineMemoryMode::CpuCopy => 2,
+        PipelineMemoryMode::CpuPreprocessing => 3,
+    }
+}
+
+const fn memory_mode_from_value(value: u32) -> PipelineMemoryMode {
+    match value {
+        0 => PipelineMemoryMode::GpuZeroCopy,
+        1 => PipelineMemoryMode::GpuAssisted,
+        2 => PipelineMemoryMode::CpuCopy,
+        _ => PipelineMemoryMode::CpuPreprocessing,
+    }
 }
 
 fn select_encoder(
@@ -779,19 +873,21 @@ impl Drop for CaptureManager {
     }
 }
 
-fn encode_loop(
-    slot: Arc<LatestFrame>,
-    video_tx: broadcast::Sender<EncodedVideoFrame>,
-    metrics: Arc<Metrics>,
-    keyframe_request: KeyframeRequest,
-    pipeline: Arc<Mutex<PipelineSelection>>,
-    max_width: Arc<AtomicU32>,
-    status: Arc<Mutex<CaptureStatus>>,
-) {
+fn encode_loop(slot: Arc<LatestFrame>, context: EncodeLoopContext) {
+    let EncodeLoopContext {
+        video_tx,
+        metrics,
+        keyframe_request,
+        pipeline,
+        max_width,
+        memory_mode,
+        status,
+    } = context;
     let prepared = Arc::new(LatestPreparedFrame::default());
     let preprocess_output = Arc::clone(&prepared);
     let preprocess_metrics = Arc::clone(&metrics);
     let preprocess_status = Arc::clone(&status);
+    let preprocess_pipeline = Arc::clone(&pipeline);
     let preprocess_thread = match thread::Builder::new()
         .name("nfidb-preprocess".to_owned())
         .spawn(move || {
@@ -800,6 +896,7 @@ fn encode_loop(
                 preprocess_output,
                 preprocess_metrics,
                 max_width,
+                preprocess_pipeline,
                 preprocess_status,
             )
         }) {
@@ -815,6 +912,7 @@ fn encode_loop(
         metrics,
         keyframe_request,
         pipeline,
+        memory_mode,
         status,
     );
     let _ = preprocess_thread.join();
@@ -826,6 +924,7 @@ fn encode_video_loop(
     metrics: Arc<Metrics>,
     keyframe_request: KeyframeRequest,
     pipeline: Arc<Mutex<PipelineSelection>>,
+    memory_mode: Arc<AtomicU32>,
     status: Arc<Mutex<CaptureStatus>>,
 ) {
     const RECOVERY_KEYFRAME_INTERVAL: Duration = Duration::from_secs(5);
@@ -878,11 +977,24 @@ fn encode_video_loop(
             status.lock().error = Some(format!("{} keyframe request failed: {error}", mode.label()));
         }
         let started = Instant::now();
-        match encoder.as_mut().expect("encoder initialized").encode(VideoFrame {
-            width: frame.width,
-            height: frame.height,
-            yuv: &frame.yuv,
-        }) {
+        let frame_data = match &frame.data {
+            PreparedFrameData::I420(yuv) => VideoFrameData::I420(yuv),
+            PreparedFrameData::D3D11Nv12(surface) => VideoFrameData::D3D11Nv12(surface),
+        };
+        let encoded = {
+            let active_encoder = encoder.as_mut().expect("encoder initialized");
+            let result = active_encoder.encode(VideoFrame {
+                width: frame.width,
+                height: frame.height,
+                data: frame_data,
+            });
+            memory_mode.store(
+                memory_mode_value(active_encoder.pipeline_memory_mode()),
+                Ordering::Relaxed,
+            );
+            result
+        };
+        match encoded {
             Ok(Some(packet)) => {
                 metrics.encoded(
                     packet.data.len(),
@@ -929,24 +1041,95 @@ fn preprocess_loop(
     output: Arc<LatestPreparedFrame>,
     metrics: Arc<Metrics>,
     max_width: Arc<AtomicU32>,
+    pipeline: Arc<Mutex<PipelineSelection>>,
     status: Arc<Mutex<CaptureStatus>>,
 ) {
     let options = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::Bilinear));
     let mut resizer = Resizer::new();
+    let mut gpu_processor: Option<GpuVideoProcessor> = None;
+    let mut gpu_failed_generation = None;
     while let Some(frame) = slot.take() {
         let started = Instant::now();
-        let (bgra, width, height) = match resize_frame(frame, max_width.load(Ordering::Relaxed), &mut resizer, &options)
+        let selection = pipeline.lock().clone();
+        if let CapturedFrame::Gpu(surface) = &frame
+            && selection.active_mode.requires_hardware()
+            && gpu_failed_generation != Some(selection.generation)
         {
+            let (width, height) = output_dimensions(surface.width, surface.height, max_width.load(Ordering::Relaxed));
+            let fps = selection.video.active_preset().max_fps;
+            let needs_rebuild = gpu_processor
+                .as_ref()
+                .is_none_or(|processor| !processor.matches(surface, width, height, fps));
+            if needs_rebuild {
+                gpu_processor = match GpuVideoProcessor::new(surface, width, height, fps) {
+                    Ok(processor) => Some(processor),
+                    Err(error) => {
+                        gpu_failed_generation = Some(selection.generation);
+                        status.lock().error = Some(format!(
+                            "GPU preprocessing is unavailable; using CPU preprocessing: {error}"
+                        ));
+                        None
+                    }
+                };
+            }
+            if let Some(processor) = gpu_processor.as_mut() {
+                match processor.process(surface) {
+                    Ok(Some(surface)) => {
+                        metrics.preprocessed(started.elapsed().as_micros() as u64);
+                        output.submit(
+                            PreparedFrame {
+                                width,
+                                height,
+                                data: PreparedFrameData::D3D11Nv12(surface),
+                            },
+                            &metrics,
+                        );
+                        continue;
+                    }
+                    Ok(None) => {
+                        metrics.dropped_frame();
+                        continue;
+                    }
+                    Err(error) => {
+                        gpu_failed_generation = Some(selection.generation);
+                        gpu_processor = None;
+                        status.lock().error =
+                            Some(format!("GPU preprocessing failed; using CPU preprocessing: {error}"));
+                    }
+                }
+            }
+        }
+        let raw = match frame {
+            CapturedFrame::Cpu(frame) => frame,
+            CapturedFrame::Gpu(surface) => match read_bgra(&surface) {
+                Ok(bgra) => RawFrame {
+                    width: surface.width,
+                    height: surface.height,
+                    bgra,
+                },
+                Err(error) => {
+                    status.lock().error = Some(format!("GPU frame readback failed: {error}"));
+                    continue;
+                }
+            },
+        };
+        let (bgra, width, height) = match resize_frame(raw, max_width.load(Ordering::Relaxed), &mut resizer, &options) {
             Ok(frame) => frame,
             Err(error) => {
                 status.lock().error = Some(error);
                 continue;
             }
         };
-        let source = BgraSliceU8::new(&bgra, (width as usize, height as usize));
-        let yuv = YUVBuffer::from_bgra8_source(source);
+        let yuv = YUVBuffer::from_bgra8_source(BgraSliceU8::new(&bgra, (width as usize, height as usize)));
         metrics.preprocessed(started.elapsed().as_micros() as u64);
-        output.submit(PreparedFrame { width, height, yuv }, &metrics);
+        output.submit(
+            PreparedFrame {
+                width,
+                height,
+                data: PreparedFrameData::I420(yuv),
+            },
+            &metrics,
+        );
     }
     output.stop();
 }
@@ -998,7 +1181,7 @@ fn test_pattern_loop(slot: Arc<LatestFrame>, metrics: Arc<Metrics>, max_fps: Arc
         }
         draw_integrity_marker(&mut bgra, width, height, frame_number);
         metrics.captured(width, height);
-        slot.submit(RawFrame { width, height, bgra }, &metrics);
+        slot.submit(CapturedFrame::Cpu(RawFrame { width, height, bgra }), &metrics);
         frame_number = frame_number.wrapping_add(1);
         thread::sleep(period.saturating_sub(started.elapsed()));
     }

@@ -3,6 +3,7 @@
 mod benchmark;
 mod capture;
 mod encoder;
+mod gpu_preprocess;
 mod hardware;
 mod input;
 mod learned;
@@ -15,7 +16,8 @@ pub use benchmark::{
     quick_benchmark_cases, run_host_benchmark_suite, write_benchmark_exports,
 };
 pub use capture::{CaptureManager, CaptureStatus};
-pub use encoder::{EncodedPacket, VideoEncoder, VideoEncoderConfig, VideoFrame, create_video_encoder};
+pub use encoder::{EncodedPacket, VideoEncoder, VideoEncoderConfig, VideoFrame, VideoFrameData, create_video_encoder};
+pub use gpu_preprocess::GpuSurface;
 pub use hardware::discover_video_encoders;
 pub use input::{PointerInjector, PointerInjectorOptions, set_per_monitor_dpi_awareness};
 pub use mf_encoder::{HardwareEncodedFrame, MediaFoundationEncoder, functional_probe};
