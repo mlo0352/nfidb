@@ -713,6 +713,7 @@ impl eframe::App for HostApp {
                     .inner_margin(egui::Margin::same(28)),
             )
             .show(ui, |ui| {
+                force_white_text(ui);
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| match self.active_page {
@@ -1061,13 +1062,23 @@ impl HostApp {
         );
         ui.add_space(18.0);
         card(ui, |ui| {
-            ui.heading(egui::RichText::new("Automatic setup").size(20.0));
+            ui.heading(
+                egui::RichText::new("Automatic setup")
+                    .size(20.0)
+                    .strong()
+                    .color(egui::Color32::WHITE),
+            );
             ui.label("READY  Local server, PIN/QR pairing, Auto video, input reset, and the Downloads/NFiDB Inbox are configured.");
             ui.label(
                 "Windows Firewall may ask once. Allow NFiDB on Private networks only; never allow Public networks.",
             );
             ui.add_space(12.0);
-            ui.heading(egui::RichText::new("First session").size(20.0));
+            ui.heading(
+                egui::RichText::new("First session")
+                    .size(20.0)
+                    .strong()
+                    .color(egui::Color32::WHITE),
+            );
             ui.label("1. Keep the host and iPad on the same normal Wi-Fi or wired LAN; guest/client-isolated Wi-Fi will not work.");
             ui.label("2. Open the Session address or QR in iPad Safari. The six-digit PIN submits automatically.");
             ui.label(
@@ -1095,7 +1106,12 @@ impl HostApp {
         });
         ui.add_space(16.0);
         card(ui, |ui| {
-            ui.heading(egui::RichText::new("Troubleshooting").size(20.0));
+            ui.heading(
+                egui::RichText::new("Troubleshooting")
+                    .size(20.0)
+                    .strong()
+                    .color(egui::Color32::WHITE),
+            );
             ui.collapsing(help_heading("The iPad cannot open the address"), |ui| {
                 ui.label("Use the numeric LAN address shown on Session. Confirm both devices are on the same non-guest network, and that Windows marks it Private. Check Windows Firewall before disabling any security control.");
             });
@@ -1127,7 +1143,12 @@ impl HostApp {
         );
         ui.add_space(18.0);
         card(ui, |ui| {
-            ui.heading(egui::RichText::new("Mac permissions").size(20.0).strong());
+            ui.heading(
+                egui::RichText::new("Mac permissions")
+                    .size(20.0)
+                    .strong()
+                    .color(egui::Color32::WHITE),
+            );
             ui.label(
                 egui::RichText::new(
                     "Both permissions must show READY here. A switch left over from an older NFiDB build may still appear enabled in System Settings without granting access to this build.",
@@ -1216,7 +1237,12 @@ impl HostApp {
         });
         ui.add_space(16.0);
         card(ui, |ui| {
-            ui.heading(egui::RichText::new("First session").size(20.0));
+            ui.heading(
+                egui::RichText::new("First session")
+                    .size(20.0)
+                    .strong()
+                    .color(egui::Color32::WHITE),
+            );
             ui.label("1. Open the Session address or QR in iPad Safari; six PIN digits submit automatically.");
             ui.label("2. Open the pointer diagnostic and test pressure, tilt, coalescing, and one long stroke.");
             ui.label(
@@ -1240,7 +1266,12 @@ impl HostApp {
         });
         ui.add_space(16.0);
         card(ui, |ui| {
-            ui.heading(egui::RichText::new("Troubleshooting").size(20.0));
+            ui.heading(
+                egui::RichText::new("Troubleshooting")
+                    .size(20.0)
+                    .strong()
+                    .color(egui::Color32::WHITE),
+            );
             ui.collapsing(help_heading("Accessibility is not visible or NFiDB is absent"), |ui| {
                 ui.label("Use Open Accessibility Settings above. Apple places it under Privacy & Security and may require scrolling. If the app is absent, use + and add ~/Applications/NFiDB.app manually.");
             });
@@ -2394,7 +2425,7 @@ impl HostApp {
 fn configure_visuals(context: &egui::Context) {
     let mut visuals = egui::Visuals::dark();
     let primary_text = egui::Color32::WHITE;
-    let secondary_text = egui::Color32::from_rgb(244, 248, 246);
+    let secondary_text = egui::Color32::WHITE;
     visuals.override_text_color = Some(primary_text);
     visuals.weak_text_alpha = 1.0;
     visuals.weak_text_color = Some(secondary_text);
@@ -2407,16 +2438,16 @@ fn configure_visuals(context: &egui::Context) {
     visuals.hyperlink_color = accent();
     visuals.window_stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(92, 108, 105));
     visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.5, primary_text);
-    visuals.widgets.noninteractive.bg_fill = egui::Color32::from_rgb(16, 21, 22);
-    visuals.widgets.noninteractive.weak_bg_fill = egui::Color32::from_rgb(20, 27, 28);
-    visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(80, 96, 94));
-    visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(244, 249, 247));
+    visuals.widgets.noninteractive.bg_fill = action_button_fill();
+    visuals.widgets.noninteractive.weak_bg_fill = action_button_fill();
+    visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(2.0, action_button_border());
+    visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.5, egui::Color32::WHITE);
     visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.5, egui::Color32::WHITE);
     visuals.widgets.active.fg_stroke = egui::Stroke::new(1.5, egui::Color32::WHITE);
     visuals.widgets.open.fg_stroke = egui::Stroke::new(1.5, egui::Color32::WHITE);
-    visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(37, 52, 51);
-    visuals.widgets.inactive.weak_bg_fill = egui::Color32::from_rgb(31, 45, 44);
-    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(125, 146, 141));
+    visuals.widgets.inactive.bg_fill = action_button_fill();
+    visuals.widgets.inactive.weak_bg_fill = action_button_fill();
+    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(2.0, action_button_border());
     visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(45, 78, 70);
     visuals.widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(39, 68, 62);
     visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.5, accent());
@@ -2461,6 +2492,18 @@ fn configure_visuals(context: &egui::Context) {
     });
 }
 
+fn force_white_text(ui: &mut egui::Ui) {
+    let visuals = &mut ui.style_mut().visuals;
+    visuals.override_text_color = Some(egui::Color32::WHITE);
+    visuals.weak_text_alpha = 1.0;
+    visuals.weak_text_color = Some(egui::Color32::WHITE);
+    visuals.widgets.noninteractive.fg_stroke.color = egui::Color32::WHITE;
+    visuals.widgets.inactive.fg_stroke.color = egui::Color32::WHITE;
+    visuals.widgets.hovered.fg_stroke.color = egui::Color32::WHITE;
+    visuals.widgets.active.fg_stroke.color = egui::Color32::WHITE;
+    visuals.widgets.open.fg_stroke.color = egui::Color32::WHITE;
+}
+
 fn draw_qr(ui: &mut egui::Ui, value: &str, size: f32) {
     let Ok(code) = QrCode::new(value.as_bytes()) else {
         ui.label("QR unavailable");
@@ -2494,6 +2537,8 @@ fn action_button(label: &str) -> egui::Button<'_> {
             .color(egui::Color32::WHITE),
     )
     .min_size(egui::vec2(0.0, 40.0))
+    .fill(action_button_fill())
+    .stroke(egui::Stroke::new(2.0, action_button_border()))
     .corner_radius(egui::CornerRadius::same(4))
 }
 
@@ -2505,6 +2550,8 @@ fn compact_action_button(label: &str) -> egui::Button<'_> {
             .color(egui::Color32::WHITE),
     )
     .min_size(egui::vec2(0.0, 34.0))
+    .fill(action_button_fill())
+    .stroke(egui::Stroke::new(2.0, action_button_border()))
     .corner_radius(egui::CornerRadius::same(4))
 }
 
@@ -2516,29 +2563,32 @@ fn help_heading(title: &str) -> egui::RichText {
 }
 
 fn nav_button(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
-    let color = if active { accent() } else { egui::Color32::WHITE };
     ui.add_sized(
         [188.0, 44.0],
-        egui::Button::new(egui::RichText::new(label).size(12.5).strong().color(color))
-            .fill(if active {
-                egui::Color32::from_rgb(19, 49, 42)
-            } else {
-                egui::Color32::from_rgb(20, 27, 28)
-            })
-            .stroke(egui::Stroke::new(
-                1.5,
-                if active {
-                    egui::Color32::from_rgb(78, 183, 159)
-                } else {
-                    egui::Color32::from_rgb(65, 79, 77)
-                },
-            )),
+        egui::Button::new(
+            egui::RichText::new(label)
+                .size(14.5)
+                .strong()
+                .color(egui::Color32::WHITE),
+        )
+        .fill(if active {
+            egui::Color32::from_rgb(22, 70, 59)
+        } else {
+            action_button_fill()
+        })
+        .stroke(egui::Stroke::new(2.0, action_button_border()))
+        .corner_radius(egui::CornerRadius::same(4)),
     )
 }
 
 fn page_heading(ui: &mut egui::Ui, title: &str, subtitle: &str) {
-    ui.heading(egui::RichText::new(title).size(27.0).strong());
-    ui.label(egui::RichText::new(subtitle).size(13.0).color(muted()));
+    ui.heading(
+        egui::RichText::new(title)
+            .size(27.0)
+            .strong()
+            .color(egui::Color32::WHITE),
+    );
+    ui.label(egui::RichText::new(subtitle).size(15.0).color(egui::Color32::WHITE));
 }
 
 fn card(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
@@ -2584,23 +2634,7 @@ fn permission_control(ui: &mut egui::Ui, title: &str, description: &str, granted
                     ui.label(egui::RichText::new(description).size(13.0).color(muted()));
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    clicked = ui
-                        .add_sized(
-                            [154.0, 40.0],
-                            egui::Button::new(
-                                egui::RichText::new(action)
-                                    .size(14.5)
-                                    .strong()
-                                    .color(egui::Color32::WHITE),
-                            )
-                            .fill(if granted {
-                                egui::Color32::from_rgb(28, 43, 41)
-                            } else {
-                                egui::Color32::from_rgb(91, 60, 21)
-                            })
-                            .stroke(egui::Stroke::new(1.5, border)),
-                        )
-                        .clicked();
+                    clicked = ui.add_sized([154.0, 44.0], action_button(action)).clicked();
                 });
             });
         });
@@ -2714,6 +2748,14 @@ const fn accent() -> egui::Color32 {
     egui::Color32::from_rgb(91, 224, 194)
 }
 
+const fn action_button_fill() -> egui::Color32 {
+    egui::Color32::from_rgb(18, 56, 49)
+}
+
+const fn action_button_border() -> egui::Color32 {
+    egui::Color32::from_rgb(91, 224, 194)
+}
+
 const fn muted() -> egui::Color32 {
-    egui::Color32::from_rgb(244, 248, 246)
+    egui::Color32::WHITE
 }
