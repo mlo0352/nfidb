@@ -653,7 +653,14 @@ impl eframe::App for HostApp {
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("NFi").size(23.0).strong().color(accent()));
                     ui.add_space(-7.0);
-                    ui.label(egui::RichText::new("DB").size(23.0).strong());
+                    // Brand contract: teal "NFi", white "DB" on every host.
+                    // Never let the platform theme choose the DB foreground.
+                    ui.label(
+                        egui::RichText::new("DB")
+                            .size(23.0)
+                            .strong()
+                            .color(egui::Color32::WHITE),
+                    );
                     ui.add_space(12.0);
                     ui.label(
                         egui::RichText::new("NO FRILLS IPAD DRAWING BRIDGE")
