@@ -20,7 +20,53 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
 fi
 
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.0}"
-sign_identity="${NFIDB_CODESIGN_IDENTITY:--}"
+
+available_signing_identities="$(security find-identity -v -p codesigning 2>/dev/null || true)"
+sign_identity_source="explicit"
+if [[ -n "${NFIDB_CODESIGN_IDENTITY:-}" ]]; then
+  sign_identity="$NFIDB_CODESIGN_IDENTITY"
+else
+  sign_identity="-"
+  sign_identity_source="ad-hoc fallback"
+
+  installed_app="$HOME/Applications/NFiDB.app"
+  installed_authority=""
+  if [[ -d "$installed_app" ]]; then
+    installed_authority="$(
+      codesign -d --verbose=2 "$installed_app" 2>&1 \
+        | awk -F= '/^Authority=(Developer ID Application:|Apple Development:)/ { print substr($0, index($0, "=") + 1); exit }' \
+        || true
+    )"
+  fi
+  if [[ -n "$installed_authority" ]]; then
+    installed_identity="$(
+      awk -v authority="$installed_authority" 'index($0, "\"" authority "\"") { print $2; exit }' \
+        <<<"$available_signing_identities"
+    )"
+    if [[ -n "$installed_identity" ]]; then
+      sign_identity="$installed_identity"
+      sign_identity_source="installed NFiDB identity"
+    fi
+  fi
+
+  if [[ "$sign_identity" == "-" ]]; then
+    developer_id_identity="$(
+      awk 'index($0, "\"Developer ID Application:") { print $2; exit }' \
+        <<<"$available_signing_identities"
+    )"
+    apple_development_identity="$(
+      awk 'index($0, "\"Apple Development:") { print $2; exit }' \
+        <<<"$available_signing_identities"
+    )"
+    if [[ -n "$developer_id_identity" ]]; then
+      sign_identity="$developer_id_identity"
+      sign_identity_source="detected Developer ID Application identity"
+    elif [[ -n "$apple_development_identity" ]]; then
+      sign_identity="$apple_development_identity"
+      sign_identity_source="detected Apple Development identity"
+    fi
+  fi
+fi
 
 if [[ $skip_web -eq 0 ]]; then
   npm --prefix apps/ipad-web ci
@@ -84,6 +130,6 @@ echo "Created $archive"
 if [[ "$sign_identity" == "-" ]]; then
   echo "Code signing: ad-hoc (set NFIDB_CODESIGN_IDENTITY for a stable Apple signing identity)"
 else
-  echo "Code signing: $sign_identity"
+  echo "Code signing: $sign_identity ($sign_identity_source)"
 fi
 echo "SHA-256 $(cat "$archive.sha256")"

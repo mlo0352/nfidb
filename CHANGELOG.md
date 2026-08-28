@@ -21,6 +21,7 @@ NFiDB is pre-release software. Releases remain GitHub prereleases until the phys
 - Locked the native wordmark to the established teal `NFi` / white `DB` brand colors instead of allowing macOS to inherit the `DB` foreground from its window theme.
 - Ignore ScreenCaptureKit's normal status-only startup/change/shutdown samples instead of reporting a false missing-pixel-buffer capture error after an otherwise healthy run.
 - Added `NFIDB_CODESIGN_IDENTITY` support to the Mac packager. Stable Apple signing prevents development rebuilds from appearing as unrelated apps to macOS privacy controls; CI retains an explicit ad-hoc fallback until Developer ID/notarization credentials are configured.
+- Local Mac packaging now automatically reuses the installed NFiDB Apple identity, or another available stable Apple code-signing identity, when `NFIDB_CODESIGN_IDENTITY` is unset. Setup and release guidance also document Tahoe's required one-time reboot after a Screen Recording permission entry is removed or reset.
 - Added macOS-specific host and iPad labels, keyboard shortcuts, permission guidance, application icon, `.app` packaging, ad-hoc signing, checksum generation, CI, and GitHub prerelease artifacts.
 
 ### macOS evidence

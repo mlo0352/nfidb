@@ -1202,7 +1202,7 @@ impl HostApp {
                     self.last_message = Some(match platform_host::open_privacy_pane(
                         platform_host::PrivacyPane::ScreenRecording,
                     ) {
-                        Ok(()) => "Opened Screen Recording settings. If NFiDB is already on, turn it off and on again to replace a stale approval.".to_owned(),
+                        Ok(()) => "macOS did not activate Screen Recording. If NFiDB is missing, restart the Mac once without rebuilding or reinstalling NFiDB, reopen this same app, and click Repair access again.".to_owned(),
                         Err(error) => error,
                     });
                 }
@@ -1279,6 +1279,9 @@ impl HostApp {
                     .strong()
                     .color(egui::Color32::WHITE),
             );
+            ui.collapsing(help_heading("Screen Recording is absent or stays inactive"), |ui| {
+                ui.label("Use Repair access above. If NFiDB is already present in System Settings, turn it off and on again. If its permission entry was removed or reset, current Tahoe releases may require one Mac restart before the request works again. Leave this same signed NFiDB app installed, restart, reopen it, and use Repair access without rebuilding first.");
+            });
             ui.collapsing(help_heading("Accessibility is not visible or NFiDB is absent"), |ui| {
                 ui.label("Use Open Accessibility Settings above. Apple places it under Privacy & Security and may require scrolling. If the app is absent, use + and add ~/Applications/NFiDB.app manually.");
             });
