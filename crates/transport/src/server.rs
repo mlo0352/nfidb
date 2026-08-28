@@ -446,7 +446,7 @@ fn advertise_mdns(host_name: &str, local_ip: Ipv4Addr, port: u16) -> Result<(Ser
 }
 
 fn best_local_ipv4() -> Ipv4Addr {
-    let mut candidates: Vec<_> = local_ip_address::list_afinet_netifas()
+    let candidates = local_ip_address::list_afinet_netifas()
         .unwrap_or_default()
         .into_iter()
         .filter_map(|(name, ip)| match ip {
@@ -454,13 +454,65 @@ fn best_local_ipv4() -> Ipv4Addr {
             _ => None,
         })
         .collect();
+    select_best_local_ipv4(candidates).unwrap_or(Ipv4Addr::LOCALHOST)
+}
+
+fn select_best_local_ipv4(mut candidates: Vec<(String, Ipv4Addr)>) -> Option<Ipv4Addr> {
     candidates.sort_by_key(|(name, ip)| {
-        let adapter_name = name.to_ascii_lowercase();
-        let physical_lan = adapter_name.contains("wi-fi")
-            || (adapter_name.contains("ethernet") && !adapter_name.contains("vethernet"));
-        (ip.is_link_local(), !physical_lan)
+        (
+            ip.is_link_local(),
+            !is_physical_lan_interface(name),
+            is_overlay_or_virtual_interface(name),
+        )
     });
-    candidates.first().map(|(_, ip)| *ip).unwrap_or(Ipv4Addr::LOCALHOST)
+    candidates.first().map(|(_, ip)| *ip)
+}
+
+fn is_physical_lan_interface(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    if is_overlay_or_virtual_interface(&name) {
+        return false;
+    }
+    let compact: String = name
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .collect();
+    let macos_en = compact
+        .strip_prefix("en")
+        .is_some_and(|suffix| !suffix.is_empty() && suffix.chars().all(|character| character.is_ascii_digit()));
+    macos_en
+        || name.contains("wi-fi")
+        || name.contains("wifi")
+        || name.contains("wireless")
+        || name.contains("ethernet")
+        || ["eth", "eno", "enp", "ens", "wlan", "wlp", "wlx"]
+            .iter()
+            .any(|prefix| compact.starts_with(prefix))
+}
+
+fn is_overlay_or_virtual_interface(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    [
+        "utun",
+        "tailscale",
+        "zerotier",
+        "wireguard",
+        "hamachi",
+        "vethernet",
+        "hyper-v",
+        "vmnet",
+        "vbox",
+        "docker",
+        "bridge",
+        "loopback",
+        "vpn",
+        "tunnel",
+    ]
+    .iter()
+    .any(|marker| name.contains(marker))
+        || name.starts_with("tun")
+        || name.starts_with("tap")
+        || name.starts_with("wg")
 }
 
 #[derive(Serialize)]
@@ -1230,9 +1282,11 @@ fn insert_header(headers: &mut HeaderMap, name: impl header::IntoHeaderName, val
 
 #[cfg(test)]
 mod tests {
+    use std::net::Ipv4Addr;
+
     use axum::http::{HeaderMap, HeaderValue, header};
 
-    use super::{cookie_value, input_revision_matches, same_origin, video_revision_matches};
+    use super::{cookie_value, input_revision_matches, same_origin, select_best_local_ipv4, video_revision_matches};
 
     #[test]
     fn extracts_exact_cookie_without_prefix_confusion() {
@@ -1263,5 +1317,40 @@ mod tests {
         assert!(input_revision_matches(8, 8));
         assert!(!input_revision_matches(7, 8));
         assert!(!input_revision_matches(9, 8));
+    }
+
+    #[test]
+    fn macos_physical_lan_beats_overlay_interfaces() {
+        let selected = select_best_local_ipv4(vec![
+            ("utun4".to_owned(), Ipv4Addr::new(10, 207, 7, 167)),
+            ("en0".to_owned(), Ipv4Addr::new(192, 168, 1, 209)),
+        ]);
+        assert_eq!(selected, Some(Ipv4Addr::new(192, 168, 1, 209)));
+    }
+
+    #[test]
+    fn windows_and_linux_physical_lan_beats_known_virtual_interfaces() {
+        for candidates in [
+            vec![
+                ("Tailscale".to_owned(), Ipv4Addr::new(100, 90, 80, 70)),
+                ("Wi-Fi".to_owned(), Ipv4Addr::new(192, 168, 10, 12)),
+            ],
+            vec![
+                ("docker0".to_owned(), Ipv4Addr::new(172, 17, 0, 1)),
+                ("wlp2s0".to_owned(), Ipv4Addr::new(10, 0, 0, 14)),
+            ],
+        ] {
+            let expected = candidates[1].1;
+            assert_eq!(select_best_local_ipv4(candidates), Some(expected));
+        }
+    }
+
+    #[test]
+    fn private_address_beats_link_local_even_on_an_unknown_interface() {
+        let selected = select_best_local_ipv4(vec![
+            ("en0".to_owned(), Ipv4Addr::new(169, 254, 1, 2)),
+            ("mystery0".to_owned(), Ipv4Addr::new(192, 168, 50, 5)),
+        ]);
+        assert_eq!(selected, Some(Ipv4Addr::new(192, 168, 50, 5)));
     }
 }
