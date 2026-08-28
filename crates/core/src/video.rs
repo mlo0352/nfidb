@@ -8,6 +8,7 @@ use crate::{EncoderMode, VideoCodec, VideoConfig, VideoProfile};
 #[serde(rename_all = "kebab-case")]
 pub enum EncoderBackend {
     MediaFoundationHardware,
+    VideoToolboxHardware,
     OpenH264Software,
 }
 
@@ -16,6 +17,7 @@ impl EncoderBackend {
     pub const fn label(self) -> &'static str {
         match self {
             Self::MediaFoundationHardware => "Media Foundation hardware",
+            Self::VideoToolboxHardware => "VideoToolbox hardware",
             Self::OpenH264Software => "OpenH264 software",
         }
     }

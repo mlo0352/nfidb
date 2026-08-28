@@ -12,7 +12,11 @@ use nfidb_core::{
     AppConfig, CaptureMode, EncoderMode, InputSink, LoggingInputSink, Metrics, SessionManager, VideoPresets,
     VideoProfile, VideoSettingsRuntime,
 };
-use nfidb_host_windows::{
+#[cfg(target_os = "macos")]
+use nfidb_host_macos as platform_host;
+#[cfg(target_os = "windows")]
+use nfidb_host_windows as platform_host;
+use platform_host::{
     CaptureManager, HostBenchmarkReport, MonitorDescriptor, PointerInjector, PointerInjectorOptions,
     ProcessResourceMonitor, discover_video_encoders, enumerate_monitors, full_benchmark_cases, quick_benchmark_cases,
     run_host_benchmark_suite, set_per_monitor_dpi_awareness, write_benchmark_exports,
@@ -22,6 +26,7 @@ use qrcode::QrCode;
 use qrcode::types::Color;
 use tokio::sync::broadcast;
 use tracing_subscriber::EnvFilter;
+#[cfg(target_os = "windows")]
 use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
 
 #[derive(Debug, Parser)]
@@ -131,7 +136,7 @@ enum BenchmarkWorkloadChoice {
     HighMotion,
 }
 
-impl From<BenchmarkWorkloadChoice> for nfidb_host_windows::BenchmarkWorkload {
+impl From<BenchmarkWorkloadChoice> for platform_host::BenchmarkWorkload {
     fn from(value: BenchmarkWorkloadChoice) -> Self {
         match value {
             BenchmarkWorkloadChoice::StaticDetail => Self::StaticDetail,
@@ -244,7 +249,7 @@ fn run() -> Result<()> {
             BenchmarkSuiteChoice::Full => full_benchmark_cases(frames),
         };
         if let Some(workload) = cli.benchmark_workload {
-            let workload = nfidb_host_windows::BenchmarkWorkload::from(workload);
+            let workload = platform_host::BenchmarkWorkload::from(workload);
             cases.retain(|case| case.workload == workload);
         }
         if let Some(profile) = cli.video_profile {
@@ -283,12 +288,12 @@ fn run() -> Result<()> {
     }
     let monitors = enumerate_monitors()
         .map_err(anyhow::Error::msg)
-        .context("Windows did not report any captureable monitors")?;
+        .with_context(|| format!("{} did not report any captureable displays", platform_name()))?;
     let selected = monitors
         .iter()
         .find(|monitor| monitor.index == config.monitor_index)
         .or_else(|| monitors.first())
-        .context("Windows did not report any captureable monitors")?
+        .with_context(|| format!("{} did not report any captureable displays", platform_name()))?
         .clone();
     config.monitor_index = selected.index;
 
@@ -522,6 +527,11 @@ fn report_fatal_error(title: &str, message: &str, show_dialog: bool) {
     );
     let title: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
     let detail: Vec<u16> = detail.encode_utf16().chain(std::iter::once(0)).collect();
+    show_native_error_dialog(title, detail);
+}
+
+#[cfg(target_os = "windows")]
+fn show_native_error_dialog(title: Vec<u16>, detail: Vec<u16>) {
     unsafe {
         MessageBoxW(
             std::ptr::null_mut(),
@@ -530,6 +540,18 @@ fn report_fatal_error(title: &str, message: &str, show_dialog: bool) {
             MB_OK | MB_ICONERROR,
         );
     }
+}
+
+#[cfg(target_os = "macos")]
+fn show_native_error_dialog(_title: Vec<u16>, _detail: Vec<u16>) {
+    // The error is already written to startup-error.log. A packaged .app is
+    // launched by LaunchServices, which presents a normal termination notice;
+    // avoid pulling AppKit onto the panic path where the main thread may be
+    // unavailable.
+}
+
+const fn platform_name() -> &'static str {
+    if cfg!(target_os = "macos") { "macOS" } else { "Windows" }
 }
 
 fn write_json(path: &PathBuf, value: &impl serde::Serialize) -> Result<()> {
