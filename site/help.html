@@ -40,7 +40,7 @@
           <p>The drawing page comes from your host. GitHub Pages is only this documentation site.</p>
         </div>
         <ol>
-          <li><b>1</b><div><strong>Run NFiDB</strong><span>Start <code>nfidb.exe</code> on Windows or NFiDB.app on Mac, choose a monitor, and keep it open.</span></div></li>
+          <li><b>1</b><div><strong>Run NFiDB</strong><span>Start <code>nfidb.exe</code> on Windows or NFiDB.app on Mac. First-run defaults are automatic; App Setup checks anything the OS still needs.</span></div></li>
           <li><b>2</b><div><strong>Open the local address</strong><span>Use the QR code, <code>.local</code> address, or numeric LAN address shown by the host.</span></div></li>
           <li><b>3</b><div><strong>Pair</strong><span>Scan the QR code or type the six-digit PIN. Six digits are checked automatically.</span></div></li>
           <li><b>4</b><div><strong>Work</strong><span>Bring your desktop drawing app forward and use the iPad surface.</span></div></li>
@@ -141,7 +141,8 @@
         </div>
         <div class="fix-list">
           <details open><summary>No page or connection</summary><p>Use a normal private Wi-Fi network, not guest Wi-Fi. On Windows, allow NFiDB through Firewall on Private networks only.</p></details>
-          <details><summary>Mac has no picture or input</summary><p>Enable NFiDB in macOS <strong>Privacy & Security</strong> under <strong>Screen & System Audio Recording</strong> and <strong>Accessibility</strong>, then quit and reopen it.</p></details>
+          <details><summary>Mac has no picture or input</summary><p>Open NFiDB's <strong>App Setup</strong> page. It checks both permissions live and opens the exact <strong>Screen & System Audio Recording</strong> or <strong>Accessibility</strong> page. Apple requires your final toggle. If NFiDB is absent from Accessibility, click <strong>+</strong>, press <kbd>Command</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd>, enter <code>~/Applications/NFiDB.app</code> (or <code>/Applications/NFiDB.app</code>), and add it.</p></details>
+          <details><summary>What setup is automatic?</summary><p>NFiDB creates its configuration and Inbox, selects safe input/video defaults, discovers encoders, starts the local server, and creates a PIN/QR. Windows may show one Private-network Firewall prompt. macOS separately requires user consent for screen capture and input control; the app cannot grant those permissions to itself.</p></details>
           <details><summary>Expired PIN or stale QR error</summary><p>Open <strong>Session</strong> on the host and choose <strong>Reset PIN + QR</strong>, then reload Safari and use the new code.</p></details>
           <details><summary>Connected but no picture</summary><p>NFiDB now requests fresh video keyframes until Safari presents a frame. Give it a few seconds; if it still does not appear, reload the page and pair again.</p></details>
           <details><summary>No pressure in a drawing app</summary><p>On Windows, enable the app's Windows Ink/pointer option and run <code>pointer-sink.exe --self-test</code>. On Mac, confirm Accessibility is enabled; Quartz pressure support still needs per-app alpha feedback.</p></details>

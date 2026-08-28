@@ -199,10 +199,16 @@ fn run() -> Result<()> {
     set_per_monitor_dpi_awareness()
         .with_context(|| format!("failed to configure {} host integration", platform_name()))?;
 
+    let first_run = AppConfig::path().is_ok_and(|path| !path.exists());
     let mut config = AppConfig::load().unwrap_or_else(|error| {
         tracing::warn!(%error, "using default settings because config could not be loaded");
         AppConfig::default()
     });
+    if first_run {
+        config
+            .save()
+            .context("failed to create the initial NFiDB configuration")?;
+    }
     if cli.input_only {
         config.mode = CaptureMode::InputOnly;
     } else if cli.display_only {
@@ -479,9 +485,13 @@ fn run() -> Result<()> {
                 injector: native_injector,
                 active_page: if cli.diagnostics {
                     HostPage::Diagnostics
+                } else if first_run || platform_setup_required() {
+                    HostPage::AppSetup
                 } else {
                     HostPage::Session
                 },
+                #[cfg(target_os = "macos")]
+                permission_status: platform_host::permission_status(),
                 last_message: None,
                 last_video_revision: 0,
                 last_input_revision: 0,
@@ -560,6 +570,18 @@ const fn platform_name() -> &'static str {
     if cfg!(target_os = "macos") { "macOS" } else { "Windows" }
 }
 
+fn platform_setup_required() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        let status = platform_host::permission_status();
+        !status.screen_recording || !status.accessibility
+    }
+    #[cfg(target_os = "windows")]
+    {
+        false
+    }
+}
+
 fn write_json(path: &PathBuf, value: &impl serde::Serialize) -> Result<()> {
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
@@ -579,6 +601,8 @@ struct HostApp {
     capture: Arc<CaptureManager>,
     injector: Option<Arc<PointerInjector>>,
     active_page: HostPage,
+    #[cfg(target_os = "macos")]
+    permission_status: platform_host::PermissionStatus,
     last_message: Option<String>,
     last_video_revision: u64,
     last_input_revision: u64,
@@ -592,6 +616,8 @@ struct HostApp {
 impl eframe::App for HostApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll_video_benchmark();
+        #[cfg(target_os = "macos")]
+        self.refresh_macos_permissions();
         let video_state = self.server.video_control_state();
         if video_state.settings.revision != self.last_video_revision {
             self.last_video_revision = video_state.settings.revision;
@@ -646,13 +672,18 @@ impl eframe::App for HostApp {
             )
             .show(ui, |ui| {
                 ui.add_space(10.0);
+                let setup_label = if platform_setup_required() {
+                    "APP SETUP · ACTION"
+                } else {
+                    "APP SETUP"
+                };
                 for (page, label) in [
                     (HostPage::Session, "SESSION"),
                     (HostPage::Source, "SOURCE"),
                     (HostPage::Input, "INPUT"),
                     (HostPage::Files, "FILES"),
                     (HostPage::Diagnostics, "DIAGNOSTICS"),
-                    (HostPage::AppSetup, "APP SETUP"),
+                    (HostPage::AppSetup, setup_label),
                 ] {
                     if nav_button(ui, label, self.active_page == page).clicked() {
                         self.active_page = page;
@@ -1005,24 +1036,36 @@ impl HostApp {
     }
 
     fn app_setup_page(&mut self, ui: &mut egui::Ui) {
-        if cfg!(target_os = "macos") {
+        #[cfg(target_os = "macos")]
+        {
             self.macos_app_setup_page(ui);
-            return;
         }
+        #[cfg(target_os = "windows")]
+        self.windows_app_setup_page(ui);
+    }
+
+    #[cfg(target_os = "windows")]
+    fn windows_app_setup_page(&mut self, ui: &mut egui::Ui) {
         page_heading(
             ui,
-            "Application setup",
-            "Validate Safari signals first, then Windows Ink, then the drawing application.",
+            "Setup and help",
+            "NFiDB configures its safe defaults automatically. Use this page for the short first-run check and practical fixes.",
         );
         ui.add_space(18.0);
         card(ui, |ui| {
-            ui.heading(egui::RichText::new("Recommended validation order").size(17.0));
+            ui.heading(egui::RichText::new("Automatic setup").size(17.0));
+            ui.label("READY  Local server, PIN/QR pairing, Auto video, input reset, and the Downloads/NFiDB Inbox are configured.");
             ui.label(
-                "1. Open the pointer diagnostic on the iPad and test pressure, tilt, coalescing, and long strokes.",
+                "Windows Firewall may ask once. Allow NFiDB on Private networks only; never allow Public networks.",
             );
-            ui.label("2. Run pointer-sink.exe --self-test to validate native Windows pen injection.");
-            ui.label("3. Enable Windows Ink/Pointer input in Krita, Rebelle, Photoshop, or the target drawing app.");
-            ui.label("4. Return to Diagnostics, reset the recording, perform the test matrix, then export JSON.");
+            ui.add_space(12.0);
+            ui.heading(egui::RichText::new("First session").size(17.0));
+            ui.label("1. Keep the host and iPad on the same normal Wi-Fi or wired LAN; guest/client-isolated Wi-Fi will not work.");
+            ui.label("2. Open the Session address or QR in iPad Safari. The six-digit PIN submits automatically.");
+            ui.label(
+                "3. Open the pointer diagnostic and test pressure, tilt, coalescing, a long stroke, mouse, and keyboard.",
+            );
+            ui.label("4. Enable Windows Ink/Pointer input in the drawing app, then draw there.");
             ui.add_space(12.0);
             ui.horizontal(|ui| {
                 if ui.button("Open pointer diagnostic").clicked() {
@@ -1035,6 +1078,30 @@ impl HostApp {
                     ui.ctx().copy_text("pointer-sink.exe --self-test".to_owned());
                     self.last_message = Some("pointer-sink command copied".to_owned());
                 }
+                if ui.button("Open full help").clicked() {
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(
+                        "https://mlo0352.github.io/nfidb/help.html".to_owned(),
+                    ));
+                }
+            });
+        });
+        ui.add_space(16.0);
+        card(ui, |ui| {
+            ui.heading(egui::RichText::new("Troubleshooting").size(17.0));
+            ui.collapsing("The iPad cannot open the address", |ui| {
+                ui.label("Use the numeric LAN address shown on Session. Confirm both devices are on the same non-guest network, and that Windows marks it Private. Check Windows Firewall before disabling any security control.");
+            });
+            ui.collapsing("Video connects but no picture appears", |ui| {
+                ui.label("Reload Safari and pair again so NFiDB requests a fresh keyframe. In Source, choose Auto and Balanced, then run Quick Auto Test. Diagnostics shows first-frame and decoder evidence.");
+            });
+            ui.collapsing("Pencil moves or selects instead of drawing", |ui| {
+                ui.label("Enable Windows Ink/Pointer input in the drawing app. Run pointer-sink.exe --self-test; if it passes, the remaining setting is inside the target app.");
+            });
+            ui.collapsing("Touch or shortcuts do not respond", |ui| {
+                ui.label("Confirm Input enables the required device. Touch-on forwards fingers; Touch-off plus Gestures-on reserves three fingers for app switching, Task View, and minimize.");
+            });
+            ui.collapsing("PIN or QR is stale", |ui| {
+                ui.label("Open Session and choose Reset PIN + QR, then reload Safari. NFiDB also rotates an expired unpaired code while this window is focused.");
             });
         });
         if let Some(message) = &self.last_message {
@@ -1043,36 +1110,156 @@ impl HostApp {
         }
     }
 
+    #[cfg(target_os = "macos")]
     fn macos_app_setup_page(&mut self, ui: &mut egui::Ui) {
         page_heading(
             ui,
-            "Application setup",
-            "Grant the two local macOS permissions, then validate Pencil signals and the target drawing application.",
+            "Setup and help",
+            "NFiDB configures its local defaults automatically and checks the two macOS permissions it cannot grant to itself.",
         );
         ui.add_space(18.0);
         card(ui, |ui| {
-            ui.heading(egui::RichText::new("Required permissions").size(17.0));
-            ui.label("1. Privacy & Security > Screen & System Audio Recording: enable NFiDB for display capture.");
-            ui.label(
-                "2. Privacy & Security > Accessibility: enable NFiDB for Pencil, mouse, keyboard, and gesture control.",
+            ui.heading(egui::RichText::new("Permission check").size(17.0));
+            permission_row(
+                ui,
+                "Screen & System Audio Recording",
+                self.permission_status.screen_recording,
             );
-            ui.label("3. Quit and reopen NFiDB if macOS asks after changing either permission.");
+            permission_row(
+                ui,
+                "Accessibility / control this Mac",
+                self.permission_status.accessibility,
+            );
+            ui.label(
+                egui::RichText::new("macOS requires you to approve these switches. NFiDB cannot silently bypass them.")
+                    .size(10.0)
+                    .color(muted()),
+            );
             ui.add_space(10.0);
-            ui.heading(egui::RichText::new("Validation order").size(17.0));
-            ui.label("1. Open the iPad pointer diagnostic and test pressure, tilt, coalescing, and long strokes.");
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Request Screen Recording").clicked() {
+                    if platform_host::request_screen_recording_access() {
+                        self.last_message = Some("Screen Recording is enabled".to_owned());
+                    } else {
+                        self.last_message = Some(match platform_host::open_privacy_pane(
+                            platform_host::PrivacyPane::ScreenRecording,
+                        ) {
+                            Ok(()) => "Opened Screen Recording settings. Enable NFiDB, then restart if macOS asks.".to_owned(),
+                            Err(error) => error,
+                        });
+                    }
+                }
+                if ui.button("Request Accessibility").clicked() {
+                    if platform_host::request_accessibility_access() {
+                        self.last_message = Some("Accessibility is enabled".to_owned());
+                    } else {
+                        self.last_message = Some(match platform_host::open_privacy_pane(
+                            platform_host::PrivacyPane::Accessibility,
+                        ) {
+                            Ok(()) => "Opened Accessibility settings. Enable NFiDB; if it is absent, use + to add NFiDB.app.".to_owned(),
+                            Err(error) => error,
+                        });
+                    }
+                }
+            });
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Open Screen Recording Settings").clicked() {
+                    self.last_message = Some(open_privacy_message(platform_host::open_privacy_pane(
+                        platform_host::PrivacyPane::ScreenRecording,
+                    )));
+                }
+                if ui.button("Open Accessibility Settings").clicked() {
+                    self.last_message = Some(open_privacy_message(platform_host::open_privacy_pane(
+                        platform_host::PrivacyPane::Accessibility,
+                    )));
+                }
+            });
             ui.label(
-                "2. Test pointer movement, clicking, scrolling, typing, Command+Tab, Mission Control, and minimize.",
+                egui::RichText::new(
+                    "If NFiDB is missing from Accessibility: click +, press Command-Shift-G, enter ~/Applications/NFiDB.app, then choose Open.",
+                )
+                .size(10.0)
+                .color(muted()),
             );
-            ui.label("3. Draw in the target app and confirm pressure-sensitive strokes rather than mouse-only input.");
-            ui.label("4. Reset Diagnostics, run the test matrix, and export JSON.");
-            ui.add_space(12.0);
-            if ui.button("Open pointer diagnostic").clicked() {
-                ui.ctx().open_url(egui::OpenUrl::new_tab(format!(
-                    "{}diagnostics/pointer",
-                    self.server.info.fallback_url
-                )));
+            if self.permission_status.screen_recording && self.permission_status.accessibility {
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new("SETUP COMPLETE — both permissions are active")
+                        .strong()
+                        .color(accent()),
+                );
             }
         });
+        ui.add_space(16.0);
+        card(ui, |ui| {
+            ui.heading(egui::RichText::new("First session").size(17.0));
+            ui.label("1. Open the Session address or QR in iPad Safari; six PIN digits submit automatically.");
+            ui.label("2. Open the pointer diagnostic and test pressure, tilt, coalescing, and one long stroke.");
+            ui.label(
+                "3. Test pointer movement, clicking, scrolling, typing, Command+Tab, Mission Control, and minimize.",
+            );
+            ui.label("4. Draw in the target app and confirm pressure-sensitive strokes rather than mouse-only input.");
+            ui.add_space(12.0);
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Open pointer diagnostic").clicked() {
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(format!(
+                        "{}diagnostics/pointer",
+                        self.server.info.fallback_url
+                    )));
+                }
+                if ui.button("Open full help").clicked() {
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(
+                        "https://mlo0352.github.io/nfidb/help.html".to_owned(),
+                    ));
+                }
+            });
+        });
+        ui.add_space(16.0);
+        card(ui, |ui| {
+            ui.heading(egui::RichText::new("Troubleshooting").size(17.0));
+            ui.collapsing("Accessibility is not visible or NFiDB is absent", |ui| {
+                ui.label("Use Open Accessibility Settings above. Apple places it under Privacy & Security and may require scrolling. If the app is absent, use + and add ~/Applications/NFiDB.app manually.");
+            });
+            ui.collapsing("The iPad cannot open the address", |ui| {
+                ui.label("Use the numeric address shown on Session. Confirm both devices use the same normal LAN, not guest/client-isolated Wi-Fi, and allow the Local Network prompt if macOS presents one.");
+            });
+            ui.collapsing("There is no picture", |ui| {
+                ui.label("Confirm Screen Recording says Enabled above, then restart NFiDB. Reload Safari and pair again. Source and Diagnostics expose capture, encoder, and first-frame errors.");
+            });
+            ui.collapsing("Mouse, keyboard, Pencil, or gestures do nothing", |ui| {
+                ui.label("Confirm Accessibility says Enabled above. Touch-on maps the first finger to the Mac pointer; Touch-off plus Gestures-on enables the three-finger commands.");
+            });
+            ui.collapsing("PIN or QR is stale", |ui| {
+                ui.label("Open Session and choose Reset PIN + QR, then reload Safari. NFiDB rotates expired unpaired credentials automatically while focused.");
+            });
+        });
+        if let Some(message) = &self.last_message {
+            ui.add_space(10.0);
+            ui.label(egui::RichText::new(message).color(accent()));
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn refresh_macos_permissions(&mut self) {
+        let current = platform_host::permission_status();
+        if current == self.permission_status {
+            return;
+        }
+        let screen_became_available = !self.permission_status.screen_recording && current.screen_recording;
+        let accessibility_became_available = !self.permission_status.accessibility && current.accessibility;
+        self.permission_status = current;
+        if screen_became_available && self.config.mode != CaptureMode::InputOnly && !self.capture.status().running {
+            self.last_message = match self.capture.start_monitor(self.selected_index) {
+                Ok(()) => Some("Screen Recording enabled; display capture started automatically".to_owned()),
+                Err(error) => Some(format!(
+                    "Screen Recording is enabled, but capture still needs a restart: {error}"
+                )),
+            };
+        }
+        if accessibility_became_available {
+            self.last_message =
+                Some("Accessibility enabled; Pencil, pointer, keyboard, and gestures are ready".to_owned());
+        }
     }
 
     fn session_card(&mut self, ui: &mut egui::Ui) {
@@ -2220,6 +2407,27 @@ fn card(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
         .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(43, 54, 55)))
         .inner_margin(egui::Margin::same(18))
         .show(ui, contents);
+}
+
+#[cfg(target_os = "macos")]
+fn permission_row(ui: &mut egui::Ui, label: &str, granted: bool) {
+    ui.horizontal(|ui| {
+        let (state, color) = if granted {
+            ("ENABLED", accent())
+        } else {
+            ("ACTION NEEDED", egui::Color32::from_rgb(230, 184, 105))
+        };
+        ui.label(egui::RichText::new(state).size(9.0).strong().color(color));
+        ui.label(label);
+    });
+}
+
+#[cfg(target_os = "macos")]
+fn open_privacy_message(result: Result<(), String>) -> String {
+    match result {
+        Ok(()) => "Opened the requested Privacy & Security page".to_owned(),
+        Err(error) => error,
+    }
 }
 
 fn status_metric(ui: &mut egui::Ui, label: &str, value: &str) {

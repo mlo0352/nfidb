@@ -11,6 +11,8 @@ mod input;
 #[cfg(target_os = "macos")]
 mod monitors;
 #[cfg(target_os = "macos")]
+mod permissions;
+#[cfg(target_os = "macos")]
 mod resource_monitor;
 #[cfg(target_os = "macos")]
 mod videotoolbox_encoder;
@@ -28,5 +30,10 @@ pub use hardware::discover_video_encoders;
 pub use input::{PointerInjector, PointerInjectorOptions, set_per_monitor_dpi_awareness};
 #[cfg(target_os = "macos")]
 pub use monitors::{MonitorDescriptor, enumerate_monitors};
+#[cfg(target_os = "macos")]
+pub use permissions::{
+    PermissionStatus, PrivacyPane, open_privacy_pane, permission_status, request_accessibility_access,
+    request_screen_recording_access,
+};
 #[cfg(target_os = "macos")]
 pub use resource_monitor::ProcessResourceMonitor;

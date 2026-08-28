@@ -11,6 +11,8 @@ NFiDB is pre-release software. Releases remain GitHub prereleases until the phys
 - Configured real-time compression, disabled frame reordering, bounded delayed frames, prioritized encoding speed where supported, preserved periodic parameter-set/keyframe recovery, and kept all capture/encoder queues bounded.
 - Added Quartz Pencil/tablet, mouse, wheel, keyboard, Unicode text, Command+Tab, Mission Control, and minimize injection behind macOS Accessibility permission. Touch-on uses the first finger as the Mac pointer because macOS has no public general-purpose synthetic multitouch API.
 - Added Screen Recording permission fallback so the app UI, input-only mode, and generated diagnostics can start before capture permission is granted.
+- Added a first-run Setup and Help page on both hosts. Defaults and the configuration file are created automatically; macOS permission state is checked live with direct Request/Open Settings controls, and Windows explains its one-time Private-network firewall prompt.
+- Added in-app first-session steps and platform-specific troubleshooting for LAN discovery, first frame, Pencil mode, touch/gestures, stale pairing, and macOS manual permission recovery.
 - Added macOS-specific host and iPad labels, keyboard shortcuts, permission guidance, application icon, `.app` packaging, ad-hoc signing, checksum generation, CI, and GitHub prerelease artifacts.
 
 ### macOS evidence

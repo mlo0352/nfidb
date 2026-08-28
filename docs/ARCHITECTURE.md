@@ -49,6 +49,8 @@ VideoToolbox candidates come from `VTCopyVideoEncoderList`. A session is configu
 
 Screen capture permission is not required merely to open the app. If ScreenCaptureKit content enumeration is denied, CoreGraphics supplies display geometry so input-only and generated diagnostic modes remain available while the Source/App Setup pages explain Screen Recording approval. Accessibility is separately required before Quartz may post remote input.
 
+The first-run shell persists default configuration immediately, opens App Setup when a required Mac permission is missing, probes Screen Recording and Accessibility every repaint, and provides constant deep links to the matching System Settings panes. OS consent remains user-controlled; the app never modifies the TCC permission database.
+
 ## Input path
 
 The drawing engine listens to `pointerdown`, `pointermove`, `pointerup`, and `pointercancel`. It sends all actual coalesced samples in chronological order, never predicted points. A predicted point may be drawn locally as transient feedback. Pen, touch, and mouse have distinct device tags; only pen data contributes to pressure/tilt ranges. A contact stays on the transport selected at pointer-down; switching DataChannel/WebSocket during a stroke is forbidden. Interrupted contacts are cancelled and blocked until lifted rather than silently split across transports.

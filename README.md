@@ -29,12 +29,14 @@ The alpha mirrors one monitor. It is not an extended-desktop display driver, rem
 
 1. Download the newest `NFiDB-windows-x64.zip` from [GitHub Releases](https://github.com/mlo0352/nfidb/releases).
 2. On Windows 11 x64, extract it and run `nfidb.exe`. On an Apple-silicon Mac running macOS 13 or newer, extract `NFiDB-macos-arm64.zip`, move NFiDB to Applications, and open it.
-3. On Windows, allow NFiDB on **Private networks only** if Firewall asks. On macOS, enable NFiDB under **Privacy & Security → Screen & System Audio Recording** and **Accessibility**.
+3. Follow the host's **App Setup** page. NFiDB creates its configuration, safe defaults, Inbox, encoder selection, server, PIN, and QR automatically. On Windows, allow its one-time Firewall prompt on **Private networks only**. On macOS, use the live permission buttons for **Screen & System Audio Recording** and **Accessibility**; Apple requires the user to approve those switches.
 4. Put the PC and iPad on the same normal LAN. Guest Wi-Fi/client isolation will prevent a connection.
 5. Open the shown `.local` or numeric address in iPad Safari and enter the PIN (or scan the QR code).
 6. Open the drawing app on the selected host monitor and draw on the iPad.
 
 Nothing is installed on the iPad: the desktop host serves the complete browser client. Both desktop artifacts are currently unsigned alpha builds. Windows SmartScreen or macOS Gatekeeper may warn; use the GitHub release checksum and the normal **More info / Run anyway** or control-click **Open** flow. The Mac build is an application bundle with an ad-hoc local signature, not an Apple-notarized release.
+
+On a first run, NFiDB opens **App Setup** automatically. That page remains in the sidebar and includes live permission state, direct settings links, a four-step session check, the pointer diagnostic, full help, and practical troubleshooting. If NFiDB does not appear in macOS Accessibility, click `+`, press `Command-Shift-G`, enter `~/Applications/NFiDB.app` (or `/Applications/NFiDB.app`), and add it. Permission state refreshes automatically; newly granted Screen Recording can start capture without relaunching when macOS allows it.
 
 Touch is disabled by default. The paired iPad's **Touch** button changes the authoritative host input setting directly, and the desktop Input page stays synchronized with it. Windows forwards native touch contacts; macOS maps the first finger to its pointer. Use input-only mode when another screen-sharing system handles the picture, or display-only mode when you do not want remote input.
 

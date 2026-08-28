@@ -11,6 +11,8 @@ use nfidb_protocol::{
 use parking_lot::{Mutex, RwLock};
 use std::collections::BTreeMap;
 
+use crate::permissions::{permission_status, request_accessibility_access};
+
 const PRIMARY: u16 = 1 << 0;
 const SECONDARY: u16 = 1 << 1;
 const AUXILIARY: u16 = 1 << 2;
@@ -19,12 +21,6 @@ const MOD_CONTROL: u16 = 1 << 1;
 const MOD_ALT: u16 = 1 << 2;
 const MOD_META: u16 = 1 << 3;
 const TABLET_POINT_SUBTYPE: i64 = 1;
-
-#[link(name = "CoreGraphics", kind = "framework")]
-unsafe extern "C" {
-    fn CGPreflightPostEventAccess() -> bool;
-    fn CGRequestPostEventAccess() -> bool;
-}
 
 #[derive(Debug, Clone, Copy)]
 pub struct PointerInjectorOptions {
@@ -67,7 +63,7 @@ pub struct PointerInjector {
 impl PointerInjector {
     pub fn new(target: TargetGeometry, options: PointerInjectorOptions) -> Result<Self, InputError> {
         if !has_post_event_access() {
-            let granted = unsafe { CGRequestPostEventAccess() };
+            let granted = request_accessibility_access();
             if !granted {
                 tracing::warn!(
                     "macOS Accessibility permission is not active; input will become available after NFiDB is enabled in Privacy & Security > Accessibility"
@@ -284,7 +280,7 @@ impl InputSink for PointerInjector {
 }
 
 fn has_post_event_access() -> bool {
-    unsafe { CGPreflightPostEventAccess() }
+    permission_status().accessibility
 }
 
 fn ensure_post_event_access() -> Result<(), InputError> {
