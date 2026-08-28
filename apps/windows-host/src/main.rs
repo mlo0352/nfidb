@@ -470,6 +470,10 @@ fn run() -> Result<()> {
             .with_drag_and_drop(false),
         ..Default::default()
     };
+    #[cfg(target_os = "macos")]
+    let initial_permission_status = platform_host::permission_status();
+    #[cfg(target_os = "macos")]
+    let initial_screen_recording_verified = initial_permission_status.screen_recording || capture.status().running;
     eframe::run_native(
         "NFiDB",
         native_options,
@@ -491,7 +495,9 @@ fn run() -> Result<()> {
                     HostPage::Session
                 },
                 #[cfg(target_os = "macos")]
-                permission_status: platform_host::permission_status(),
+                permission_status: initial_permission_status,
+                #[cfg(target_os = "macos")]
+                screen_recording_verified: initial_screen_recording_verified,
                 last_message: None,
                 last_video_revision: 0,
                 last_input_revision: 0,
@@ -603,6 +609,8 @@ struct HostApp {
     active_page: HostPage,
     #[cfg(target_os = "macos")]
     permission_status: platform_host::PermissionStatus,
+    #[cfg(target_os = "macos")]
+    screen_recording_verified: bool,
     last_message: Option<String>,
     last_video_revision: u64,
     last_input_revision: u64,
@@ -672,7 +680,7 @@ impl eframe::App for HostApp {
             )
             .show(ui, |ui| {
                 ui.add_space(10.0);
-                let setup_label = if platform_setup_required() {
+                let setup_label = if self.setup_action_required() {
                     "APP SETUP · ACTION"
                 } else {
                     "APP SETUP"
@@ -1120,11 +1128,7 @@ impl HostApp {
         ui.add_space(18.0);
         card(ui, |ui| {
             ui.heading(egui::RichText::new("Permission check").size(17.0));
-            permission_row(
-                ui,
-                "Screen & System Audio Recording",
-                self.permission_status.screen_recording,
-            );
+            permission_row(ui, "Screen & System Audio Recording", self.screen_recording_verified);
             permission_row(
                 ui,
                 "Accessibility / control this Mac",
@@ -1139,7 +1143,12 @@ impl HostApp {
             ui.horizontal_wrapped(|ui| {
                 if ui.button("Request Screen Recording").clicked() {
                     if platform_host::request_screen_recording_access() {
-                        self.last_message = Some("Screen Recording is enabled".to_owned());
+                        let capture_was_running = self.capture.status().running;
+                        self.screen_recording_verified = true;
+                        self.restart_capture_after_screen_permission();
+                        if capture_was_running {
+                            self.last_message = Some("Screen Recording is enabled and capture is active".to_owned());
+                        }
                     } else {
                         self.last_message = Some(match platform_host::open_privacy_pane(
                             platform_host::PrivacyPane::ScreenRecording,
@@ -1181,7 +1190,7 @@ impl HostApp {
                 .size(10.0)
                 .color(muted()),
             );
-            if self.permission_status.screen_recording && self.permission_status.accessibility {
+            if self.screen_recording_verified && self.permission_status.accessibility {
                 ui.add_space(8.0);
                 ui.label(
                     egui::RichText::new("SETUP COMPLETE — both permissions are active")
@@ -1242,23 +1251,45 @@ impl HostApp {
     #[cfg(target_os = "macos")]
     fn refresh_macos_permissions(&mut self) {
         let current = platform_host::permission_status();
-        if current == self.permission_status {
+        let capture_running = self.capture.status().running;
+        let screen_ready = current.screen_recording || capture_running;
+        let screen_became_available = !self.screen_recording_verified && screen_ready;
+        let accessibility_became_available = !self.permission_status.accessibility && current.accessibility;
+        self.screen_recording_verified |= screen_ready;
+        if current == self.permission_status && !screen_became_available {
             return;
         }
-        let screen_became_available = !self.permission_status.screen_recording && current.screen_recording;
-        let accessibility_became_available = !self.permission_status.accessibility && current.accessibility;
         self.permission_status = current;
-        if screen_became_available && self.config.mode != CaptureMode::InputOnly && !self.capture.status().running {
-            self.last_message = match self.capture.start_monitor(self.selected_index) {
-                Ok(()) => Some("Screen Recording enabled; display capture started automatically".to_owned()),
-                Err(error) => Some(format!(
-                    "Screen Recording is enabled, but capture still needs a restart: {error}"
-                )),
-            };
+        if screen_became_available {
+            self.restart_capture_after_screen_permission();
         }
         if accessibility_became_available {
             self.last_message =
                 Some("Accessibility enabled; Pencil, pointer, keyboard, and gestures are ready".to_owned());
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn restart_capture_after_screen_permission(&mut self) {
+        if self.config.mode == CaptureMode::InputOnly || self.capture.status().running {
+            return;
+        }
+        self.last_message = match self.capture.start_monitor(self.selected_index) {
+            Ok(()) => Some("Screen Recording enabled; display capture started automatically".to_owned()),
+            Err(error) => Some(format!(
+                "Screen Recording is enabled, but capture still needs a restart: {error}"
+            )),
+        };
+    }
+
+    fn setup_action_required(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            !self.screen_recording_verified || !self.permission_status.accessibility
+        }
+        #[cfg(target_os = "windows")]
+        {
+            false
         }
     }
 
@@ -2337,13 +2368,29 @@ impl HostApp {
 
 fn configure_visuals(context: &egui::Context) {
     let mut visuals = egui::Visuals::dark();
-    visuals.panel_fill = egui::Color32::from_rgb(16, 20, 21);
-    visuals.window_fill = egui::Color32::from_rgb(17, 22, 23);
-    visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(24, 31, 32);
-    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(49, 61, 62));
-    visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(29, 45, 42);
+    let primary_text = egui::Color32::from_rgb(240, 247, 244);
+    let secondary_text = egui::Color32::from_rgb(190, 204, 199);
+    visuals.override_text_color = Some(primary_text);
+    visuals.weak_text_alpha = 0.86;
+    visuals.weak_text_color = Some(secondary_text);
+    visuals.panel_fill = egui::Color32::from_rgb(15, 20, 21);
+    visuals.window_fill = egui::Color32::from_rgb(18, 24, 25);
+    visuals.faint_bg_color = egui::Color32::from_rgb(24, 31, 32);
+    visuals.extreme_bg_color = egui::Color32::from_rgb(7, 10, 11);
+    visuals.text_edit_bg_color = Some(egui::Color32::from_rgb(8, 13, 14));
+    visuals.code_bg_color = egui::Color32::from_rgb(25, 34, 35);
+    visuals.hyperlink_color = accent();
+    visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, primary_text);
+    visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(224, 234, 230));
+    visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.5, egui::Color32::WHITE);
+    visuals.widgets.active.fg_stroke = egui::Stroke::new(1.5, egui::Color32::WHITE);
+    visuals.widgets.open.fg_stroke = egui::Stroke::new(1.5, egui::Color32::WHITE);
+    visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(30, 39, 40);
+    visuals.widgets.inactive.weak_bg_fill = egui::Color32::from_rgb(24, 31, 32);
+    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(78, 94, 91));
+    visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(38, 56, 52);
     visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, accent());
-    visuals.widgets.active.bg_fill = egui::Color32::from_rgb(31, 72, 63);
+    visuals.widgets.active.bg_fill = egui::Color32::from_rgb(35, 83, 71);
     visuals.selection.bg_fill = egui::Color32::from_rgb(30, 95, 80);
     visuals.selection.stroke = egui::Stroke::new(1.0, accent());
     visuals.window_corner_radius = egui::CornerRadius::same(2);
@@ -2534,5 +2581,5 @@ const fn accent() -> egui::Color32 {
 }
 
 const fn muted() -> egui::Color32 {
-    egui::Color32::from_rgb(133, 148, 146)
+    egui::Color32::from_rgb(188, 202, 198)
 }

@@ -1,11 +1,21 @@
 use std::process::Command;
 
+use core_foundation::base::TCFType;
+use core_foundation::boolean::CFBoolean;
+use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
+use core_foundation::string::{CFString, CFStringRef};
+
 #[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {
     fn CGPreflightScreenCaptureAccess() -> bool;
     fn CGRequestScreenCaptureAccess() -> bool;
-    fn CGPreflightPostEventAccess() -> bool;
-    fn CGRequestPostEventAccess() -> bool;
+}
+
+#[link(name = "ApplicationServices", kind = "framework")]
+unsafe extern "C" {
+    static kAXTrustedCheckOptionPrompt: CFStringRef;
+    fn AXIsProcessTrusted() -> bool;
+    fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> bool;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,7 +34,7 @@ pub enum PrivacyPane {
 pub fn permission_status() -> PermissionStatus {
     PermissionStatus {
         screen_recording: unsafe { CGPreflightScreenCaptureAccess() },
-        accessibility: unsafe { CGPreflightPostEventAccess() },
+        accessibility: unsafe { AXIsProcessTrusted() },
     }
 }
 
@@ -35,7 +45,9 @@ pub fn request_screen_recording_access() -> bool {
 
 #[must_use]
 pub fn request_accessibility_access() -> bool {
-    unsafe { CGRequestPostEventAccess() }
+    let prompt_key = unsafe { CFString::wrap_under_get_rule(kAXTrustedCheckOptionPrompt) };
+    let options = CFDictionary::from_CFType_pairs(&[(prompt_key, CFBoolean::true_value())]);
+    unsafe { AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef()) }
 }
 
 pub fn open_privacy_pane(pane: PrivacyPane) -> Result<(), String> {

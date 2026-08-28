@@ -13,6 +13,9 @@ NFiDB is pre-release software. Releases remain GitHub prereleases until the phys
 - Added Screen Recording permission fallback so the app UI, input-only mode, and generated diagnostics can start before capture permission is granted.
 - Added a first-run Setup and Help page on both hosts. Defaults and the configuration file are created automatically; macOS permission state is checked live with direct Request/Open Settings controls, and Windows explains its one-time Private-network firewall prompt.
 - Added in-app first-session steps and platform-specific troubleshooting for LAN discovery, first frame, Pencil mode, touch/gestures, stale pairing, and macOS manual permission recovery.
+- Corrected macOS permission reporting: an active ScreenCaptureKit stream is authoritative even if the legacy CoreGraphics preflight result is stale, and Accessibility now uses Apple's `AXIsProcessTrustedWithOptions` prompt so NFiDB registers in the correct list.
+- Raised desktop text, secondary text, control, outline, input, and navigation contrast throughout the native UI.
+- Added `NFIDB_CODESIGN_IDENTITY` support to the Mac packager. Stable Apple signing prevents development rebuilds from appearing as unrelated apps to macOS privacy controls; CI retains an explicit ad-hoc fallback until Developer ID/notarization credentials are configured.
 - Added macOS-specific host and iPad labels, keyboard shortcuts, permission guidance, application icon, `.app` packaging, ad-hoc signing, checksum generation, CI, and GitHub prerelease artifacts.
 
 ### macOS evidence

@@ -99,6 +99,14 @@ npm --prefix apps/ipad-web ci
 
 This creates `build/packages/NFiDB-macos-arm64.zip` and its SHA-256 file.
 
+Mac developers with a signing identity should use a stable certificate so Screen Recording and Accessibility approvals survive rebuilds:
+
+```bash
+NFIDB_CODESIGN_IDENTITY="Apple Development: Your Name (TEAMID)" ./scripts/build-macos.sh
+```
+
+Public releases should use a Developer ID Application identity and Apple notarization. Without one, the script deliberately labels its signature ad-hoc and a changed build may require macOS permission approval again.
+
 For a single long-running handoff that another Codex turn can verify without spending the turn waiting on compilation, run:
 
 ```powershell

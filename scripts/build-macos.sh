@@ -20,6 +20,7 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
 fi
 
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.0}"
+sign_identity="${NFIDB_CODESIGN_IDENTITY:--}"
 
 if [[ $skip_web -eq 0 ]]; then
   npm --prefix apps/ipad-web ci
@@ -71,7 +72,7 @@ for spec in \
 done
 iconutil -c icns "$iconset" -o "$contents/Resources/NFiDB.icns"
 
-codesign --force --deep --sign - --timestamp=none "$app"
+codesign --force --deep --sign "$sign_identity" --timestamp=none "$app"
 codesign --verify --deep --strict "$app"
 
 archive="$package_root/NFiDB-macos-arm64.zip"
@@ -80,4 +81,9 @@ ditto -c -k --sequesterRsrc --keepParent "$app" "$archive"
 shasum -a 256 "$archive" | awk '{print $1}' > "$archive.sha256"
 
 echo "Created $archive"
+if [[ "$sign_identity" == "-" ]]; then
+  echo "Code signing: ad-hoc (set NFIDB_CODESIGN_IDENTITY for a stable Apple signing identity)"
+else
+  echo "Code signing: $sign_identity"
+fi
 echo "SHA-256 $(cat "$archive.sha256")"

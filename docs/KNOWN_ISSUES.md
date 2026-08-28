@@ -30,7 +30,7 @@ This file is intentionally strict: “implemented” and “verified on availabl
 - The Apple-silicon macOS host is implemented and its M1 Pro VideoToolbox path is benchmarked, but real-monitor capture and iPad input require Screen Recording and Accessibility approval and still need the physical field pass. Intel Mac builds are not produced.
 - macOS exposes no public general-purpose synthetic multitouch injection API. Touch-on therefore maps the first finger to the pointer rather than pretending to provide native Mac touch contacts; three-finger semantic gestures remain available with Touch off.
 - Quartz tablet-subtype events carry Pencil pressure, tilt, rotation, and lifecycle fields in automated construction tests, but Krita/Rebelle/Photoshop must still prove which macOS apps accept those synthetic tablet fields as pressure-sensitive brush input.
-- The macOS bundle has an ad-hoc signature and is not Apple-notarized, so Gatekeeper may require control-click **Open**. A stable public release should use a Developer ID signature and notarization.
+- The default macOS bundle has an ad-hoc signature and is not Apple-notarized, so Gatekeeper may require control-click **Open**. Its identity changes when the executable changes, which can require privacy approval again after an update. `NFIDB_CODESIGN_IDENTITY` enables stable development signing; a public frictionless release still needs Developer ID signing and notarization.
 - There is no audio, clipboard synchronization, cloud relay, multi-client support, or Linux host.
 
 ## Validation still required for a public stable release

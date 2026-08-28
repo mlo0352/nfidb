@@ -43,7 +43,9 @@ From a clean Apple-silicon Mac checkout with Xcode Command Line Tools, Rust, and
 codesign --verify --deep --strict build/packages/.verification/NFiDB.app # after extracting to any temporary directory
 ```
 
-`build-macos.sh` runs the browser build and host/core/protocol/transport tests, creates an icon-bearing `NFiDB.app`, ad-hoc signs it, verifies that signature, and writes `build/packages/NFiDB-macos-arm64.zip` plus its `.sha256`. The app requires macOS 13 or newer. It is not Developer ID signed or notarized, so the release notes must retain the control-click **Open** instruction.
+`build-macos.sh` runs the browser build and host/core/protocol/transport tests, creates an icon-bearing `NFiDB.app`, signs it with `NFIDB_CODESIGN_IDENTITY` or the explicit ad-hoc fallback, verifies that signature, and writes `build/packages/NFiDB-macos-arm64.zip` plus its `.sha256`. The app requires macOS 13 or newer. Unless the release job is configured with Developer ID signing and notarization, its notes must retain the control-click **Open** instruction.
+
+For repeatable development or signed release candidates, set `NFIDB_CODESIGN_IDENTITY` to an installed Apple code-signing identity. The default `-` is an explicit CI/ad-hoc fallback. Ad-hoc bundle identities change with the executable and macOS may require Screen Recording and Accessibility approval again after each build. A public frictionless package requires a Developer ID Application certificate, hardened runtime, notarization, and stapling; do not describe an ad-hoc or Apple Development package as notarized.
 
 ## GitHub automation
 
