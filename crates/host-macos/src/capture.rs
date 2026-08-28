@@ -222,11 +222,11 @@ impl CaptureManager {
                 if output_type != SCStreamOutputType::Screen {
                     return;
                 }
-                // ScreenCaptureKit emits status-only samples while a stream is
-                // starting, changing, or stopping. Only complete video samples
-                // are candidates for encoding; the others are normal lifecycle
-                // notifications and must not poison the visible capture status.
-                if sample.frame_status() != Some(SCFrameStatus::Complete) {
+                // macOS 27 can omit the optional frame-status attachment from
+                // valid IOSurface samples, and may label the first/static image
+                // Started or Idle. The pixel buffer is authoritative; reject
+                // only statuses that explicitly cannot contain useful content.
+                if !frame_status_may_contain_image(sample.frame_status()) {
                     return;
                 }
                 let Some(buffer) = sample.image_buffer() else {
@@ -849,6 +849,13 @@ fn output_dimensions(source_width: u32, source_height: u32, max_width: u32) -> (
     (width, height)
 }
 
+fn frame_status_may_contain_image(status: Option<SCFrameStatus>) -> bool {
+    matches!(
+        status,
+        None | Some(SCFrameStatus::Complete | SCFrameStatus::Idle | SCFrameStatus::Started)
+    )
+}
+
 fn permission_error(error: &str) -> String {
     format!(
         "{error}. Allow NFiDB in System Settings > Privacy & Security > Screen & System Audio Recording, then try again."
@@ -921,5 +928,16 @@ mod tests {
             &metrics,
         );
         assert_eq!(slot.take().unwrap().dimensions(), (4, 2));
+    }
+
+    #[test]
+    fn screen_capture_accepts_content_without_optional_status_metadata() {
+        assert!(frame_status_may_contain_image(None));
+        assert!(frame_status_may_contain_image(Some(SCFrameStatus::Complete)));
+        assert!(frame_status_may_contain_image(Some(SCFrameStatus::Started)));
+        assert!(frame_status_may_contain_image(Some(SCFrameStatus::Idle)));
+        assert!(!frame_status_may_contain_image(Some(SCFrameStatus::Blank)));
+        assert!(!frame_status_may_contain_image(Some(SCFrameStatus::Suspended)));
+        assert!(!frame_status_may_contain_image(Some(SCFrameStatus::Stopped)));
     }
 }
