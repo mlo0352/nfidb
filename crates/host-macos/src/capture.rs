@@ -216,21 +216,21 @@ impl CaptureManager {
 
         let handler_slot = Arc::clone(&slot);
         let metrics = Arc::clone(&self.metrics);
-        let status = Arc::clone(&self.status);
         let mut stream = SCStream::new(&filter, &config);
         let handler = stream.add_output_handler(
             move |sample: CMSampleBuffer, output_type: SCStreamOutputType| {
                 if output_type != SCStreamOutputType::Screen {
                     return;
                 }
-                if sample
-                    .frame_status()
-                    .is_some_and(|frame_status| frame_status != SCFrameStatus::Complete)
-                {
+                // ScreenCaptureKit emits status-only samples while a stream is
+                // starting, changing, or stopping. Only complete video samples
+                // are candidates for encoding; the others are normal lifecycle
+                // notifications and must not poison the visible capture status.
+                if sample.frame_status() != Some(SCFrameStatus::Complete) {
                     return;
                 }
                 let Some(buffer) = sample.image_buffer() else {
-                    status.lock().error = Some("ScreenCaptureKit returned a frame without a CVPixelBuffer".to_owned());
+                    tracing::debug!("ignoring complete ScreenCaptureKit sample without an image buffer");
                     return;
                 };
                 let width = buffer.width() as u32;

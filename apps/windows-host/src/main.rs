@@ -663,7 +663,7 @@ impl eframe::App for HostApp {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(
                             egui::RichText::new("LOCAL NETWORK ONLY")
-                                .size(11.0)
+                                .size(12.0)
                                 .strong()
                                 .color(accent()),
                         );
@@ -681,16 +681,16 @@ impl eframe::App for HostApp {
             .show(ui, |ui| {
                 ui.add_space(10.0);
                 let setup_label = if self.setup_action_required() {
-                    "APP SETUP · ACTION"
+                    "App setup · Action"
                 } else {
-                    "APP SETUP"
+                    "App setup"
                 };
                 for (page, label) in [
-                    (HostPage::Session, "SESSION"),
-                    (HostPage::Source, "SOURCE"),
-                    (HostPage::Input, "INPUT"),
-                    (HostPage::Files, "FILES"),
-                    (HostPage::Diagnostics, "DIAGNOSTICS"),
+                    (HostPage::Session, "Session"),
+                    (HostPage::Source, "Source"),
+                    (HostPage::Input, "Input"),
+                    (HostPage::Files, "Files"),
+                    (HostPage::Diagnostics, "Diagnostics"),
                     (HostPage::AppSetup, setup_label),
                 ] {
                     if nav_button(ui, label, self.active_page == page).clicked() {
@@ -793,7 +793,7 @@ impl HostApp {
         let mut settings_changed = false;
         card(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                if ui.button("Add files for iPad").clicked()
+                if ui.add(action_button("Add files for iPad")).clicked()
                     && let Some(paths) = rfd::FileDialog::new().set_title("Add files for iPad").pick_files()
                 {
                     let count = paths.len();
@@ -814,13 +814,13 @@ impl HostApp {
                         )
                     });
                 }
-                if ui.button("Open received files folder").clicked() {
+                if ui.add(action_button("Open received files folder")).clicked() {
                     self.last_message = Some(match open_in_explorer(&snapshot.inbox_directory) {
                         Ok(()) => "Opened the folder where iPad files are saved".to_owned(),
                         Err(error) => format!("Could not open the received files folder: {error}"),
                     });
                 }
-                if ui.button("Clear iPad queue").clicked() {
+                if ui.add(action_button("Clear iPad queue")).clicked() {
                     self.server.clear_outgoing_files();
                     self.last_message =
                         Some("Cleared the iPad download queue; source files were not deleted".to_owned());
@@ -829,7 +829,7 @@ impl HostApp {
             ui.add_space(10.0);
             ui.label(
                 egui::RichText::new(format!("INBOX  {}", snapshot.inbox_directory.display()))
-                    .size(9.0)
+                    .size(12.5)
                     .monospace()
                     .color(muted()),
             );
@@ -869,12 +869,12 @@ impl HostApp {
                 egui::RichText::new(
                     "Transfers use verified HTTP chunks and never share arbitrary folders. Rate limiting keeps video and input responsive.",
                 )
-                .size(10.0)
+                .size(13.5)
                 .color(muted()),
             );
             if let Some(message) = &self.last_message {
                 ui.add_space(8.0);
-                ui.label(egui::RichText::new(message).size(10.0).color(accent()));
+                ui.label(egui::RichText::new(message).size(13.5).color(accent()));
             }
         });
         if settings_changed {
@@ -894,9 +894,9 @@ impl HostApp {
         card(ui, |ui| {
             ui.label(
                 egui::RichText::new("LIVE TRANSFER EVIDENCE")
-                    .size(9.0)
+                    .size(12.0)
                     .strong()
-                    .color(muted()),
+                    .color(accent()),
             );
             ui.add_space(8.0);
             egui::Grid::new("file_transfer_metrics")
@@ -943,9 +943,9 @@ impl HostApp {
             ui.add_space(14.0);
             ui.label(
                 egui::RichText::new(format!("FOR IPAD  {} QUEUED", snapshot.outbox.len()))
-                    .size(9.0)
+                    .size(12.0)
                     .strong()
-                    .color(muted()),
+                    .color(accent()),
             );
             if snapshot.outbox.is_empty() {
                 ui.label(
@@ -955,13 +955,13 @@ impl HostApp {
             }
             for file in &snapshot.outbox {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(&file.name).size(11.0));
-                    ui.label(egui::RichText::new(format_bytes(file.size)).size(10.0).color(muted()));
+                    ui.label(egui::RichText::new(&file.name).size(14.0));
+                    ui.label(egui::RichText::new(format_bytes(file.size)).size(13.0).color(muted()));
                     if file.sha256.is_none() {
-                        ui.label(egui::RichText::new("CHECKSUM…").size(8.0).color(muted()));
+                        ui.label(egui::RichText::new("CHECKSUM…").size(12.0).color(muted()));
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.small_button("REMOVE").clicked() {
+                        if ui.add(compact_action_button("Remove")).clicked() {
                             remove = Some(file.id);
                         }
                     });
@@ -970,7 +970,7 @@ impl HostApp {
             }
             if !snapshot.active_uploads.is_empty() {
                 ui.add_space(10.0);
-                ui.label(egui::RichText::new("FROM IPAD").size(9.0).strong().color(muted()));
+                ui.label(egui::RichText::new("FROM IPAD").size(12.0).strong().color(accent()));
                 for upload in &snapshot.active_uploads {
                     let fraction = if upload.size == 0 {
                         1.0
@@ -988,7 +988,7 @@ impl HostApp {
             }
             if !snapshot.recent.is_empty() {
                 ui.add_space(12.0);
-                ui.label(egui::RichText::new("RECENT").size(9.0).strong().color(muted()));
+                ui.label(egui::RichText::new("RECENT").size(12.0).strong().color(accent()));
                 for transfer in snapshot.recent.iter().take(8) {
                     let direction = match transfer.direction {
                         nfidb_transport::TransferDirection::IpadToWindows => {
@@ -1014,7 +1014,7 @@ impl HostApp {
                             transfer.status,
                             transfer.average_mbps
                         ))
-                        .size(10.0)
+                        .size(13.0)
                         .color(muted()),
                     );
                 }
@@ -1061,13 +1061,13 @@ impl HostApp {
         );
         ui.add_space(18.0);
         card(ui, |ui| {
-            ui.heading(egui::RichText::new("Automatic setup").size(17.0));
+            ui.heading(egui::RichText::new("Automatic setup").size(20.0));
             ui.label("READY  Local server, PIN/QR pairing, Auto video, input reset, and the Downloads/NFiDB Inbox are configured.");
             ui.label(
                 "Windows Firewall may ask once. Allow NFiDB on Private networks only; never allow Public networks.",
             );
             ui.add_space(12.0);
-            ui.heading(egui::RichText::new("First session").size(17.0));
+            ui.heading(egui::RichText::new("First session").size(20.0));
             ui.label("1. Keep the host and iPad on the same normal Wi-Fi or wired LAN; guest/client-isolated Wi-Fi will not work.");
             ui.label("2. Open the Session address or QR in iPad Safari. The six-digit PIN submits automatically.");
             ui.label(
@@ -1076,17 +1076,17 @@ impl HostApp {
             ui.label("4. Enable Windows Ink/Pointer input in the drawing app, then draw there.");
             ui.add_space(12.0);
             ui.horizontal(|ui| {
-                if ui.button("Open pointer diagnostic").clicked() {
+                if ui.add(action_button("Open pointer diagnostic")).clicked() {
                     ui.ctx().open_url(egui::OpenUrl::new_tab(format!(
                         "{}diagnostics/pointer",
                         self.server.info.fallback_url
                     )));
                 }
-                if ui.button("Copy pointer-sink command").clicked() {
+                if ui.add(action_button("Copy pointer-sink command")).clicked() {
                     ui.ctx().copy_text("pointer-sink.exe --self-test".to_owned());
                     self.last_message = Some("pointer-sink command copied".to_owned());
                 }
-                if ui.button("Open full help").clicked() {
+                if ui.add(action_button("Open full help")).clicked() {
                     ui.ctx().open_url(egui::OpenUrl::new_tab(
                         "https://mlo0352.github.io/nfidb/help.html".to_owned(),
                     ));
@@ -1095,20 +1095,20 @@ impl HostApp {
         });
         ui.add_space(16.0);
         card(ui, |ui| {
-            ui.heading(egui::RichText::new("Troubleshooting").size(17.0));
-            ui.collapsing("The iPad cannot open the address", |ui| {
+            ui.heading(egui::RichText::new("Troubleshooting").size(20.0));
+            ui.collapsing(help_heading("The iPad cannot open the address"), |ui| {
                 ui.label("Use the numeric LAN address shown on Session. Confirm both devices are on the same non-guest network, and that Windows marks it Private. Check Windows Firewall before disabling any security control.");
             });
-            ui.collapsing("Video connects but no picture appears", |ui| {
+            ui.collapsing(help_heading("Video connects but no picture appears"), |ui| {
                 ui.label("Reload Safari and pair again so NFiDB requests a fresh keyframe. In Source, choose Auto and Balanced, then run Quick Auto Test. Diagnostics shows first-frame and decoder evidence.");
             });
-            ui.collapsing("Pencil moves or selects instead of drawing", |ui| {
+            ui.collapsing(help_heading("Pencil moves or selects instead of drawing"), |ui| {
                 ui.label("Enable Windows Ink/Pointer input in the drawing app. Run pointer-sink.exe --self-test; if it passes, the remaining setting is inside the target app.");
             });
-            ui.collapsing("Touch or shortcuts do not respond", |ui| {
+            ui.collapsing(help_heading("Touch or shortcuts do not respond"), |ui| {
                 ui.label("Confirm Input enables the required device. Touch-on forwards fingers; Touch-off plus Gestures-on reserves three fingers for app switching, Task View, and minimize.");
             });
-            ui.collapsing("PIN or QR is stale", |ui| {
+            ui.collapsing(help_heading("PIN or QR is stale"), |ui| {
                 ui.label("Open Session and choose Reset PIN + QR, then reload Safari. NFiDB also rotates an expired unpaired code while this window is focused.");
             });
         });
@@ -1216,7 +1216,7 @@ impl HostApp {
         });
         ui.add_space(16.0);
         card(ui, |ui| {
-            ui.heading(egui::RichText::new("First session").size(17.0));
+            ui.heading(egui::RichText::new("First session").size(20.0));
             ui.label("1. Open the Session address or QR in iPad Safari; six PIN digits submit automatically.");
             ui.label("2. Open the pointer diagnostic and test pressure, tilt, coalescing, and one long stroke.");
             ui.label(
@@ -1225,13 +1225,13 @@ impl HostApp {
             ui.label("4. Draw in the target app and confirm pressure-sensitive strokes rather than mouse-only input.");
             ui.add_space(12.0);
             ui.horizontal_wrapped(|ui| {
-                if ui.button("Open pointer diagnostic").clicked() {
+                if ui.add(action_button("Open pointer diagnostic")).clicked() {
                     ui.ctx().open_url(egui::OpenUrl::new_tab(format!(
                         "{}diagnostics/pointer",
                         self.server.info.fallback_url
                     )));
                 }
-                if ui.button("Open full help").clicked() {
+                if ui.add(action_button("Open full help")).clicked() {
                     ui.ctx().open_url(egui::OpenUrl::new_tab(
                         "https://mlo0352.github.io/nfidb/help.html".to_owned(),
                     ));
@@ -1240,20 +1240,20 @@ impl HostApp {
         });
         ui.add_space(16.0);
         card(ui, |ui| {
-            ui.heading(egui::RichText::new("Troubleshooting").size(17.0));
-            ui.collapsing("Accessibility is not visible or NFiDB is absent", |ui| {
+            ui.heading(egui::RichText::new("Troubleshooting").size(20.0));
+            ui.collapsing(help_heading("Accessibility is not visible or NFiDB is absent"), |ui| {
                 ui.label("Use Open Accessibility Settings above. Apple places it under Privacy & Security and may require scrolling. If the app is absent, use + and add ~/Applications/NFiDB.app manually.");
             });
-            ui.collapsing("The iPad cannot open the address", |ui| {
+            ui.collapsing(help_heading("The iPad cannot open the address"), |ui| {
                 ui.label("Use the numeric address shown on Session. Confirm both devices use the same normal LAN, not guest/client-isolated Wi-Fi, and allow the Local Network prompt if macOS presents one.");
             });
-            ui.collapsing("There is no picture", |ui| {
+            ui.collapsing(help_heading("There is no picture"), |ui| {
                 ui.label("Confirm Screen Recording says Enabled above, then restart NFiDB. Reload Safari and pair again. Source and Diagnostics expose capture, encoder, and first-frame errors.");
             });
-            ui.collapsing("Mouse, keyboard, Pencil, or gestures do nothing", |ui| {
+            ui.collapsing(help_heading("Mouse, keyboard, Pencil, or gestures do nothing"), |ui| {
                 ui.label("Confirm Accessibility says Enabled above. Touch-on maps the first finger to the Mac pointer; Touch-off plus Gestures-on enables the three-finger commands.");
             });
-            ui.collapsing("PIN or QR is stale", |ui| {
+            ui.collapsing(help_heading("PIN or QR is stale"), |ui| {
                 ui.label("Open Session and choose Reset PIN + QR, then reload Safari. NFiDB rotates expired unpaired credentials automatically while focused.");
             });
         });
@@ -1315,12 +1315,17 @@ impl HostApp {
         let pairing_active = self.server.pairing_is_active();
         egui::Frame::NONE
             .fill(egui::Color32::from_rgb(11, 15, 16))
-            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(43, 54, 55)))
+            .stroke(egui::Stroke::new(1.5, egui::Color32::from_rgb(80, 96, 94)))
             .inner_margin(egui::Margin::same(20))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
-                        ui.label(egui::RichText::new("SAFARI ADDRESS").size(9.0).strong().color(muted()));
+                        ui.label(
+                            egui::RichText::new("SAFARI ADDRESS")
+                                .size(12.0)
+                                .strong()
+                                .color(accent()),
+                        );
                         ui.add_space(5.0);
                         ui.horizontal(|ui| {
                             ui.label(
@@ -1329,19 +1334,19 @@ impl HostApp {
                                     .monospace()
                                     .color(accent()),
                             );
-                            if ui.small_button("COPY").clicked() {
+                            if ui.add(compact_action_button("Copy")).clicked() {
                                 ui.ctx().copy_text(self.server.info.fallback_url.clone());
                                 self.last_message = Some("Address copied".to_owned());
                             }
                         });
                         ui.label(
                             egui::RichText::new(&self.server.info.friendly_url)
-                                .size(11.0)
+                                .size(13.5)
                                 .monospace()
                                 .color(muted()),
                         );
                         ui.add_space(20.0);
-                        ui.label(egui::RichText::new("PAIRING PIN").size(9.0).strong().color(muted()));
+                        ui.label(egui::RichText::new("PAIRING PIN").size(12.0).strong().color(accent()));
                         ui.label(
                             egui::RichText::new(format_pin(&pairing_pin))
                                 .size(31.0)
@@ -1358,17 +1363,17 @@ impl HostApp {
                                     expires % 60
                                 )
                             })
-                            .size(9.0)
+                            .size(12.0)
                             .color(muted()),
                         );
                         ui.add_space(8.0);
                         ui.horizontal(|ui| {
-                            if ui.button("Reset PIN + QR").clicked() {
+                            if ui.add(action_button("Reset PIN + QR")).clicked() {
                                 self.server.rotate_pairing();
                                 self.last_message =
                                     Some("PIN and QR rotated; any connected iPad was disconnected".to_owned());
                             }
-                            if ui.button("Open pointer diagnostic").clicked() {
+                            if ui.add(action_button("Open pointer diagnostic")).clicked() {
                                 ui.ctx().open_url(egui::OpenUrl::new_tab(format!(
                                     "{}diagnostics/pointer",
                                     self.server.info.fallback_url
@@ -1382,7 +1387,7 @@ impl HostApp {
                 });
                 if let Some(message) = &self.last_message {
                     ui.add_space(8.0);
-                    ui.label(egui::RichText::new(message).size(10.0).color(accent()));
+                    ui.label(egui::RichText::new(message).size(13.5).color(accent()));
                 }
             });
     }
@@ -1392,7 +1397,7 @@ impl HostApp {
         let capture = self.capture.status();
         egui::Frame::NONE
             .fill(egui::Color32::from_rgb(13, 18, 19))
-            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(37, 47, 48)))
+            .stroke(egui::Stroke::new(1.5, egui::Color32::from_rgb(80, 96, 94)))
             .inner_margin(egui::Margin::symmetric(16, 12))
             .show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
@@ -1422,12 +1427,17 @@ impl HostApp {
         let mut draft = self.config.video.clone();
         let mut apply_now = false;
         egui::Frame::NONE
-            .fill(egui::Color32::from_rgb(19, 24, 25))
-            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(43, 54, 55)))
+            .fill(egui::Color32::from_rgb(16, 21, 22))
+            .stroke(egui::Stroke::new(1.5, egui::Color32::from_rgb(80, 96, 94)))
             .inner_margin(egui::Margin::same(18))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("CAPTURE SOURCE").size(9.0).strong().color(muted()));
+                    ui.label(
+                        egui::RichText::new("CAPTURE SOURCE")
+                            .size(12.0)
+                            .strong()
+                            .color(accent()),
+                    );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let before = self.selected_index;
                         egui::ComboBox::from_id_salt("monitor")
@@ -1450,7 +1460,7 @@ impl HostApp {
                     });
                 });
                 ui.separator();
-                ui.label(egui::RichText::new("ACTIVE PATH").size(9.0).strong().color(muted()));
+                ui.label(egui::RichText::new("ACTIVE PATH").size(12.0).strong().color(accent()));
                 ui.add_space(7.0);
                 ui.horizontal_wrapped(|ui| {
                     status_metric(ui, "CODEC", video_state.runtime.codec.label());
@@ -1480,17 +1490,17 @@ impl HostApp {
                 });
                 ui.label(
                     egui::RichText::new(&video_state.runtime.encoder_name)
-                        .size(10.0)
+                        .size(13.5)
                         .color(egui::Color32::WHITE),
                 );
                 ui.label(
                     egui::RichText::new(&video_state.runtime.auto_selection_reason)
-                        .size(10.0)
+                        .size(13.5)
                         .color(muted()),
                 );
                 ui.separator();
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("ENCODER").size(9.0).strong().color(muted()));
+                    ui.label(egui::RichText::new("ENCODER").size(12.0).strong().color(accent()));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         egui::ComboBox::from_id_salt("video-encoder")
                             .selected_text(draft.encoder.label())
@@ -1548,12 +1558,12 @@ impl HostApp {
                         }
                         EncoderMode::H264Software => "Universal compatibility fallback; uses more CPU.",
                     })
-                    .size(10.0)
+                    .size(13.5)
                     .color(muted()),
                 );
                 ui.separator();
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("QUALITY").size(9.0).strong().color(muted()));
+                    ui.label(egui::RichText::new("QUALITY").size(12.0).strong().color(accent()));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         for (profile, name) in [
                             (VideoProfile::Sharp, "Sharp"),
@@ -1597,15 +1607,15 @@ impl HostApp {
                 ui.add_space(9.0);
                 ui.horizontal(|ui| {
                     if ui
-                        .add_enabled(draft != self.config.video, egui::Button::new("APPLY LIVE"))
+                        .add_enabled(draft != self.config.video, action_button("Apply live"))
                         .clicked()
                     {
                         apply_now = true;
                     }
-                    if ui.button("RESET PRESET").clicked() {
+                    if ui.add(action_button("Reset preset")).clicked() {
                         *draft.presets.get_mut(draft.profile) = VideoPresets::default().get(draft.profile).clone();
                     }
-                    if ui.button("RESET ALL PRESETS").clicked() {
+                    if ui.add(action_button("Reset all presets")).clicked() {
                         draft.presets = VideoPresets::default();
                     }
                     ui.label(
@@ -1615,13 +1625,13 @@ impl HostApp {
                             draft.active_preset().max_fps,
                             draft.active_preset().bitrates.for_codec(bitrate_codec),
                         ))
-                        .size(10.0)
+                        .size(13.0)
                         .color(muted()),
                     );
                 });
                 if let Some(message) = &self.last_message {
                     ui.separator();
-                    ui.label(egui::RichText::new(message).size(10.0).color(accent()));
+                    ui.label(egui::RichText::new(message).size(13.5).color(accent()));
                 }
             });
         self.config.video = draft;
@@ -1650,7 +1660,7 @@ impl HostApp {
 
     fn input_settings_card(&mut self, ui: &mut egui::Ui) {
         card(ui, |ui| {
-            ui.label(egui::RichText::new("FORWARDING").size(11.0).strong().color(accent()));
+            ui.label(egui::RichText::new("FORWARDING").size(12.0).strong().color(accent()));
             ui.add_space(10.0);
             let mut changed = false;
             changed |= ui
@@ -1699,7 +1709,7 @@ impl HostApp {
         card(ui, |ui| {
             ui.label(
                 egui::RichText::new("LIVE INPUT EVIDENCE")
-                    .size(11.0)
+                    .size(12.0)
                     .strong()
                     .color(accent()),
             );
@@ -1878,7 +1888,7 @@ impl HostApp {
                 if let Some(error) = capture.error {
                     ui.colored_label(egui::Color32::from_rgb(255, 137, 125), error);
                 }
-                if ui.button("Copy sanitized diagnostics").clicked() {
+                if ui.add(action_button("Copy sanitized diagnostics")).clicked() {
                     let video = self.server.video_control_state();
                     let report = serde_json::json!({
                         "product": concat!("NFiDB ", env!("CARGO_PKG_VERSION")),
@@ -1900,18 +1910,18 @@ impl HostApp {
     fn diagnostic_actions(&mut self, ui: &mut egui::Ui) {
         card(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                if ui.button("Reset recording").clicked() {
+                if ui.add(action_button("Reset recording")).clicked() {
                     self.server.clear_diagnostics();
                     self.last_message =
                         Some("Diagnostic history reset; the next iPad sample starts a fresh run".to_owned());
                 }
-                if ui.button("Export detailed JSON").clicked() {
+                if ui.add(action_button("Export detailed JSON")).clicked() {
                     self.last_message = Some(match self.export_diagnostics() {
                         Ok(path) => format!("Diagnostic report exported to {}", path.display()),
                         Err(error) => format!("Diagnostic export failed: {error}"),
                     });
                 }
-                if ui.button("Copy processed summary").clicked() {
+                if ui.add(action_button("Copy processed summary")).clicked() {
                     let summary = self.server.diagnostic_summary();
                     ui.ctx().copy_text(
                         serde_json::to_string_pretty(&summary)
@@ -1925,12 +1935,12 @@ impl HostApp {
                 egui::RichText::new(
                     "Recording is local, starts automatically when Safari connects, and includes raw RTC counters plus synchronized host metrics. Exact glass-to-glass Pencil latency still requires a high-speed camera.",
                 )
-                .size(10.0)
+                .size(13.5)
                 .color(muted()),
             );
             if let Some(message) = &self.last_message {
                 ui.add_space(8.0);
-                ui.label(egui::RichText::new(message).size(10.0).color(accent()));
+                ui.label(egui::RichText::new(message).size(13.5).color(accent()));
             }
         });
     }
@@ -1939,9 +1949,9 @@ impl HostApp {
         card(ui, |ui| {
             ui.label(
                 egui::RichText::new("LATEST IPAD / SAFARI SAMPLE")
-                    .size(9.0)
+                    .size(12.0)
                     .strong()
-                    .color(muted()),
+                    .color(accent()),
             );
             ui.add_space(8.0);
             let Some(latest) = self.server.latest_diagnostic() else {
@@ -2079,16 +2089,16 @@ impl HostApp {
         card(ui, |ui| {
             ui.label(
                 egui::RichText::new("PROCESSED RUN SUMMARY")
-                    .size(9.0)
+                    .size(12.0)
                     .strong()
-                    .color(muted()),
+                    .color(accent()),
             );
             ui.label(
                 egui::RichText::new(format!(
                     "{} retained samples over {:.1} seconds · {} discarded after the six-hour bound",
                     summary.sample_count, summary.retained_seconds, summary.discarded_samples
                 ))
-                .size(10.0)
+                .size(13.5)
                 .color(muted()),
             );
             ui.add_space(8.0);
@@ -2130,24 +2140,24 @@ impl HostApp {
                 ui.vertical(|ui| {
                     ui.label(
                         egui::RichText::new("VIDEO ENCODER BENCHMARK")
-                            .size(9.0)
+                            .size(12.0)
                             .strong()
-                            .color(muted()),
+                            .color(accent()),
                     );
                     ui.label(
                         egui::RichText::new(
                             "Host tests use deterministic screen/detail, drawing, and motion patterns. Run Quick Auto Test on the paired iPad for decode and presentation evidence.",
                         )
-                        .size(10.0)
+                        .size(13.5)
                         .color(muted()),
                     );
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let idle = self.benchmark_rx.is_none();
-                    if ui.add_enabled(idle, egui::Button::new("FULL BENCHMARK")).clicked() {
+                    if ui.add_enabled(idle, action_button("Full benchmark")).clicked() {
                         self.start_video_benchmark(true);
                     }
-                    if ui.add_enabled(idle, egui::Button::new("QUICK HOST TEST")).clicked() {
+                    if ui.add_enabled(idle, action_button("Quick host test")).clicked() {
                         self.start_video_benchmark(false);
                     }
                 });
@@ -2166,7 +2176,7 @@ impl HostApp {
                     .striped(true)
                     .show(ui, |ui| {
                         for heading in ["ENCODER", "PATH", "STATE", "FPS", "P95", "CPU", "RAM", "MBPS", "SCORE"] {
-                            ui.label(egui::RichText::new(heading).size(9.0).strong().color(muted()));
+                            ui.label(egui::RichText::new(heading).size(12.0).strong().color(accent()));
                         }
                         ui.end_row();
                         for result in &report.results {
@@ -2189,7 +2199,7 @@ impl HostApp {
                             }
                             ui.end_row();
                             if let Some(reason) = &result.reason {
-                                ui.label(egui::RichText::new(reason).size(9.0).color(muted()));
+                                ui.label(egui::RichText::new(reason).size(12.5).color(muted()));
                                 ui.end_row();
                             }
                         }
@@ -2197,14 +2207,14 @@ impl HostApp {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if let Some(path) = &self.benchmark_report_path
-                        && ui.button("OPEN REPORT FOLDER").clicked()
+                        && ui.add(action_button("Open report folder")).clicked()
                     {
                         self.last_message = Some(match open_in_explorer(path) {
                             Ok(()) => "Opened benchmark report folder".to_owned(),
                             Err(error) => format!("Could not open benchmark folder: {error}"),
                         });
                     }
-                    if ui.button("CLEAR LEARNED RESULTS").clicked() {
+                    if ui.add(action_button("Clear learned results")).clicked() {
                         self.last_message = Some(match self.capture.clear_auto_benchmarks() {
                             Ok(()) => "Cleared learned codec results; Auto will use its conservative policy".to_owned(),
                             Err(error) => format!("Could not clear learned results: {error}"),
@@ -2383,8 +2393,8 @@ impl HostApp {
 
 fn configure_visuals(context: &egui::Context) {
     let mut visuals = egui::Visuals::dark();
-    let primary_text = egui::Color32::from_rgb(252, 254, 253);
-    let secondary_text = egui::Color32::from_rgb(226, 234, 231);
+    let primary_text = egui::Color32::WHITE;
+    let secondary_text = egui::Color32::from_rgb(244, 248, 246);
     visuals.override_text_color = Some(primary_text);
     visuals.weak_text_alpha = 1.0;
     visuals.weak_text_color = Some(secondary_text);
@@ -2395,17 +2405,36 @@ fn configure_visuals(context: &egui::Context) {
     visuals.text_edit_bg_color = Some(egui::Color32::from_rgb(3, 6, 7));
     visuals.code_bg_color = egui::Color32::from_rgb(22, 30, 31);
     visuals.hyperlink_color = accent();
-    visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, primary_text);
+    visuals.window_stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(92, 108, 105));
+    visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.5, primary_text);
+    visuals.widgets.noninteractive.bg_fill = egui::Color32::from_rgb(16, 21, 22);
+    visuals.widgets.noninteractive.weak_bg_fill = egui::Color32::from_rgb(20, 27, 28);
+    visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(80, 96, 94));
     visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(244, 249, 247));
     visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.5, egui::Color32::WHITE);
     visuals.widgets.active.fg_stroke = egui::Stroke::new(1.5, egui::Color32::WHITE);
     visuals.widgets.open.fg_stroke = egui::Stroke::new(1.5, egui::Color32::WHITE);
-    visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(35, 45, 46);
-    visuals.widgets.inactive.weak_bg_fill = egui::Color32::from_rgb(29, 37, 38);
-    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(111, 130, 126));
-    visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(42, 64, 59);
+    visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(37, 52, 51);
+    visuals.widgets.inactive.weak_bg_fill = egui::Color32::from_rgb(31, 45, 44);
+    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(125, 146, 141));
+    visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(45, 78, 70);
+    visuals.widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(39, 68, 62);
     visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.5, accent());
     visuals.widgets.active.bg_fill = egui::Color32::from_rgb(35, 83, 71);
+    visuals.widgets.active.weak_bg_fill = egui::Color32::from_rgb(35, 83, 71);
+    visuals.widgets.active.bg_stroke = egui::Stroke::new(1.5, accent());
+    visuals.widgets.open.bg_fill = egui::Color32::from_rgb(35, 83, 71);
+    visuals.widgets.open.weak_bg_fill = egui::Color32::from_rgb(35, 83, 71);
+    visuals.widgets.open.bg_stroke = egui::Stroke::new(1.5, accent());
+    for widget in [
+        &mut visuals.widgets.noninteractive,
+        &mut visuals.widgets.inactive,
+        &mut visuals.widgets.hovered,
+        &mut visuals.widgets.active,
+        &mut visuals.widgets.open,
+    ] {
+        widget.corner_radius = egui::CornerRadius::same(4);
+    }
     visuals.selection.bg_fill = egui::Color32::from_rgb(30, 95, 80);
     visuals.selection.stroke = egui::Stroke::new(1.0, accent());
     visuals.window_corner_radius = egui::CornerRadius::same(2);
@@ -2417,18 +2446,18 @@ fn configure_visuals(context: &egui::Context) {
             .insert(TextStyle::Heading, FontId::new(24.0, Proportional));
         style
             .text_styles
-            .insert(TextStyle::Body, FontId::new(15.0, Proportional));
+            .insert(TextStyle::Body, FontId::new(16.0, Proportional));
         style
             .text_styles
-            .insert(TextStyle::Button, FontId::new(14.0, Proportional));
+            .insert(TextStyle::Button, FontId::new(15.0, Proportional));
         style
             .text_styles
-            .insert(TextStyle::Small, FontId::new(12.5, Proportional));
+            .insert(TextStyle::Small, FontId::new(13.5, Proportional));
         style
             .text_styles
-            .insert(TextStyle::Monospace, FontId::new(13.0, egui::FontFamily::Monospace));
+            .insert(TextStyle::Monospace, FontId::new(14.0, egui::FontFamily::Monospace));
         style.spacing.item_spacing = egui::vec2(10.0, 10.0);
-        style.spacing.button_padding = egui::vec2(12.0, 7.0);
+        style.spacing.button_padding = egui::vec2(14.0, 9.0);
     });
 }
 
@@ -2455,6 +2484,35 @@ fn draw_qr(ui: &mut egui::Ui, value: &str, size: f32) {
             }
         }
     }
+}
+
+fn action_button(label: &str) -> egui::Button<'_> {
+    egui::Button::new(
+        egui::RichText::new(label)
+            .size(15.0)
+            .strong()
+            .color(egui::Color32::WHITE),
+    )
+    .min_size(egui::vec2(0.0, 40.0))
+    .corner_radius(egui::CornerRadius::same(4))
+}
+
+fn compact_action_button(label: &str) -> egui::Button<'_> {
+    egui::Button::new(
+        egui::RichText::new(label)
+            .size(13.5)
+            .strong()
+            .color(egui::Color32::WHITE),
+    )
+    .min_size(egui::vec2(0.0, 34.0))
+    .corner_radius(egui::CornerRadius::same(4))
+}
+
+fn help_heading(title: &str) -> egui::RichText {
+    egui::RichText::new(title.to_owned())
+        .size(16.0)
+        .strong()
+        .color(egui::Color32::WHITE)
 }
 
 fn nav_button(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
@@ -2499,14 +2557,14 @@ fn permission_control(ui: &mut egui::Ui, title: &str, description: &str, granted
             "READY",
             egui::Color32::from_rgb(125, 255, 220),
             egui::Color32::from_rgb(66, 161, 140),
-            "VIEW SETTINGS",
+            "View settings",
         )
     } else {
         (
             "ACCESS NOT ACTIVE",
             egui::Color32::from_rgb(255, 213, 139),
             egui::Color32::from_rgb(190, 137, 61),
-            "REPAIR ACCESS",
+            "Repair access",
         )
     };
     egui::Frame::NONE
@@ -2516,7 +2574,7 @@ fn permission_control(ui: &mut egui::Ui, title: &str, description: &str, granted
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
-                    ui.label(egui::RichText::new(state).size(11.0).strong().color(state_color));
+                    ui.label(egui::RichText::new(state).size(12.0).strong().color(state_color));
                     ui.label(
                         egui::RichText::new(title)
                             .size(16.0)
@@ -2529,13 +2587,18 @@ fn permission_control(ui: &mut egui::Ui, title: &str, description: &str, granted
                     clicked = ui
                         .add_sized(
                             [154.0, 40.0],
-                            egui::Button::new(egui::RichText::new(action).size(11.5).strong())
-                                .fill(if granted {
-                                    egui::Color32::from_rgb(28, 43, 41)
-                                } else {
-                                    egui::Color32::from_rgb(91, 60, 21)
-                                })
-                                .stroke(egui::Stroke::new(1.5, border)),
+                            egui::Button::new(
+                                egui::RichText::new(action)
+                                    .size(14.5)
+                                    .strong()
+                                    .color(egui::Color32::WHITE),
+                            )
+                            .fill(if granted {
+                                egui::Color32::from_rgb(28, 43, 41)
+                            } else {
+                                egui::Color32::from_rgb(91, 60, 21)
+                            })
+                            .stroke(egui::Stroke::new(1.5, border)),
                         )
                         .clicked();
                 });
@@ -2554,7 +2617,7 @@ fn open_privacy_message(result: Result<(), String>) -> String {
 
 fn status_metric(ui: &mut egui::Ui, label: &str, value: &str) {
     ui.vertical(|ui| {
-        ui.label(egui::RichText::new(label).size(10.0).strong().color(accent()));
+        ui.label(egui::RichText::new(label).size(12.0).strong().color(accent()));
         ui.label(egui::RichText::new(value).size(13.0).color(egui::Color32::WHITE));
     });
 }
@@ -2652,5 +2715,5 @@ const fn accent() -> egui::Color32 {
 }
 
 const fn muted() -> egui::Color32 {
-    egui::Color32::from_rgb(226, 234, 231)
+    egui::Color32::from_rgb(244, 248, 246)
 }

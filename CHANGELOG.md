@@ -16,6 +16,8 @@ NFiDB is pre-release software. Releases remain GitHub prereleases until the phys
 - Corrected macOS permission reporting: an active ScreenCaptureKit stream is authoritative even if the legacy CoreGraphics preflight result is stale, and Accessibility now uses Apple's `AXIsProcessTrustedWithOptions` prompt so NFiDB registers in the correct list.
 - Reworked the native desktop theme for accessibility with near-white secondary text, larger default and diagnostic type, persistent navigation fills, stronger card/control outlines, and larger Input controls.
 - Replaced the macOS permission button cluster with two focused status cards. Each reports the permission NFiDB can actually use, explains stale approvals from earlier builds, and exposes one clear repair/settings action.
+- Unified every desktop tab on a single high-contrast control system: pure-white button labels, 40-point action targets, readable sentence-case navigation, bright section labels, larger help text, and no remaining 8–11 point UI overrides.
+- Ignore ScreenCaptureKit's normal status-only startup/change/shutdown samples instead of reporting a false missing-pixel-buffer capture error after an otherwise healthy run.
 - Added `NFIDB_CODESIGN_IDENTITY` support to the Mac packager. Stable Apple signing prevents development rebuilds from appearing as unrelated apps to macOS privacy controls; CI retains an explicit ad-hoc fallback until Developer ID/notarization credentials are configured.
 - Added macOS-specific host and iPad labels, keyboard shortcuts, permission guidance, application icon, `.app` packaging, ad-hoc signing, checksum generation, CI, and GitHub prerelease artifacts.
 
