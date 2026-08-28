@@ -101,10 +101,12 @@ fn process_sample() -> Option<ProcessSample> {
             &mut count,
         )
     };
-    let working_set_bytes = (status == 0).then_some(basic.resident_size).unwrap_or_default();
-    let peak_working_set_bytes = (status == 0)
-        .then_some(basic.resident_size_max)
-        .unwrap_or_else(|| usage.ru_maxrss.max(0) as u64);
+    let working_set_bytes = if status == 0 { basic.resident_size } else { 0 };
+    let peak_working_set_bytes = if status == 0 {
+        basic.resident_size_max
+    } else {
+        usage.ru_maxrss.max(0) as u64
+    };
     let cpu_seconds = usage.ru_utime.tv_sec as f64
         + usage.ru_utime.tv_usec as f64 / 1_000_000.0
         + usage.ru_stime.tv_sec as f64

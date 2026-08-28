@@ -475,7 +475,7 @@ impl Drop for CaptureManager {
 
 enum ActiveEncoder {
     Hardware(VideoToolboxEncoder),
-    Software(Encoder),
+    Software(Box<Encoder>),
 }
 
 impl ActiveEncoder {
@@ -499,7 +499,7 @@ impl ActiveEncoder {
                 .vui(VuiConfig::srgb());
             let encoder =
                 Encoder::with_api_config(OpenH264API::from_source(), config).map_err(|error| error.to_string())?;
-            Ok(Self::Software(encoder))
+            Ok(Self::Software(Box::new(encoder)))
         } else {
             Ok(Self::Hardware(VideoToolboxEncoder::new(VideoToolboxEncoderConfig {
                 codec,
@@ -690,7 +690,7 @@ fn render_test_pattern(width: u32, height: u32, frame: u32) -> Vec<u8> {
         for x in 0..width {
             let offset = (y as usize * width as usize + x as usize) * 4;
             let grid = if x % 64 == 0 || y % 64 == 0 { 40 } else { 0 };
-            let stroke = (x.abs_diff(moving_x) < 5).then_some(210).unwrap_or(0);
+            let stroke = if x.abs_diff(moving_x) < 5 { 210 } else { 0 };
             bytes[offset] = ((x * 160 / width.max(1)) as u8)
                 .saturating_add(grid)
                 .saturating_add(stroke);
