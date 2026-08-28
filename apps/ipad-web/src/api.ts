@@ -1,6 +1,7 @@
 export interface HostStatus {
   product: string;
   host_name: string;
+  host_platform: "windows" | "macos";
   session_id: string;
   paired: boolean;
   expires_in_seconds: number;
@@ -152,7 +153,7 @@ export interface VideoConfig {
 export interface EncoderCapability {
   id: string;
   codec: VideoCodec;
-  backend: "media-foundation-hardware" | "open-h264-software";
+  backend: "media-foundation-hardware" | "video-toolbox-hardware" | "open-h264-software";
   hardware: boolean;
   encoder_name: string;
   adapter_name: string | null;
@@ -189,7 +190,7 @@ export interface VideoControl {
     requested_mode: EncoderMode;
     active_mode: EncoderMode;
     codec: VideoCodec;
-    backend: "media-foundation-hardware" | "open-h264-software";
+    backend: "media-foundation-hardware" | "video-toolbox-hardware" | "open-h264-software";
     encoder_name: string;
     hardware: boolean;
     pipeline_memory_mode: "gpu-zero-copy" | "gpu-assisted" | "cpu-copy" | "cpu-preprocessing";

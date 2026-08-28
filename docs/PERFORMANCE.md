@@ -37,6 +37,12 @@ The 0.6.0 development host exposes functional NVIDIA Media Foundation H.264, HEV
 
 The paired packaged Edge Quick Auto Test verified actual presentation for H.264 hardware, AV1 hardware, and OpenH264. Edge did not report HEVC and it was therefore excluded rather than forced. The final run measured 56.25/53.5 encoded/presented fps for hardware H.264, 57.25/57.25 for AV1, and 16.25/16.25 for OpenH264. Edge headless also reported 47.6–50% compositor presentation drops on the hardware paths, so every observation failed at least one strict end-to-end gate and Auto retained the conservative H.264 hardware choice. No physical iPad Safari multi-codec number is claimed.
 
+## macOS VideoToolbox measurements
+
+The 0.8.0 macOS host was compiled and exercised on a 2021 M1 Pro MacBook Pro. VideoToolbox reported and NFiDB verified active hardware H.264 and HEVC sessions; no AV1 hardware encoder was exposed. A corrected optimized 180-frame Quick run at 1920×1080 drawing measured H.264 at 101.58 fps host capacity with 8.42 ms encode p95, HEVC at 93.08 fps with 9.37 ms, and OpenH264 at 60.26 fps with 15.14 ms encode p95. The hardware rows used about 47 MiB peak working set and 26–27% of one CPU core during the measured pipeline; OpenH264 used 83 MiB and essentially one full core.
+
+Those figures exclude deterministic source rendering from the encoder clock and calculate output Mbps against the requested 60 fps media timeline. They are optimized host-only evidence, not network, Safari presentation, quality-equivalent bitrate, or glass-to-glass claims. Live ScreenCaptureKit output is already IOSurface-backed and goes straight to VideoToolbox through a one-frame replacement slot; the deterministic benchmark must first copy its generated CPU image into an IOSurface and labels that test input `gpu-assisted`.
+
 ## Release-mode measurements
 
 These profile results are from the development Windows 11 PC (Intel Core i9-13900K), release `0.2.0`, Microsoft Edge headless, a real LAN-address WebRTC connection, a generated 60 fps 4K/1080p integrity pattern, and a simultaneous 240-sample/s pen stream. They measure software encoding and end-to-end decode, not physical Pencil glass-to-glass latency.

@@ -17,9 +17,8 @@ mod videotoolbox_encoder;
 
 #[cfg(target_os = "macos")]
 pub use benchmark::{
-    BenchmarkWorkload, HostBenchmarkCase, HostBenchmarkReport, HostBenchmarkResult,
-    full_benchmark_cases, quick_benchmark_cases, run_host_benchmark_suite,
-    write_benchmark_exports,
+    BenchmarkWorkload, HostBenchmarkCase, HostBenchmarkReport, HostBenchmarkResult, full_benchmark_cases,
+    quick_benchmark_cases, run_host_benchmark_suite, write_benchmark_exports,
 };
 #[cfg(target_os = "macos")]
 pub use capture::{CaptureManager, CaptureStatus};

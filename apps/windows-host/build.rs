@@ -14,4 +14,16 @@ fn main() {
             println!("cargo:warning=Windows resource metadata was not embedded: {error}");
         }
     }
+
+    #[cfg(target_os = "macos")]
+    configure_macos_swift_runtime();
+}
+
+#[cfg(target_os = "macos")]
+fn configure_macos_swift_runtime() {
+    // ScreenCaptureKit's small Swift bridge references the concurrency runtime.
+    // macOS 13+ supplies it in the system Swift runtime. Keep an app-relative
+    // fallback for a future signed bundle that deliberately embeds Swift.
+    println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/../Frameworks");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
 }

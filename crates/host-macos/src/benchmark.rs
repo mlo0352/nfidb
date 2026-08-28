@@ -3,13 +3,11 @@ use std::path::Path;
 use std::time::Instant;
 
 use nfidb_core::{
-    AutoScore, BenchmarkMetrics, EncoderCapability, EncoderMode, PipelineMemoryMode, VideoCodec,
-    score_auto_candidate,
+    AutoScore, BenchmarkMetrics, EncoderCapability, EncoderMode, PipelineMemoryMode, VideoCodec, score_auto_candidate,
 };
 use openh264::OpenH264API;
 use openh264::encoder::{
-    BitRate, Complexity, Encoder, EncoderConfig, FrameRate, FrameType, Level, Profile,
-    RateControlMode, UsageType,
+    BitRate, Complexity, Encoder, EncoderConfig, FrameRate, FrameType, Level, Profile, RateControlMode, UsageType,
 };
 use openh264::formats::{BgraSliceU8, YUVBuffer};
 use serde::{Deserialize, Serialize};
@@ -120,16 +118,18 @@ pub fn full_benchmark_cases(frames: u32) -> Vec<HostBenchmarkCase> {
     ]
     .into_iter()
     .flat_map(|(name, source_width, source_height, max_width, bitrate_bps)| {
-        BenchmarkWorkload::ALL.into_iter().map(move |workload| HostBenchmarkCase {
-            name: format!("{name}-{}", workload.label()),
-            source_width,
-            source_height,
-            max_width,
-            requested_fps: 60,
-            bitrate_bps,
-            workload,
-            frames,
-        })
+        BenchmarkWorkload::ALL
+            .into_iter()
+            .map(move |workload| HostBenchmarkCase {
+                name: format!("{name}-{}", workload.label()),
+                source_width,
+                source_height,
+                max_width,
+                requested_fps: 60,
+                bitrate_bps,
+                workload,
+                frames,
+            })
     })
     .collect()
 }
@@ -160,7 +160,9 @@ pub fn run_host_benchmark_suite(
 
 fn run_case(case: HostBenchmarkCase, mode: EncoderMode, capabilities: &[EncoderCapability]) -> HostBenchmarkResult {
     let codec = mode.codec().unwrap_or(VideoCodec::H264);
-    let candidate = capabilities.iter().find(|item| item.mode() == mode && item.state.is_usable());
+    let candidate = capabilities
+        .iter()
+        .find(|item| item.mode() == mode && item.state.is_usable());
     let Some(candidate) = candidate else {
         let reason = capabilities
             .iter()
@@ -180,7 +182,8 @@ fn run_functional_case(
     encoder_name: &str,
 ) -> Result<HostBenchmarkResult, String> {
     let width = case.source_width.min(case.max_width).max(2) & !1;
-    let height = (((u64::from(case.source_height) * u64::from(width)) / u64::from(case.source_width)) as u32).max(2) & !1;
+    let height =
+        (((u64::from(case.source_height) * u64::from(width)) / u64::from(case.source_width)) as u32).max(2) & !1;
     let mut hardware = if mode.requires_hardware() {
         Some(VideoToolboxEncoder::new(VideoToolboxEncoderConfig {
             codec,
@@ -218,17 +221,19 @@ fn run_functional_case(
         encoder.force_intra_frame();
     }
 
-    let started = Instant::now();
-    let cpu_started = cpu_seconds();
     let mut preprocess_ms = Vec::with_capacity(case.frames as usize);
     let mut encode_ms = Vec::with_capacity(case.frames as usize);
+    let mut measured_cpu_seconds = 0.0;
     let mut encoded_frames = 0_u32;
     let mut keyframes = 0_u32;
     let mut bytes_encoded = 0_u64;
     let mut startup_to_first_frame_ms = None;
     for frame_number in 0..case.frames {
-        let preprocess_started = Instant::now();
+        // Pattern generation models the source supplied by ScreenCaptureKit; it
+        // is deliberately outside the encoder/preprocessor timing window.
         let bgra = render_frame(width, height, frame_number, case.workload);
+        let cpu_started = cpu_seconds();
+        let preprocess_started = Instant::now();
         if let Some(encoder) = hardware.as_mut() {
             let surface = bgra_iosurface(width, height, &bgra)?;
             preprocess_ms.push(preprocess_started.elapsed().as_secs_f64() * 1000.0);
@@ -250,18 +255,19 @@ fn run_functional_case(
                 bytes_encoded += encoded.to_vec().len() as u64;
             }
         }
+        if let (Some(before), Some(after)) = (cpu_started, cpu_seconds()) {
+            measured_cpu_seconds += (after - before).max(0.0);
+        }
         if startup_to_first_frame_ms.is_none() && encoded_frames > 0 {
-            startup_to_first_frame_ms = Some(started.elapsed().as_secs_f64() * 1000.0);
+            startup_to_first_frame_ms = Some(preprocess_ms.iter().sum::<f64>() + encode_ms.iter().sum::<f64>());
         }
     }
-    let elapsed = started.elapsed().as_secs_f64().max(0.000_001);
-    let actual_fps = f64::from(encoded_frames) / elapsed;
-    let actual_mbps = bytes_encoded as f64 * 8.0 / elapsed / 1_000_000.0;
-    let process_cpu_percent = cpu_started.zip(cpu_seconds()).map(|(before, after)| {
-        (after - before).max(0.0) / elapsed
-            / std::thread::available_parallelism().map_or(1, std::num::NonZero::get) as f64
-            * 100.0
-    });
+    let measured_pipeline_seconds = (preprocess_ms.iter().sum::<f64>() + encode_ms.iter().sum::<f64>()) / 1000.0;
+    let actual_fps = f64::from(encoded_frames) / measured_pipeline_seconds.max(0.000_001);
+    let media_seconds = f64::from(case.frames) / f64::from(case.requested_fps.max(1));
+    let actual_mbps = bytes_encoded as f64 * 8.0 / media_seconds.max(0.000_001) / 1_000_000.0;
+    // Like Activity Monitor, 100% represents one fully occupied CPU core.
+    let process_cpu_percent = Some(measured_cpu_seconds / measured_pipeline_seconds.max(0.000_001) * 100.0);
     let peak_mib = peak_working_set_mib();
     let metrics = BenchmarkMetrics {
         requested_fps: f64::from(case.requested_fps),
@@ -283,10 +289,19 @@ fn run_functional_case(
         case: case.clone(),
         mode,
         codec,
-        backend: if mode.requires_hardware() { "VideoToolbox hardware" } else { "OpenH264 software" }.to_owned(),
+        backend: if mode.requires_hardware() {
+            "VideoToolbox hardware"
+        } else {
+            "OpenH264 software"
+        }
+        .to_owned(),
         encoder_name: encoder_name.to_owned(),
         hardware: mode.requires_hardware(),
-        pipeline_memory_mode: if mode.requires_hardware() { PipelineMemoryMode::GpuAssisted } else { PipelineMemoryMode::CpuPreprocessing },
+        pipeline_memory_mode: if mode.requires_hardware() {
+            PipelineMemoryMode::GpuAssisted
+        } else {
+            PipelineMemoryMode::CpuPreprocessing
+        },
         state: "completed".to_owned(),
         reason: None,
         output_width: width,
@@ -315,18 +330,51 @@ fn run_functional_case(
     })
 }
 
-fn empty_result(case: HostBenchmarkCase, mode: EncoderMode, codec: VideoCodec, state: &str, reason: Option<String>) -> HostBenchmarkResult {
+fn empty_result(
+    case: HostBenchmarkCase,
+    mode: EncoderMode,
+    codec: VideoCodec,
+    state: &str,
+    reason: Option<String>,
+) -> HostBenchmarkResult {
     HostBenchmarkResult {
-        case, mode, codec,
-        backend: if mode.requires_hardware() { "VideoToolbox hardware" } else { "OpenH264 software" }.to_owned(),
-        encoder_name: mode.label().to_owned(), hardware: mode.requires_hardware(),
-        pipeline_memory_mode: PipelineMemoryMode::CpuPreprocessing, state: state.to_owned(), reason,
-        output_width: 0, output_height: 0, input_frames: 0, encoded_frames: 0, keyframes: 0,
-        bytes_encoded: 0, average_bytes_per_frame: None, actual_fps: None, actual_mbps: None,
-        preprocess_mean_ms: None, preprocess_p50_ms: None, preprocess_p95_ms: None, preprocess_p99_ms: None,
-        encode_mean_ms: None, encode_p50_ms: None, encode_p95_ms: None, encode_p99_ms: None,
-        encode_max_ms: None, startup_to_first_frame_ms: None, process_cpu_percent: None,
-        working_set_mean_mib: None, working_set_peak_mib: None, auto_score: None,
+        case,
+        mode,
+        codec,
+        backend: if mode.requires_hardware() {
+            "VideoToolbox hardware"
+        } else {
+            "OpenH264 software"
+        }
+        .to_owned(),
+        encoder_name: mode.label().to_owned(),
+        hardware: mode.requires_hardware(),
+        pipeline_memory_mode: PipelineMemoryMode::CpuPreprocessing,
+        state: state.to_owned(),
+        reason,
+        output_width: 0,
+        output_height: 0,
+        input_frames: 0,
+        encoded_frames: 0,
+        keyframes: 0,
+        bytes_encoded: 0,
+        average_bytes_per_frame: None,
+        actual_fps: None,
+        actual_mbps: None,
+        preprocess_mean_ms: None,
+        preprocess_p50_ms: None,
+        preprocess_p95_ms: None,
+        preprocess_p99_ms: None,
+        encode_mean_ms: None,
+        encode_p50_ms: None,
+        encode_p95_ms: None,
+        encode_p99_ms: None,
+        encode_max_ms: None,
+        startup_to_first_frame_ms: None,
+        process_cpu_percent: None,
+        working_set_mean_mib: None,
+        working_set_peak_mib: None,
+        auto_score: None,
     }
 }
 
@@ -339,8 +387,16 @@ pub fn write_benchmark_exports(directory: &Path, report: &HostBenchmarkReport) -
         "measurement_scope": "deterministic host preprocessing and real VideoToolbox/OpenH264 encoding; no receiver decode or presentation metrics",
         "generated_unix_ms": report.generated_unix_ms,
     })).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
-    fs::write(directory.join("capabilities.json"), serde_json::to_vec_pretty(&report.capabilities).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
-    fs::write(directory.join("results.json"), serde_json::to_vec_pretty(report).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+    fs::write(
+        directory.join("capabilities.json"),
+        serde_json::to_vec_pretty(&report.capabilities).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    fs::write(
+        directory.join("results.json"),
+        serde_json::to_vec_pretty(report).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
     fs::write(directory.join("results.csv"), report_csv(report)).map_err(|error| error.to_string())?;
     fs::write(directory.join("summary.md"), report_markdown(report)).map_err(|error| error.to_string())?;
     Ok(())
@@ -350,17 +406,31 @@ fn report_csv(report: &HostBenchmarkReport) -> String {
     let mut csv = "case,workload,mode,codec,backend,memory_path,state,source,output,requested_fps,actual_fps,encode_mean_ms,encode_p95_ms,preprocess_mean_ms,preprocess_p95_ms,cpu_percent,working_set_peak_mib,actual_mbps,auto_score,reason\n".to_owned();
     let field = |value: Option<f64>| value.map(|value| format!("{value:.4}")).unwrap_or_default();
     for result in &report.results {
-        csv.push_str(&[
-            result.case.name.clone(), result.case.workload.label().to_owned(), format!("{:?}", result.mode),
-            format!("{:?}", result.codec), result.backend.clone(), result.pipeline_memory_mode.label().to_owned(),
-            result.state.clone(), format!("{}x{}", result.case.source_width, result.case.source_height),
-            format!("{}x{}", result.output_width, result.output_height), result.case.requested_fps.to_string(),
-            field(result.actual_fps), field(result.encode_mean_ms), field(result.encode_p95_ms),
-            field(result.preprocess_mean_ms), field(result.preprocess_p95_ms), field(result.process_cpu_percent),
-            field(result.working_set_peak_mib), field(result.actual_mbps),
-            field(result.auto_score.as_ref().and_then(|score| score.score)),
-            result.reason.as_deref().unwrap_or("").replace(',', ";"),
-        ].join(","));
+        csv.push_str(
+            &[
+                result.case.name.clone(),
+                result.case.workload.label().to_owned(),
+                format!("{:?}", result.mode),
+                format!("{:?}", result.codec),
+                result.backend.clone(),
+                result.pipeline_memory_mode.label().to_owned(),
+                result.state.clone(),
+                format!("{}x{}", result.case.source_width, result.case.source_height),
+                format!("{}x{}", result.output_width, result.output_height),
+                result.case.requested_fps.to_string(),
+                field(result.actual_fps),
+                field(result.encode_mean_ms),
+                field(result.encode_p95_ms),
+                field(result.preprocess_mean_ms),
+                field(result.preprocess_p95_ms),
+                field(result.process_cpu_percent),
+                field(result.working_set_peak_mib),
+                field(result.actual_mbps),
+                field(result.auto_score.as_ref().and_then(|score| score.score)),
+                result.reason.as_deref().unwrap_or("").replace(',', ";"),
+            ]
+            .join(","),
+        );
         csv.push('\n');
     }
     csv
@@ -368,13 +438,25 @@ fn report_csv(report: &HostBenchmarkReport) -> String {
 
 fn report_markdown(report: &HostBenchmarkReport) -> String {
     let mut markdown = "# NFiDB macOS codec benchmark\n\nHost-only deterministic benchmark. Missing end-to-end values are unavailable, not zero.\n\n| Case | Encoder | Memory path | State | FPS | Encode p95 | CPU | RAM peak | Mbps | Score |\n| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |\n".to_owned();
-    let f = |value: Option<f64>, suffix: &str| value.map(|value| format!("{value:.2}{suffix}")).unwrap_or_else(|| "—".to_owned());
+    let f = |value: Option<f64>, suffix: &str| {
+        value
+            .map(|value| format!("{value:.2}{suffix}"))
+            .unwrap_or_else(|| "—".to_owned())
+    };
     for result in &report.results {
-        markdown.push_str(&format!("| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
-            result.case.name, result.mode.label(), result.pipeline_memory_mode.label(), result.state,
-            f(result.actual_fps, ""), f(result.encode_p95_ms, " ms"), f(result.process_cpu_percent, "%"),
-            f(result.working_set_peak_mib, " MiB"), f(result.actual_mbps, ""),
-            f(result.auto_score.as_ref().and_then(|score| score.score), "")));
+        markdown.push_str(&format!(
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            result.case.name,
+            result.mode.label(),
+            result.pipeline_memory_mode.label(),
+            result.state,
+            f(result.actual_fps, ""),
+            f(result.encode_p95_ms, " ms"),
+            f(result.process_cpu_percent, "%"),
+            f(result.working_set_peak_mib, " MiB"),
+            f(result.actual_mbps, ""),
+            f(result.auto_score.as_ref().and_then(|score| score.score), "")
+        ));
     }
     markdown
 }
@@ -390,7 +472,9 @@ fn render_frame(width: u32, height: u32, frame: u32, workload: BenchmarkWorkload
                 BenchmarkWorkload::Drawing => u8::from(x.abs_diff(frame.wrapping_mul(17) % width.max(1)) < 5) * 200,
                 BenchmarkWorkload::HighMotion => (((x + frame * 23) / 16 + y / 16) & 1) as u8 * 190,
             };
-            bytes[offset] = ((x * 150 / width.max(1)) as u8).saturating_add(grid).saturating_add(motion);
+            bytes[offset] = ((x * 150 / width.max(1)) as u8)
+                .saturating_add(grid)
+                .saturating_add(motion);
             bytes[offset + 1] = ((y * 140 / height.max(1)) as u8).saturating_add(grid);
             bytes[offset + 2] = 30_u8.saturating_add(motion / 2);
             bytes[offset + 3] = 255;
@@ -404,23 +488,35 @@ fn mean(values: &[f64]) -> Option<f64> {
 }
 
 fn percentile(values: &[f64], quantile: f64) -> Option<f64> {
-    if values.is_empty() { return None; }
+    if values.is_empty() {
+        return None;
+    }
     let mut sorted = values.to_vec();
     sorted.sort_by(f64::total_cmp);
-    sorted.get(((sorted.len() - 1) as f64 * quantile).ceil() as usize).copied()
+    sorted
+        .get(((sorted.len() - 1) as f64 * quantile).ceil() as usize)
+        .copied()
 }
 
 fn cpu_seconds() -> Option<f64> {
     let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
-    if unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) } != 0 { return None; }
+    if unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) } != 0 {
+        return None;
+    }
     let usage = unsafe { usage.assume_init() };
-    Some(usage.ru_utime.tv_sec as f64 + usage.ru_utime.tv_usec as f64 / 1_000_000.0
-        + usage.ru_stime.tv_sec as f64 + usage.ru_stime.tv_usec as f64 / 1_000_000.0)
+    Some(
+        usage.ru_utime.tv_sec as f64
+            + usage.ru_utime.tv_usec as f64 / 1_000_000.0
+            + usage.ru_stime.tv_sec as f64
+            + usage.ru_stime.tv_usec as f64 / 1_000_000.0,
+    )
 }
 
 fn peak_working_set_mib() -> Option<f64> {
     let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
-    if unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) } != 0 { return None; }
+    if unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) } != 0 {
+        return None;
+    }
     Some(unsafe { usage.assume_init() }.ru_maxrss.max(0) as f64 / (1024.0 * 1024.0))
 }
 

@@ -1,16 +1,16 @@
 # NFiDB
 
-**No Frills iPad Drawing Bridge** turns an iPad and Apple Pencil into a local-network pen display for a Windows 11 PC. Extract one portable Windows app, open the address it shows in Safari, enter the six-digit PIN, and draw. There is no iPad app, account, subscription, cloud relay, or internet service involved in a session.
+**No Frills iPad Drawing Bridge** turns an iPad and Apple Pencil into a local-network pen display for Windows 11 or Apple-silicon macOS. Run the host app, open the address it shows in Safari, enter the six-digit PIN, and draw. There is no iPad app, account, subscription, cloud relay, or internet service involved in a session.
 
-> NFiDB 0.7.0 is a solid alpha. Its protocol, native input, Windows capture, browser pairing, remote-control, multi-codec WebRTC, GUI startup, and bidirectional file-transfer paths have automated coverage. H.264, HEVC, and AV1 hardware encoding work on the development RTX 4090; the validated hardware path keeps resize, color conversion, and encoder input on the GPU. Actual HEVC/AV1 availability remains a PC-and-browser capability decision. Apple Pencil behavior in individual art apps, physical iPad codec validation, and the Files panel still need field validation; see [the test matrix](docs/TEST_MATRIX.md) before relying on it for production work.
+> NFiDB 0.8.0 is a solid alpha. Windows remains the most field-tested host. The new native macOS host has automated capture, VideoToolbox, input-mapping, benchmark, and bundle coverage plus real H.264/HEVC hardware measurements on an M1 Pro. Screen Recording, Accessibility, physical Pencil behavior in drawing apps, and end-to-end iPad Safari playback still require the Mac/iPad field pass documented in [the test matrix](docs/TEST_MATRIX.md).
 
 ## What works
 
-- Windows 11 monitor capture through Windows Graphics Capture.
+- Windows 11 capture through Windows Graphics Capture, or macOS capture through ScreenCaptureKit.
 - Capability-aware H.264, HEVC, or AV1 video over peer-to-peer WebRTC, with Media Foundation hardware encoding and OpenH264 fallback.
 - Benchmark-driven Auto selection, receiver playback verification, editable Fast/Balanced/Sharp presets, and live changes from Windows or iPad.
 - Apple Pencil pressure, tilt, twist, buttons, and lifecycle samples from Safari Pointer Events.
-- Native Windows `PT_PEN` injection; optional `PT_TOUCH` injection is off by default.
+- Native Windows `PT_PEN` injection, or macOS Quartz tablet events carrying pressure and tilt.
 - iPad trackpad/mouse movement, buttons, and high-resolution horizontal/vertical scrolling.
 - Hardware-keyboard shortcuts plus Unicode text entry from the hardware or iPad software keyboard.
 - Three-finger app switching, Task View, and foreground-window minimize gestures while touch forwarding is off.
@@ -20,27 +20,29 @@
 - mDNS-friendly and numeric-IP URLs, with automatic port fallback.
 - Pen-display, input-only, and display-only modes.
 - A standalone browser pointer diagnostic and a native `WM_POINTER` validation sink.
-- Live Session, Source, Input, Files, Diagnostics, and App Setup pages in the Windows host.
+- Live Session, Source, Input, Files, Diagnostics, and App Setup pages in either desktop host.
 - Authenticated raw and percentile-processed latency, bandwidth, frame-timing, input, encoder, and WebRTC diagnostics with local JSON export.
 
-The first MVP mirrors one Windows monitor. It is not an extended-desktop display driver, remote-desktop product, or internet relay. Window-only capture, audio, multi-client sessions, macOS/Linux hosts, and an installer are not in this release.
+The alpha mirrors one monitor. It is not an extended-desktop display driver, remote-desktop product, or internet relay. Window-only capture, audio, multi-client sessions, Linux hosts, and an installer are not in this release.
 
 ## Run the portable build
 
 1. Download the newest `NFiDB-windows-x64.zip` from [GitHub Releases](https://github.com/mlo0352/nfidb/releases).
-2. Extract it and run `nfidb.exe` on a Windows 11 PC.
-3. If Windows Firewall asks, allow NFiDB on **Private networks only**.
+2. On Windows 11 x64, extract it and run `nfidb.exe`. On an Apple-silicon Mac running macOS 13 or newer, extract `NFiDB-macos-arm64.zip`, move NFiDB to Applications, and open it.
+3. On Windows, allow NFiDB on **Private networks only** if Firewall asks. On macOS, enable NFiDB under **Privacy & Security → Screen & System Audio Recording** and **Accessibility**.
 4. Put the PC and iPad on the same normal LAN. Guest Wi-Fi/client isolation will prevent a connection.
 5. Open the shown `.local` or numeric address in iPad Safari and enter the PIN (or scan the QR code).
-6. Open the drawing app on the selected Windows monitor and draw on the iPad.
+6. Open the drawing app on the selected host monitor and draw on the iPad.
 
-Nothing is installed on the iPad: the Windows host serves the complete browser client from the EXE. The Windows ZIP is portable and has only standard Windows DLL dependencies in the tested build. It is unsigned, so SmartScreen can warn, and Windows Firewall may ask once for Private-network access.
+Nothing is installed on the iPad: the desktop host serves the complete browser client. Both desktop artifacts are currently unsigned alpha builds. Windows SmartScreen or macOS Gatekeeper may warn; use the GitHub release checksum and the normal **More info / Run anyway** or control-click **Open** flow. The Mac build is an application bundle with an ad-hoc local signature, not an Apple-notarized release.
 
-Touch is disabled by default. The paired iPad's **Touch** button now changes the authoritative Windows injector setting directly, and the Windows Input page stays synchronized with it. Use input-only mode when another screen-sharing system handles the picture, or display-only mode when you do not want remote input.
+Touch is disabled by default. The paired iPad's **Touch** button changes the authoritative host input setting directly, and the desktop Input page stays synchronized with it. Windows forwards native touch contacts; macOS maps the first finger to its pointer. Use input-only mode when another screen-sharing system handles the picture, or display-only mode when you do not want remote input.
 
 ## iPad mouse and keyboard
 
 Connect a trackpad/mouse and keyboard to the iPad, keep Safari in the foreground, and use the remote surface normally. Pointer motion is absolute to the displayed Windows monitor, mouse buttons and wheel gestures are forwarded, and Pencil remains a separate native pen device. With the keyboard panel closed, physical key-down/key-up events are sent to Windows so drawing-app hotkeys and held keys work. Open **Keyboard** on the iPad toolbar for layout-independent Unicode typing through the hardware or software keyboard, plus Esc/Tab/Backspace/Enter and Windows shortcut buttons.
+
+On macOS the same browser inputs are posted through Quartz: Command stays Command, Option stays Option, app switching uses Command+Tab, the upward three-finger command opens Mission Control, and minimize uses Command+M. macOS does not expose a public general-purpose synthetic multitouch API, so **Touch on** maps the first finger to the Mac pointer; **Touch off / Gestures on** reserves fingers for NFiDB's semantic shortcuts. The Mac requires Accessibility permission before it accepts remote input.
 
 The hardware mappings are **Option → Alt**, **Control → Ctrl**, **Shift → Shift**, **Return → Enter**, and an unmodified **Delete → Backspace**. Option+Tab therefore sends Alt+Tab. Control+Option+Delete sends the Ctrl+Alt+Delete key sequence, but normal unsigned applications cannot invoke the protected Windows secure-attention screen; Windows discards synthetic Ctrl+Alt+Delete there.
 
@@ -50,22 +52,22 @@ If a PIN/QR has expired or Safari shows a stale-session error, use **Session →
 
 ## File transfer
 
-Open **Files** on Windows and choose **Add files for iPad** to place one or more explicit files in the temporary Outbox. The paired iPad shows an in-page notice and queue-count badge even when its Files panel is closed. Open that panel to download one item or the full batch through Safari’s download manager. **Clear each queue item after download** is on by default, persists across page loads, and asks the host to remove each item only after its complete stream is delivered; interrupted and partial-range downloads remain queued. Manual removal affects only the NFiDB queue entry, never the original Windows file.
+Open **Files** on the desktop host and choose **Add files for iPad** to place one or more explicit files in the temporary Outbox. The paired iPad shows an in-page notice and queue-count badge even when its Files panel is closed. Open that panel to download one item or the full batch through Safari’s download manager. **Clear each queue item after download** is on by default, persists across page loads, and asks the host to remove each item only after its complete stream is delivered; interrupted and partial-range downloads remain queued. Manual removal affects only the NFiDB queue entry, never the original file.
 
-To send files to Windows, open the iPad Files panel, choose one or more files, and leave Safari in the foreground until the queue completes. Incoming files are written through a private staging directory and moved into `Downloads\NFiDB Inbox` only after every 1 MiB chunk and the completed file have been SHA-256 processed. Duplicate names become `name (1).ext` rather than overwriting an existing file. Use **Open received files folder** on the Windows Files page to open the configured Inbox directly.
+To send files to the host, open the iPad Files panel, choose one or more files, and leave Safari in the foreground until the queue completes. Incoming files are written through a private staging directory and moved into the host's `Downloads/NFiDB Inbox` only after every 1 MiB chunk and the completed file have been SHA-256 processed. Duplicate names become `name (1).ext` rather than overwriting an existing file. Use **Open received files folder** on the desktop Files page to open the configured Inbox directly.
 
 Transfers are capped at 10 GiB per file and 32 Mbps by default. The Windows Files page can change those limits or disable transfer. With **Pause bulk traffic while Pencil or touch is down** enabled, a long transfer yields whenever a drawing contact is active. Pairing reset/disconnect invalidates transfer access and removes unfinished uploads.
 
 ## Drawing-app setup
 
-- Select the app's Windows Ink/Pointer input path when it offers a choice.
+- On Windows, select the app's Windows Ink/Pointer input path when it offers a choice. On macOS, use the app's normal tablet/pressure path.
 - Start with touch disabled to avoid accidental canvas gestures.
 - If a program ignores pressure, first run `pointer-sink.exe --self-test`. A passing sink proves the Windows pen path independently of the art app.
 - Krita, Rebelle, and Photoshop are explicit validation targets, but no physical-app result is claimed yet.
 
 ## Build from source
 
-Prerequisites are Windows 11 x64, Rust stable with the MSVC target, Visual Studio 2022 Build Tools with “Desktop development with C++,” and Node.js 22+.
+Windows prerequisites are Windows 11 x64, Rust stable with the MSVC target, Visual Studio 2022 Build Tools with “Desktop development with C++,” and Node.js 22+. macOS prerequisites are an Apple-silicon Mac, macOS 13+, full Xcode/Command Line Tools, Rust stable, and Node.js 22+.
 
 ```powershell
 git clone https://github.com/mlo0352/nfidb.git
@@ -86,6 +88,15 @@ Create the portable ZIP and SHA-256 file with:
 .\scripts\gui-smoke.ps1
 ```
 
+On macOS:
+
+```bash
+npm --prefix apps/ipad-web ci
+./scripts/build-macos.sh
+```
+
+This creates `build/packages/NFiDB-macos-arm64.zip` and its SHA-256 file.
+
 For a single long-running handoff that another Codex turn can verify without spending the turn waiting on compilation, run:
 
 ```powershell
@@ -98,7 +109,7 @@ If compilation completed but a later packaging or smoke step failed, Codex can r
 
 If source validation is already complete but the optimized release binary has not been built, `-ResumeAfterSourceValidation` skips the repeated source suite and frontend build while still compiling and testing the final release artifact.
 
-The browser client is built into `nfidb.exe`; GitHub Pages is the public download/documentation site, not the drawing client. The actual iPad page is served directly by the Windows host on the trusted LAN.
+The browser client is built into the desktop executable; GitHub Pages is the public download/documentation site, not the drawing client. The actual iPad page is served directly by the paired host on the trusted LAN.
 
 ## Diagnostics and CLI
 
@@ -118,9 +129,11 @@ Run `nfidb --diagnostics` to open the diagnostic page directly, or select **DIAG
 
 The live iPad panel separates network RTT/bandwidth, decoder and presentation rate, RTP loss, jitter-buffer/decode cost, frame gaps, startup-to-first-frame, estimated pipeline delay, input continuity, pressure/tilt, mouse/wheel/key/text/gesture counters, and browser/host buffering. Safari supplies exact capture-to-presentation timing only when its WebRTC frame metadata exposes it; otherwise NFiDB labels and uses a component estimate. Exact Pencil-contact-to-Windows-photon latency still requires a synchronized high-speed camera.
 
-The host stores user settings in `%APPDATA%\NFiDB\config.toml`. Full flags are available with `nfidb --help`; release builds normally launch as a GUI application. The measured release-mode resolution and frame-rate envelope is published in [Performance notes](docs/PERFORMANCE.md).
+The host stores user settings in `%APPDATA%\NFiDB\config.toml` on Windows or `~/Library/Application Support/NFiDB/config.toml` on macOS. Full flags are available with `nfidb --help`; release builds normally launch as a GUI application. The measured release-mode resolution and frame-rate envelope is published in [Performance notes](docs/PERFORMANCE.md).
 
 For hardware modes, real monitor frames use the capture GPU for resize and BGRA-to-NV12 conversion, then feed a DXGI texture directly to a D3D11-aware Media Foundation encoder. The Source and Diagnostics pages show `GPU zero-copy` when no full frame enters CPU memory, `GPU assisted` when a vendor encoder requires compact NV12 readback, and `CPU preprocess` for OpenH264 or a compatibility fallback.
+
+On macOS, ScreenCaptureKit produces a bounded IOSurface-backed pixel buffer at the requested output size and VideoToolbox consumes that surface directly. NFiDB verifies the active compression session actually reports hardware acceleration before labeling it hardware. The tested M1 Pro exposes hardware H.264 and HEVC; it exposes no AV1 encoder, so AV1 remains visibly unavailable and Auto will not select it.
 
 If the Windows GUI cannot initialize, NFiDB displays the startup error and saves the same details to `%APPDATA%\NFiDB\startup-error.log` for diagnosis.
 

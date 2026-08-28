@@ -41,6 +41,7 @@ struct WebAssets;
 pub struct ServerOptions {
     pub preferred_port: u16,
     pub host_name: String,
+    pub host_platform: String,
     pub mode: String,
     pub mdns: bool,
     pub touch_default: bool,
@@ -468,6 +469,7 @@ struct StatusResponse {
     session: nfidb_core::PublicSession,
     protocol_version: u8,
     webrtc: bool,
+    host_platform: String,
     touch_default: bool,
     mouse_enabled: bool,
     keyboard_enabled: bool,
@@ -483,6 +485,7 @@ async fn status(State(state): State<Arc<AppState>>) -> Json<StatusResponse> {
             .public(state.options.host_name.clone(), state.options.mode.clone()),
         protocol_version: nfidb_protocol::PROTOCOL_VERSION,
         webrtc: true,
+        host_platform: state.options.host_platform.clone(),
         touch_default: input.touch_enabled,
         mouse_enabled: state.options.mouse_enabled,
         keyboard_enabled: state.options.keyboard_enabled,

@@ -3,9 +3,9 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="Download NFiDB for Windows and turn an iPad and Apple Pencil into a local drawing tablet—without an account or subscription." />
+    <meta name="description" content="Download NFiDB for Windows or Apple-silicon Mac and turn an iPad and Apple Pencil into a local drawing tablet." />
     <meta name="theme-color" content="#101514" />
-    <title>Download NFiDB for Windows</title>
+    <title>Download NFiDB</title>
     <link rel="icon" href="favicon.svg" />
     <link rel="stylesheet" href="styles.css" />
   </head>
@@ -17,12 +17,12 @@
 
     <main>
       <section class="page-hero download-hero">
-        <p class="eyebrow"><i></i> v0.7.0 Alpha · Windows x64</p>
+        <p class="eyebrow"><i></i> v0.8.0 Alpha · Windows + macOS</p>
         <h1>Download NFiDB.<br /><em>Keep your canvas close.</em></h1>
-        <p class="lede">The current portable build supports 64-bit Windows 11 on Intel and AMD PCs. Linux support is planned; on macOS, Sidecar should already do this as far as I know.</p>
+        <p class="lede">Choose Windows 11 x64 or Apple-silicon macOS. Both hosts serve the same iPad Safari client and stay on your local network.</p>
         <div class="actions">
-          <a class="primary button-with-icon" href="https://github.com/mlo0352/nfidb/releases"><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 3.4 10.5 2.2v8H2V3.4Zm9.7-1.3L22 .6v9.6H11.7V2.1ZM2 11.4h8.5v8.1L2 18.3v-6.9Zm9.7 0H22V23l-10.3-1.5V11.4Z" /></svg><span>Download for Windows</span></a>
-          <a class="secondary" href="https://github.com/mlo0352/nfidb#build-from-source">Build from source</a>
+          <a class="primary button-with-icon" href="https://github.com/mlo0352/nfidb/releases/latest/download/NFiDB-windows-x64.zip"><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 3.4 10.5 2.2v8H2V3.4Zm9.7-1.3L22 .6v9.6H11.7V2.1ZM2 11.4h8.5v8.1L2 18.3v-6.9Zm9.7 0H22V23l-10.3-1.5V11.4Z" /></svg><span>Windows x64</span></a>
+          <a class="secondary" href="https://github.com/mlo0352/nfidb/releases/latest/download/NFiDB-macos-arm64.zip">Mac arm64</a>
         </div>
         <p class="caveat">Portable alpha build. Releases and SHA-256 checksums are hosted on GitHub.</p>
       </section>
@@ -30,14 +30,14 @@
       <section class="platforms" aria-labelledby="platform-heading">
         <div class="section-intro">
           <p class="eyebrow">Platform support</p>
-          <h2 id="platform-heading">Windows first.<br />More to come.</h2>
+          <h2 id="platform-heading">Two native hosts.<br />One iPad page.</h2>
         </div>
         <div class="platform-grid">
-          <article class="available">
+          <article class="available windows-platform">
             <span class="status">Available</span>
             <h3>Windows</h3>
             <p>Portable x64 build for Windows 11 on Intel and AMD PCs. No installer is required.</p>
-            <a class="platform-download windows-download" href="https://github.com/mlo0352/nfidb/releases"><svg class="platform-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 3.4 10.5 2.2v8H2V3.4Zm9.7-1.3L22 .6v9.6H11.7V2.1ZM2 11.4h8.5v8.1L2 18.3v-6.9Zm9.7 0H22V23l-10.3-1.5V11.4Z" /></svg><span>Download for Windows</span><span class="download-arrow" aria-hidden="true">→</span></a>
+            <a class="platform-download windows-download" href="https://github.com/mlo0352/nfidb/releases/latest/download/NFiDB-windows-x64.zip"><svg class="platform-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 3.4 10.5 2.2v8H2V3.4Zm9.7-1.3L22 .6v9.6H11.7V2.1ZM2 11.4h8.5v8.1L2 18.3v-6.9Zm9.7 0H22V23l-10.3-1.5V11.4Z" /></svg><span>Download for Windows</span><span class="download-arrow" aria-hidden="true">→</span></a>
           </article>
           <article class="linux-platform">
             <span class="status">Coming soon</span>
@@ -61,10 +61,11 @@
               </div>
             </details>
           </article>
-          <article>
-            <span class="status">Use Sidecar</span>
+          <article class="available mac-platform">
+            <span class="status">Available</span>
             <h3>macOS</h3>
-            <p>Sidecar should already do this on macOS, as far as I know.</p>
+            <p>Native arm64 app for Apple-silicon Macs. Requires macOS 13 or newer and Screen Recording plus Accessibility permission.</p>
+            <a class="platform-download windows-download" href="https://github.com/mlo0352/nfidb/releases/latest/download/NFiDB-macos-arm64.zip"><span>Download for Mac</span><span class="download-arrow" aria-hidden="true">→</span></a>
           </article>
         </div>
       </section>
@@ -76,8 +77,8 @@
           <p>Nothing needs to be installed on your iPad. NFiDB serves the drawing client directly to Safari over your private local network.</p>
         </div>
         <ol>
-          <li><b>1</b><div><strong>Download the ZIP</strong><span>Open GitHub Releases and choose the newest <code>NFiDB-windows-x64.zip</code>. A SHA-256 checksum is provided beside it.</span></div></li>
-          <li><b>2</b><div><strong>Extract and run</strong><span>Unzip the package, start <code>nfidb.exe</code>, and allow Private-network access if Windows asks.</span></div></li>
+          <li><b>1</b><div><strong>Download the ZIP</strong><span>Choose <code>NFiDB-windows-x64.zip</code> or <code>NFiDB-macos-arm64.zip</code>. A SHA-256 checksum is provided beside each.</span></div></li>
+          <li><b>2</b><div><strong>Extract and run</strong><span>Start <code>nfidb.exe</code> on Windows, or move NFiDB to Applications and control-click Open on Mac. Approve the private-network or privacy prompts.</span></div></li>
           <li><b>3</b><div><strong>Pair your iPad</strong><span>Open the local address in iPad Safari, enter the six-digit PIN or scan the QR code, and draw.</span></div></li>
         </ol>
       </section>

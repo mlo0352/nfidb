@@ -10,13 +10,16 @@ Direct shipped dependencies were selected from permissive-license projects:
 | webrtc-rs | WebRTC/ICE/DTLS/SRTP/DataChannel | MIT OR Apache-2.0 |
 | windows-capture | Windows Graphics Capture integration | MIT |
 | windows-sys | Windows API bindings | MIT OR Apache-2.0 |
+| screencapturekit | macOS ScreenCaptureKit integration | MIT OR Apache-2.0 |
+| videotoolbox | macOS VideoToolbox compression integration | MIT OR Apache-2.0 |
+| apple-cf, core-foundation, core-graphics, libc | macOS IOSurface, Core Foundation, and Quartz bindings | MIT OR Apache-2.0 |
 | OpenH264 / openh264-rs | H.264 software encoder fallback | BSD-2-Clause; Cisco OpenH264 binary/patent terms may also apply to separately supplied binaries |
-| eframe/egui | Windows host interface | MIT OR Apache-2.0 |
+| eframe/egui | Native desktop host interface | MIT OR Apache-2.0 |
 | fast_image_resize | Frame scaling | MIT OR Apache-2.0 |
 | rust-embed | Embedded browser assets | MIT |
 | mdns-sd | LAN service discovery | MIT OR Apache-2.0 |
 | qrcode | Pairing QR generation | MIT OR Apache-2.0 |
-| rfd | Native Windows file and folder dialogs | MIT |
+| rfd | Native file and folder dialogs | MIT |
 | serde, serde_json, toml | Configuration and messages | MIT OR Apache-2.0 |
 | clap | Command-line parsing | MIT OR Apache-2.0 |
 | sha2, subtle, rand, base64, uuid | Session credentials and identifiers | MIT OR Apache-2.0 (some transitive packages also ISC/BSD) |

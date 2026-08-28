@@ -4,7 +4,7 @@ use apple_cf::iosurface::IOSurface;
 use nfidb_core::VideoCodec;
 use videotoolbox::compression::{CompressionSession, ProfileLevel};
 
-use crate::hardware::vt_codec;
+use crate::hardware::{configure_interactive_latency, require_hardware_session, vt_codec};
 
 #[link(name = "CoreMedia", kind = "framework")]
 unsafe extern "C" {
@@ -75,7 +75,7 @@ impl VideoToolboxEncoder {
         self.frame_number = self.frame_number.saturating_add(1);
         let (mut data, keyframe) = length_prefixed_to_annex_b(self.config.codec, &encoded.data)?;
         if keyframe {
-            let parameter_sets = unsafe { parameter_sets(encoded.cm_sample_buffer_ptr(), self.config.codec) }?;
+            let parameter_sets = unsafe { parameter_sets(encoded.cm_sample_buffer_ptr().cast(), self.config.codec) }?;
             if !parameter_sets.is_empty() {
                 let mut with_headers = Vec::with_capacity(parameter_sets.len() + data.len());
                 with_headers.extend_from_slice(&parameter_sets);
@@ -100,7 +100,10 @@ fn build_session(config: VideoToolboxEncoderConfig) -> Result<CompressionSession
         VideoCodec::Hevc => builder.with_profile_level(ProfileLevel::HEVCMainAutoLevel),
         VideoCodec::Av1 => builder,
     };
-    builder.build().map_err(|error| error.to_string())
+    let session = builder.build().map_err(|error| error.to_string())?;
+    configure_interactive_latency(&session);
+    require_hardware_session(&session)?;
+    Ok(session)
 }
 
 fn length_prefixed_to_annex_b(codec: VideoCodec, bytes: &[u8]) -> Result<(Vec<u8>, bool), String> {

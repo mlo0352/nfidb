@@ -67,10 +67,8 @@ fn monitor_loop(metrics: Arc<Metrics>, stopped: Arc<AtomicBool>) {
         let now = Instant::now();
         if let (Some(before), Some(current)) = (previous, process_sample()) {
             let elapsed = now.duration_since(previous_at).as_secs_f64().max(0.001);
-            let cpu_percent = (current.cpu_seconds - before.cpu_seconds).max(0.0)
-                / elapsed
-                / logical_processors
-                * 100.0;
+            let cpu_percent =
+                (current.cpu_seconds - before.cpu_seconds).max(0.0) / elapsed / logical_processors * 100.0;
             metrics.process_resources(cpu_percent, current.working_set_bytes, current.peak_working_set_bytes);
             previous = Some(current);
         } else {
@@ -111,5 +109,9 @@ fn process_sample() -> Option<ProcessSample> {
         + usage.ru_utime.tv_usec as f64 / 1_000_000.0
         + usage.ru_stime.tv_sec as f64
         + usage.ru_stime.tv_usec as f64 / 1_000_000.0;
-    Some(ProcessSample { cpu_seconds, working_set_bytes, peak_working_set_bytes })
+    Some(ProcessSample {
+        cpu_seconds,
+        working_set_bytes,
+        peak_working_set_bytes,
+    })
 }

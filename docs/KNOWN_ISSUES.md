@@ -26,8 +26,12 @@ This file is intentionally strict: “implemented” and “verified on availabl
 - NFiDB transmits Control+Option+Delete as Ctrl+Alt+Delete, but Windows intentionally rejects synthetic input at the secure-attention screen. A portable, unsigned user-mode app cannot safely bypass that boundary.
 - Physical iPad trackpad, hardware-keyboard layout/shortcut coverage, software-keyboard IME, and three-finger gesture behavior still need field validation across iPadOS versions.
 - The file-transfer protocol, large-file streaming, chunk verification, cancellation, ranges, multi-file queueing, arrival notice, and completed-stream auto-clear are automated, but the iPad Files/Photos picker, Safari download manager, background/sleep behavior, and very large physical-device transfers still need real-iPad validation. Safari must remain in the foreground for reliable uploads; native downloads use Safari's own progress UI.
-- File transfer handles files, not folders, clipboard contents, or automatic synchronization. The Windows Outbox is intentionally process-local and exposes only explicitly selected regular files.
-- There is no audio, clipboard synchronization, cloud relay, multi-client support, or Linux/macOS host.
+- File transfer handles files, not folders, clipboard contents, or automatic synchronization. The host Outbox is intentionally process-local and exposes only explicitly selected regular files.
+- The Apple-silicon macOS host is implemented and its M1 Pro VideoToolbox path is benchmarked, but real-monitor capture and iPad input require Screen Recording and Accessibility approval and still need the physical field pass. Intel Mac builds are not produced.
+- macOS exposes no public general-purpose synthetic multitouch injection API. Touch-on therefore maps the first finger to the pointer rather than pretending to provide native Mac touch contacts; three-finger semantic gestures remain available with Touch off.
+- Quartz tablet-subtype events carry Pencil pressure, tilt, rotation, and lifecycle fields in automated construction tests, but Krita/Rebelle/Photoshop must still prove which macOS apps accept those synthetic tablet fields as pressure-sensitive brush input.
+- The macOS bundle has an ad-hoc signature and is not Apple-notarized, so Gatekeeper may require control-click **Open**. A stable public release should use a Developer ID signature and notarization.
+- There is no audio, clipboard synchronization, cloud relay, multi-client support, or Linux host.
 
 ## Validation still required for a public stable release
 
@@ -36,4 +40,5 @@ This file is intentionally strict: “implemented” and “verified on availabl
 - Physical iPadOS/Safari test across at least two iPad generations.
 - Real Krita, Rebelle, and Photoshop pressure/tilt matrix.
 - Release-mode capture/encode/latency measurements on Intel, AMD, and NVIDIA systems.
+- Physical M1 Pro/macOS capture, iPad Safari, Quartz Pencil, mouse/keyboard, file-transfer, sleep/wake, and reconnect matrix.
 - Internet-disconnected LAN session.

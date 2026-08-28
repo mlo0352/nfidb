@@ -1,6 +1,6 @@
 # Test matrix
 
-Last updated: 2026-08-22. Development host: Windows 11 Pro x64 build 22631, Intel Core i9-13900K, NVIDIA GeForce RTX 4090, Rust 1.97.1 (`x86_64-pc-windows-msvc`), Node 22.22.3, npm 10.9.8, Microsoft Edge headless. Historical OpenH264 profile/soak results are release `0.2.0`; physical remote-control and file-transfer rows are the `0.4.0`–`0.5.1` alphas. Multi-codec capability, host benchmark, and Edge Auto rows began with `0.6.0`; the D3D11 surface-path evidence was collected from the optimized `0.7.0` candidate.
+Last updated: 2026-08-28. Windows development host: Windows 11 Pro x64 build 22631, Intel Core i9-13900K, NVIDIA GeForce RTX 4090. macOS development host: 2021 MacBook Pro, Apple M1 Pro arm64, macOS 27.0 beta build 26A5416b, Xcode 27.0 beta 6. Historical OpenH264 profile/soak results are release `0.2.0`; Windows multi-codec/D3D11 evidence is `0.6.0`–`0.7.0`; native Mac work begins in `0.8.0`.
 
 | Layer | Test | Result | Evidence |
 | --- | --- | --- | --- |
@@ -24,6 +24,13 @@ Last updated: 2026-08-22. Development host: Windows 11 Pro x64 build 22631, Inte
 | Browser build | strict TypeScript + Safari 16.4 Vite target | PASS | 35 Vitest tests across 7 files; typecheck and production build |
 | Hardware encoder discovery | Enumerated candidate is activated, initialized, and must return encoded bytes before use | PASS | NVIDIA H.264/HEVC/AV1 MFT functional probes; Microsoft H264 MFT remains initializeable only |
 | GPU video pipeline | Bounded WGC D3D texture copy, GPU BGRA→NV12 scale/conversion, direct DXGI MFT input with assisted fallback | PASS (NVIDIA) | Live monitor reported `gpu-zero-copy` with 184 captured/180 encoded frames; hardware-conditional test passed H.264/HEVC/AV1; optimized 1080p Quick rows all reported `gpu-zero-copy` |
+| macOS build/tests | Apple-silicon compile, 10 native host tests, cross-platform app link, Swift runtime rpath, ad-hoc bundle signature | PASS | M1 Pro: 10/10 host tests; `cargo check -p nfidb`; package extracted, signature verified, Info.plist/icon present, executable reports its version |
+| macOS encoder discovery | VideoToolbox list plus real-time session initialization and active hardware-property verification | PASS (M1 Pro) | Apple H.264 and Apple HEVC report functional hardware; AV1 reports unavailable; OpenH264 remains functional fallback |
+| macOS host Quick benchmark | Optimized deterministic 1080p drawing, H.264 HW / HEVC HW / OpenH264, corrected pipeline timing | PASS | H.264 101.58 fps capacity / 8.42 ms encode p95; HEVC 93.08 / 9.37 ms; OpenH264 60.26 / 15.14 ms; AV1 skipped as unavailable |
+| macOS generated server smoke | Start embedded browser server and hardware encoder without Screen Recording access | PASS | 5 s: 196 generated frames, 195 hardware H.264 frames, zero stale-frame drops; status/runtime JSON written; LAN URL `192.168.1.209` |
+| macOS real monitor capture | ScreenCaptureKit IOSurface → VideoToolbox → WebRTC | NOT RUN | Terminal capture permission was denied; packaged NFiDB permission approval and real-monitor run require the physical Mac user session |
+| macOS Quartz remote input | Pencil pressure/tilt/twist, mouse/buttons/wheel, keyboard/text, Command+Tab, Mission Control, minimize | PARTIAL | Event construction, key maps, modifiers, state release, and semantic commands are automated; Accessibility approval plus physical app behavior remain |
+| macOS iPad Safari E2E | Real monitor presentation, codec verification, pointer/keyboard/Pencil/files/diagnostics | NOT RUN | Native host and LAN server are ready; requires packaged app permissions and physical iPad session |
 | Host codec matrix | Four modes × four geometries × three deterministic workloads | PASS | 48/48 rows completed in optimized mode; JSON/CSV/Markdown exports |
 | Live codec switching | H.264 HW → AV1 HW → H.264 SW → Auto while capture stays alive | PASS | Edge Quick Auto E2E passed in 18.1 s; capture advanced throughout; authenticated session retained |
 | HEVC receiver negotiation | Functional host HEVC plus receiver report/SDP/presentation | PARTIAL | Host encode passes; Edge 151 did not report H.265, so it was correctly excluded; physical Safari pending |

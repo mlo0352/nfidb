@@ -202,13 +202,14 @@ export class NfidbApp {
   private renderPairing(error = ""): void {
     this.state = "pairing";
     this.pairingRequestActive = false;
-    const host = escapeHtml(this.status?.host_name ?? "Windows PC");
+    const host = escapeHtml(this.status?.host_name ?? "NFiDB host");
+    const hostDevice = this.status?.host_platform === "macos" ? "Mac" : "Windows host";
     this.root.innerHTML = `
       <main class="pairing-shell">
         <section class="pair-panel" aria-labelledby="pair-title">
           <div class="brand-lockup"><div class="wordmark"><span>NFi</span>DB</div><p>No Frills iPad Drawing Bridge</p></div>
           <div class="host-found"><i></i><span>${host} found on your local network</span></div>
-          <h1 id="pair-title">Enter the PIN shown on Windows</h1>
+          <h1 id="pair-title">Enter the PIN shown on your ${hostDevice}</h1>
           <form id="pairForm" novalidate>
             <label for="pin">Six-digit PIN</label>
             <input id="pin" name="pin" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="000 000" aria-describedby="pinHint pairError" autofocus />
@@ -217,7 +218,7 @@ export class NfidbApp {
             <button class="primary-button" type="submit">Connect locally</button>
           </form>
           <div class="privacy-line"><span>NO CLOUD</span><span>NO ACCOUNT</span><span>NO APP</span></div>
-          <p class="pair-help">Both devices must be on the same non-isolated Wi-Fi. This page talks directly to your PC.</p>
+          <p class="pair-help">Both devices must be on the same non-isolated Wi-Fi. This page talks directly to your ${hostDevice}.</p>
         </section>
       </main>`;
     const form = this.requiredElement<HTMLFormElement>("pairForm");
@@ -340,6 +341,17 @@ export class NfidbApp {
   }
 
   private renderSurface(): void {
+    const macHost = this.status?.host_platform === "macos";
+    const hostName = macHost ? "Mac" : "Windows";
+    const previousAppLabel = macHost ? "Cmd+Shift+Tab" : "Alt+Shift+Tab";
+    const nextAppLabel = macHost ? "Cmd+Tab" : "Alt+Tab";
+    const overviewLabel = macHost ? "Mission Control" : "Task view";
+    const secureAttention = macHost
+      ? ""
+      : `<button id="secureAttentionButton">Ctrl+Alt+Del</button>`;
+    const keyboardHelp = macHost
+      ? "Command = Command · Option = Option · Control = Control · Return = Enter · Delete = Backspace"
+      : "Option = Alt · Control = Ctrl · Return = Enter · Delete = Backspace";
     this.root.innerHTML = `
       <main id="surface" class="surface fit-mode">
         <video id="remoteVideo" autoplay playsinline muted></video>
@@ -378,12 +390,12 @@ export class NfidbApp {
           <div id="filesContent" class="files-content"><p class="panel-empty">Loading transfer queue…</p></div>
         </aside>
         <aside id="videoPanel" class="files-panel video-panel" hidden aria-label="Video settings">
-          <div class="panel-header"><div><b>VIDEO</b><small>Changes apply live on Windows</small></div><button id="videoClose" class="icon-button" aria-label="Close video settings">×</button></div>
+          <div class="panel-header"><div><b>VIDEO</b><small>Changes apply live on ${hostName}</small></div><button id="videoClose" class="icon-button" aria-label="Close video settings">×</button></div>
           <div id="videoContent" class="files-content"><p class="panel-empty">Reading encoder capabilities…</p></div>
         </aside>
         <section id="keyboardPanel" class="keyboard-panel" hidden aria-label="Remote keyboard">
           <div class="keyboard-panel-header">
-            <div><b>TYPE ON WINDOWS</b><small>Option = Alt · Control = Ctrl · Return = Enter · Delete = Backspace</small></div>
+            <div><b>TYPE ON ${hostName.toUpperCase()}</b><small>${keyboardHelp}</small></div>
             <button id="keyboardClose" class="icon-button" aria-label="Close keyboard">×</button>
           </div>
           <textarea id="remoteTextInput" rows="2" inputmode="text" enterkeyhint="enter" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Tap here to use the iPad keyboard…"></textarea>
@@ -392,13 +404,13 @@ export class NfidbApp {
             <button data-remote-key="Tab" data-key-label="Tab">Tab</button>
             <button data-remote-key="Backspace" data-key-label="Backspace">⌫</button>
             <button data-remote-key="Enter" data-key-label="Enter">Enter</button>
-            <button data-remote-command="${RemoteCommand.AppPrevious}">Alt+Shift+Tab</button>
-            <button data-remote-command="${RemoteCommand.AppNext}">Alt+Tab</button>
-            <button data-remote-command="${RemoteCommand.TaskView}">Task view</button>
+            <button data-remote-command="${RemoteCommand.AppPrevious}">${previousAppLabel}</button>
+            <button data-remote-command="${RemoteCommand.AppNext}">${nextAppLabel}</button>
+            <button data-remote-command="${RemoteCommand.TaskView}">${overviewLabel}</button>
             <button data-remote-command="${RemoteCommand.MinimizeForeground}">Minimize</button>
-            <button id="secureAttentionButton">Ctrl+Alt+Del</button>
+            ${secureAttention}
           </div>
-          <p>Three fingers: swipe left/right to switch apps, up for Task View, down to minimize. Windows blocks synthetic Ctrl+Alt+Del on its secure screen.</p>
+          <p>Three fingers: swipe left/right to switch apps, up for ${overviewLabel}, down to minimize.${macHost ? "" : " Windows blocks synthetic Ctrl+Alt+Del on its secure screen."}</p>
         </section>
         <button id="toolbarReveal" class="toolbar-reveal" aria-label="Show controls" aria-controls="toolbar" aria-expanded="true"><b>NFi</b><span>Controls</span></button>
       </main>`;
@@ -442,18 +454,20 @@ export class NfidbApp {
     touchButton.setAttribute("aria-pressed", String(this.touchEnabled));
     touchButton.disabled = this.inputUpdateActive || this.status?.mode === "display-only";
     touchButton.title = this.status?.mode === "display-only"
-      ? "Input forwarding is disabled on Windows"
-      : "Send fingers as native Windows touch";
+      ? "Input forwarding is disabled on the host"
+      : this.status?.host_platform === "macos"
+        ? "Use one finger as the Mac pointer"
+        : "Send fingers as native Windows touch";
     const gestureButton = this.requiredElement<HTMLButtonElement>("gestureButton");
     gestureButton.disabled = this.inputUpdateActive || this.touchEnabled || this.status?.mode === "display-only";
     gestureButton.textContent = this.touchEnabled ? "Gestures paused" : this.gesturesEnabled ? "Gestures on" : "Gestures off";
     gestureButton.setAttribute("aria-pressed", String(this.gesturesEnabled));
     const keyboardButton = this.requiredElement<HTMLButtonElement>("keyboardButton");
     keyboardButton.disabled = this.status?.keyboard_enabled === false;
-    keyboardButton.title = keyboardButton.disabled ? "Keyboard forwarding is disabled on Windows" : "Open remote keyboard";
+    keyboardButton.title = keyboardButton.disabled ? "Keyboard forwarding is disabled on the host" : "Open remote keyboard";
     const filesButton = this.requiredElement<HTMLButtonElement>("filesButton");
     filesButton.disabled = this.status?.file_transfer_enabled === false;
-    filesButton.title = filesButton.disabled ? "File transfer is disabled on Windows" : "Exchange files with Windows";
+    filesButton.title = filesButton.disabled ? "File transfer is disabled on the host" : "Exchange files with the host";
   }
 
   private markFirstVideoFrame(): void {
@@ -617,7 +631,7 @@ export class NfidbApp {
         this.remoteInputEngine?.focusTextInput();
       });
     }
-    this.requiredElement("secureAttentionButton").addEventListener("click", () => {
+    this.root.querySelector<HTMLElement>("#secureAttentionButton")?.addEventListener("click", () => {
       this.remoteInputEngine?.sendChord([
         { code: "ControlLeft", key: "Control" },
         { code: "AltLeft", key: "Alt" },
@@ -662,10 +676,11 @@ export class NfidbApp {
       this.inputControl = await setInputSettings(current.revision, settings);
       this.touchEnabled = this.inputControl.settings.touch_enabled;
       this.gesturesEnabled = this.inputControl.settings.gestures_enabled;
+      const macHost = this.status?.host_platform === "macos";
       this.showNotice(this.touchEnabled
-        ? "Finger input is now native Windows touch."
+        ? macHost ? "Finger input now controls the Mac pointer." : "Finger input is now native Windows touch."
         : this.gesturesEnabled
-          ? "Finger touch is off; three-finger Windows gestures are active."
+          ? `Finger touch is off; three-finger ${macHost ? "Mac" : "Windows"} gestures are active.`
           : "Finger touch and shortcut gestures are off.");
     } catch (error) {
       try {
@@ -725,7 +740,7 @@ export class NfidbApp {
     }
     const control = this.videoControl;
     if (!control) {
-      content.innerHTML = `<p class="panel-empty">Waiting for Windows video capabilities…</p>`;
+      content.innerHTML = `<p class="panel-empty">Waiting for host video capabilities…</p>`;
       return;
     }
     const settings = control.settings.settings;
@@ -969,7 +984,7 @@ export class NfidbApp {
     const previousCodec = this.videoControl.runtime.codec;
     const settings = JSON.parse(JSON.stringify(this.videoControl.settings.settings)) as VideoControl["settings"]["settings"];
     change(settings);
-    this.showNotice("Applying video settings on Windows…");
+    this.showNotice("Applying video settings on the host…");
     try {
       this.videoControl = await setVideoSettings(this.videoControl.settings.revision, settings);
       this.renderVideoPanel();
@@ -1019,7 +1034,7 @@ export class NfidbApp {
       this.renderFilesContent();
       if (addedCount > 0) {
         const noun = addedCount === 1 ? "file is" : "files are";
-        this.showNotice(`${addedCount} ${noun} ready from Windows. Open Files to download.`);
+        this.showNotice(`${addedCount} ${noun} ready from the host. Open Files to download.`);
       }
     } catch (error) {
       const content = this.root.querySelector<HTMLElement>("#filesContent");
@@ -1048,6 +1063,7 @@ export class NfidbApp {
     }
     const listing = this.fileListing;
     const queued = this.uploadQueue;
+    const hostName = this.status?.host_platform === "macos" ? "Mac" : "Windows";
     const uploadRows = queued.length === 0
       ? `<p class="panel-empty">Nothing queued from this iPad.</p>`
       : queued.map((item) => {
@@ -1064,7 +1080,7 @@ export class NfidbApp {
           </div>`;
         }).join("");
     const outboxRows = !listing || listing.outbox.length === 0
-      ? `<p class="panel-empty">No Windows files are queued for this iPad.</p>`
+      ? `<p class="panel-empty">No host files are queued for this iPad.</p>`
       : listing.outbox.map((file) => `<div class="transfer-row">
           <div><b>${escapeHtml(file.name)}</b><small>${formatBytes(file.size)} · ${escapeHtml(file.mime)}${file.sha256 ? ` · SHA-256 ${file.sha256.slice(0, 12)}…` : " · checksum pending"}</small></div>
           <div class="transfer-actions"><a data-download-id="${file.id}" href="${outgoingDownloadUrl(file.id, this.autoClearDownloads)}" download="${escapeHtml(file.name)}">Download</a><button data-remove-outgoing="${file.id}">Remove</button></div>
@@ -1072,7 +1088,7 @@ export class NfidbApp {
     const recentRows = !listing || listing.recent.length === 0
       ? `<p class="panel-empty">No transfers completed in this run.</p>`
       : listing.recent.slice(0, 6).map((transfer) => `<div class="recent-transfer">
-          <span>${transfer.direction === "ipad-to-windows" ? "iPad to Windows" : "Windows to iPad"}</span>
+          <span>${transfer.direction === "ipad-to-windows" ? `iPad to ${hostName}` : `${hostName} to iPad`}</span>
           <b>${escapeHtml(transfer.name)}</b><small>${formatBytes(transfer.bytes)} · ${escapeHtml(transfer.status)} · ${transfer.average_mbps.toFixed(2)} Mbps</small>
         </div>`).join("");
     const stats = listing?.stats;
@@ -1082,12 +1098,12 @@ export class NfidbApp {
         <span>UP ${stats?.upload_mbps.toFixed(2) ?? "0.00"} Mbps</span><span>DOWN ${stats?.download_mbps.toFixed(2) ?? "0.00"} Mbps</span><span>${listing?.rate_limit_mbps ?? 0} Mbps limit</span>
       </div>
       <section class="file-section">
-        <div class="file-section-heading"><div><b>SEND TO WINDOWS</b><small>${listing ? `Saves to ${escapeHtml(listing.inbox_name)}` : "Verified 1 MiB chunks"}</small></div><button id="chooseFilesButton" class="file-primary" ${listing?.enabled === false ? "disabled" : ""}>Choose files</button></div>
+        <div class="file-section-heading"><div><b>SEND TO ${hostName.toUpperCase()}</b><small>${listing ? `Saves to ${escapeHtml(listing.inbox_name)}` : "Verified 1 MiB chunks"}</small></div><button id="chooseFilesButton" class="file-primary" ${listing?.enabled === false ? "disabled" : ""}>Choose files</button></div>
         <input id="filePicker" type="file" multiple hidden />
         ${uploadRows}
       </section>
       <section class="file-section">
-        <div class="file-section-heading"><div><b>FROM WINDOWS</b><small>Only files queued in the desktop app</small></div>${outboxCount > 1 ? `<button id="downloadAllButton" class="file-secondary">Download all (${outboxCount})</button>` : ""}</div>
+        <div class="file-section-heading"><div><b>FROM ${hostName.toUpperCase()}</b><small>Only files queued in the desktop app</small></div>${outboxCount > 1 ? `<button id="downloadAllButton" class="file-secondary">Download all (${outboxCount})</button>` : ""}</div>
         ${outboxRows}
         <label class="file-option"><input id="autoClearDownloads" type="checkbox" ${this.autoClearDownloads ? "checked" : ""} /><span>Clear each queue item after download</span></label>
         <p class="file-option-help">On by default. The host removes an item only after its full file stream is delivered.</p>
@@ -1162,7 +1178,7 @@ export class NfidbApp {
     for (const link of this.root.querySelectorAll<HTMLAnchorElement>("[data-download-id]")) {
       link.addEventListener("click", () => {
         this.showNotice(this.autoClearDownloads
-          ? "Download started. Its Windows queue item clears after every byte is delivered."
+          ? "Download started. Its host queue item clears after every byte is delivered."
           : "Download handed to Safari. Use Safari’s download button to view progress or save to Files.");
       });
     }
@@ -1186,7 +1202,7 @@ export class NfidbApp {
       });
     }
     if (rejected > 0) {
-      this.showNotice(`${rejected} file(s) exceeded the Windows file-size limit.`);
+      this.showNotice(`${rejected} file(s) exceeded the host file-size limit.`);
     }
     this.renderFilesContent();
     void this.processUploadQueue();
@@ -1215,7 +1231,7 @@ export class NfidbApp {
               onProgress: (uploaded, total) => {
                 item.uploaded = uploaded;
                 item.message = uploaded >= total
-                  ? "Verifying on Windows…"
+                  ? "Verifying on the host…"
                   : `${formatBytes(uploaded)} / ${formatBytes(total)}`;
                 this.renderFilesContent();
               },
@@ -1806,7 +1822,7 @@ export class NfidbApp {
     try {
       await disconnect(this.token);
     } catch {
-      // Local teardown still completes when the PC disappeared.
+      // Local teardown still completes when the host disappeared.
     }
     this.token = "";
     this.status = await getStatus().catch(() => this.status);
@@ -1847,9 +1863,9 @@ export class NfidbApp {
     this.root.innerHTML = `
       <main class="pairing-shell"><section class="pair-panel error-panel">
         <div class="wordmark"><span>NFi</span>DB</div><p class="eyebrow">HOST NOT REACHABLE</p>
-        <h1>Couldn’t reach the Windows bridge</h1><p>${escapeHtml(message)}</p>
+        <h1>Couldn’t reach the NFiDB host</h1><p>${escapeHtml(message)}</p>
         <button class="primary-button" id="retryButton">Try again</button>
-        <p class="pair-help">Check Windows Firewall Private network access and confirm both devices are on the same Wi-Fi without guest isolation.</p>
+        <p class="pair-help">Confirm both devices are on the same Wi-Fi without guest isolation.${this.status?.host_platform === "windows" ? " Check Windows Firewall Private network access." : ""}</p>
       </section></main>`;
     this.requiredElement("retryButton").addEventListener("click", () => void this.start());
   }

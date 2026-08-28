@@ -16,12 +16,12 @@ use nfidb_core::{
 use nfidb_host_macos as platform_host;
 #[cfg(target_os = "windows")]
 use nfidb_host_windows as platform_host;
+use nfidb_transport::{Distribution, FileTransferOptions, RemoteInputSettings, ServerHandle, ServerOptions};
 use platform_host::{
     CaptureManager, HostBenchmarkReport, MonitorDescriptor, PointerInjector, PointerInjectorOptions,
     ProcessResourceMonitor, discover_video_encoders, enumerate_monitors, full_benchmark_cases, quick_benchmark_cases,
     run_host_benchmark_suite, set_per_monitor_dpi_awareness, write_benchmark_exports,
 };
-use nfidb_transport::{Distribution, FileTransferOptions, RemoteInputSettings, ServerHandle, ServerOptions};
 use qrcode::QrCode;
 use qrcode::types::Color;
 use tokio::sync::broadcast;
@@ -196,7 +196,8 @@ fn run() -> Result<()> {
         .with_env_filter(filter)
         .with_target(false)
         .init();
-    set_per_monitor_dpi_awareness().context("failed to configure Windows DPI awareness")?;
+    set_per_monitor_dpi_awareness()
+        .with_context(|| format!("failed to configure {} host integration", platform_name()))?;
 
     let mut config = AppConfig::load().unwrap_or_else(|error| {
         tracing::warn!(%error, "using default settings because config could not be loaded");
@@ -355,6 +356,11 @@ fn run() -> Result<()> {
             ServerOptions {
                 preferred_port: config.network.port,
                 host_name,
+                host_platform: if cfg!(target_os = "macos") {
+                    "macos".to_owned()
+                } else {
+                    "windows".to_owned()
+                },
                 mode: mode_name(config.mode).to_owned(),
                 mdns: config.network.mdns,
                 touch_default: config.input.touch,
@@ -946,8 +952,20 @@ impl HostApp {
                 ui.label(egui::RichText::new("RECENT").size(9.0).strong().color(muted()));
                 for transfer in snapshot.recent.iter().take(8) {
                     let direction = match transfer.direction {
-                        nfidb_transport::TransferDirection::IpadToWindows => "iPad to Windows",
-                        nfidb_transport::TransferDirection::WindowsToIpad => "Windows to iPad",
+                        nfidb_transport::TransferDirection::IpadToWindows => {
+                            if cfg!(target_os = "macos") {
+                                "iPad to Mac"
+                            } else {
+                                "iPad to Windows"
+                            }
+                        }
+                        nfidb_transport::TransferDirection::WindowsToIpad => {
+                            if cfg!(target_os = "macos") {
+                                "Mac to iPad"
+                            } else {
+                                "Windows to iPad"
+                            }
+                        }
                     };
                     ui.label(
                         egui::RichText::new(format!(
@@ -987,6 +1005,10 @@ impl HostApp {
     }
 
     fn app_setup_page(&mut self, ui: &mut egui::Ui) {
+        if cfg!(target_os = "macos") {
+            self.macos_app_setup_page(ui);
+            return;
+        }
         page_heading(
             ui,
             "Application setup",
@@ -1019,6 +1041,38 @@ impl HostApp {
             ui.add_space(10.0);
             ui.label(egui::RichText::new(message).color(accent()));
         }
+    }
+
+    fn macos_app_setup_page(&mut self, ui: &mut egui::Ui) {
+        page_heading(
+            ui,
+            "Application setup",
+            "Grant the two local macOS permissions, then validate Pencil signals and the target drawing application.",
+        );
+        ui.add_space(18.0);
+        card(ui, |ui| {
+            ui.heading(egui::RichText::new("Required permissions").size(17.0));
+            ui.label("1. Privacy & Security > Screen & System Audio Recording: enable NFiDB for display capture.");
+            ui.label(
+                "2. Privacy & Security > Accessibility: enable NFiDB for Pencil, mouse, keyboard, and gesture control.",
+            );
+            ui.label("3. Quit and reopen NFiDB if macOS asks after changing either permission.");
+            ui.add_space(10.0);
+            ui.heading(egui::RichText::new("Validation order").size(17.0));
+            ui.label("1. Open the iPad pointer diagnostic and test pressure, tilt, coalescing, and long strokes.");
+            ui.label(
+                "2. Test pointer movement, clicking, scrolling, typing, Command+Tab, Mission Control, and minimize.",
+            );
+            ui.label("3. Draw in the target app and confirm pressure-sensitive strokes rather than mouse-only input.");
+            ui.label("4. Reset Diagnostics, run the test matrix, and export JSON.");
+            ui.add_space(12.0);
+            if ui.button("Open pointer diagnostic").clicked() {
+                ui.ctx().open_url(egui::OpenUrl::new_tab(format!(
+                    "{}diagnostics/pointer",
+                    self.server.info.fallback_url
+                )));
+            }
+        });
     }
 
     fn session_card(&mut self, ui: &mut egui::Ui) {
@@ -1367,7 +1421,14 @@ impl HostApp {
             ui.add_space(8.0);
             let mut changed = false;
             changed |= ui
-                .checkbox(&mut self.config.input.pen, "Forward Apple Pencil as Windows pen")
+                .checkbox(
+                    &mut self.config.input.pen,
+                    if cfg!(target_os = "macos") {
+                        "Forward Apple Pencil through Quartz tablet events"
+                    } else {
+                        "Forward Apple Pencil as Windows pen"
+                    },
+                )
                 .changed();
             changed |= ui
                 .checkbox(&mut self.config.input.touch, "Forward touch contacts")
@@ -1389,7 +1450,11 @@ impl HostApp {
             }
             ui.add_space(8.0);
             ui.label(
-                egui::RichText::new("With touch forwarding off, three-finger swipes control Windows apps. Trackpad and keyboard forwarding remain independent of Pencil input.")
+                egui::RichText::new(if cfg!(target_os = "macos") {
+                    "With touch forwarding off, three-finger swipes control Mac apps and Mission Control. Trackpad and keyboard forwarding remain independent of Pencil input."
+                } else {
+                    "With touch forwarding off, three-finger swipes control Windows apps. Trackpad and keyboard forwarding remain independent of Pencil input."
+                })
                     .size(10.0)
                     .color(muted()),
             );

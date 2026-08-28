@@ -1,18 +1,15 @@
-use std::collections::BTreeMap;
-use std::ffi::c_void;
-
 use core_graphics::event::{
-    CGEvent, CGEventFlags, CGEventTapLocation, CGEventType, CGMouseButton, EventField,
-    ScrollEventUnit,
+    CGEvent, CGEventFlags, CGEventTapLocation, CGEventType, CGMouseButton, EventField, ScrollEventUnit,
 };
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use core_graphics::geometry::CGPoint;
 use nfidb_core::{InputError, InputSink};
 use nfidb_protocol::{
-    Action, CommandInput, DeviceType, KeyAction, KeyboardInput, NormalizedPoint, PointerBatch,
-    PointerSample, RemoteCommand, TargetGeometry, TextInput, WheelInput,
+    Action, CommandInput, DeviceType, KeyAction, KeyboardInput, NormalizedPoint, PointerBatch, PointerSample,
+    RemoteCommand, TargetGeometry, TextInput, WheelInput,
 };
 use parking_lot::{Mutex, RwLock};
+use std::collections::BTreeMap;
 
 const PRIMARY: u16 = 1 << 0;
 const SECONDARY: u16 = 1 << 1;
@@ -115,7 +112,10 @@ impl PointerInjector {
         event.set_integer_value_field(EventField::MOUSE_EVENT_SUB_TYPE, TABLET_POINT_SUBTYPE);
         event.set_integer_value_field(EventField::TABLET_EVENT_DEVICE_ID, i64::from(sample.pointer_id.max(1)));
         event.set_integer_value_field(EventField::TABLET_EVENT_POINT_BUTTONS, i64::from(sample.flags));
-        event.set_double_value_field(EventField::MOUSE_EVENT_PRESSURE, f64::from(sample.pressure.clamp(0.0, 1.0)));
+        event.set_double_value_field(
+            EventField::MOUSE_EVENT_PRESSURE,
+            f64::from(sample.pressure.clamp(0.0, 1.0)),
+        );
         event.set_double_value_field(
             EventField::TABLET_EVENT_POINT_PRESSURE,
             f64::from(sample.pressure.clamp(0.0, 1.0)),
@@ -178,9 +178,7 @@ impl InputSink for PointerInjector {
             let point = self.point(sample);
             match sample.device_type {
                 DeviceType::Pen if options.pen_enabled => Self::inject_pen(&mut state, sample, point)?,
-                DeviceType::Touch
-                    if options.touch_enabled && !(options.strict_palm_rejection && state.pen_down) =>
-                {
+                DeviceType::Touch if options.touch_enabled && !(options.strict_palm_rejection && state.pen_down) => {
                     Self::inject_touch_as_pointer(&mut state, sample, point)?;
                 }
                 DeviceType::Mouse if options.mouse_enabled => {
@@ -324,9 +322,24 @@ fn post_mouse_move(point: CGPoint, buttons: u16) -> Result<(), InputError> {
 
 fn post_button_changes(point: CGPoint, previous: u16, current: u16) -> Result<(), InputError> {
     for (mask, button, down, up) in [
-        (PRIMARY, CGMouseButton::Left, CGEventType::LeftMouseDown, CGEventType::LeftMouseUp),
-        (SECONDARY, CGMouseButton::Right, CGEventType::RightMouseDown, CGEventType::RightMouseUp),
-        (AUXILIARY, CGMouseButton::Center, CGEventType::OtherMouseDown, CGEventType::OtherMouseUp),
+        (
+            PRIMARY,
+            CGMouseButton::Left,
+            CGEventType::LeftMouseDown,
+            CGEventType::LeftMouseUp,
+        ),
+        (
+            SECONDARY,
+            CGMouseButton::Right,
+            CGEventType::RightMouseDown,
+            CGEventType::RightMouseUp,
+        ),
+        (
+            AUXILIARY,
+            CGMouseButton::Center,
+            CGEventType::OtherMouseDown,
+            CGEventType::OtherMouseUp,
+        ),
     ] {
         let kind = match (previous & mask != 0, current & mask != 0) {
             (false, true) => Some(down),
@@ -380,37 +393,113 @@ fn post_chord(keys: &[(u16, u16)]) -> Result<(), InputError> {
 
 fn keycode_for_dom_code(code: &str) -> Option<u16> {
     let key = match code {
-        "KeyA" => 0x00, "KeyS" => 0x01, "KeyD" => 0x02, "KeyF" => 0x03,
-        "KeyH" => 0x04, "KeyG" => 0x05, "KeyZ" => 0x06, "KeyX" => 0x07,
-        "KeyC" => 0x08, "KeyV" => 0x09, "KeyB" => 0x0B, "KeyQ" => 0x0C,
-        "KeyW" => 0x0D, "KeyE" => 0x0E, "KeyR" => 0x0F, "KeyY" => 0x10,
-        "KeyT" => 0x11, "Digit1" => 0x12, "Digit2" => 0x13, "Digit3" => 0x14,
-        "Digit4" => 0x15, "Digit6" => 0x16, "Digit5" => 0x17, "Equal" => 0x18,
-        "Digit9" => 0x19, "Digit7" => 0x1A, "Minus" => 0x1B, "Digit8" => 0x1C,
-        "Digit0" => 0x1D, "BracketRight" => 0x1E, "KeyO" => 0x1F,
-        "KeyU" => 0x20, "BracketLeft" => 0x21, "KeyI" => 0x22, "KeyP" => 0x23,
-        "Enter" | "NumpadEnter" => 0x24, "KeyL" => 0x25, "KeyJ" => 0x26,
-        "Quote" => 0x27, "KeyK" => 0x28, "Semicolon" => 0x29,
-        "Backslash" | "IntlBackslash" => 0x2A, "Comma" => 0x2B, "Slash" => 0x2C,
-        "KeyN" => 0x2D, "KeyM" => 0x2E, "Period" => 0x2F, "Tab" => 0x30,
-        "Space" => 0x31, "Backquote" => 0x32, "Backspace" => 0x33,
-        "Escape" => 0x35, "MetaLeft" | "OSLeft" => 0x37, "ShiftLeft" => 0x38,
-        "CapsLock" => 0x39, "AltLeft" => 0x3A, "ControlLeft" => 0x3B,
-        "ShiftRight" => 0x3C, "AltRight" => 0x3D, "ControlRight" => 0x3E,
-        "F17" => 0x40, "NumpadDecimal" => 0x41, "NumpadMultiply" => 0x43,
-        "NumpadAdd" => 0x45, "NumLock" => 0x47, "NumpadDivide" => 0x4B,
-        "NumpadSubtract" => 0x4E, "F18" => 0x4F, "F19" => 0x50,
-        "NumpadEqual" => 0x51, "Numpad0" => 0x52, "Numpad1" => 0x53,
-        "Numpad2" => 0x54, "Numpad3" => 0x55, "Numpad4" => 0x56,
-        "Numpad5" => 0x57, "Numpad6" => 0x58, "Numpad7" => 0x59,
-        "F20" => 0x5A, "Numpad8" => 0x5B, "Numpad9" => 0x5C,
-        "F5" => 0x60, "F6" => 0x61, "F7" => 0x62, "F3" => 0x63,
-        "F8" => 0x64, "F9" => 0x65, "F11" => 0x67, "F13" => 0x69,
-        "F16" => 0x6A, "F14" => 0x6B, "F10" => 0x6D, "F12" => 0x6F,
-        "F15" => 0x71, "Help" | "Insert" => 0x72, "Home" => 0x73,
-        "PageUp" => 0x74, "Delete" => 0x75, "F4" => 0x76, "End" => 0x77,
-        "F2" => 0x78, "PageDown" => 0x79, "F1" => 0x7A, "ArrowLeft" => 0x7B,
-        "ArrowRight" => 0x7C, "ArrowDown" => 0x7D, "ArrowUp" => 0x7E,
+        "KeyA" => 0x00,
+        "KeyS" => 0x01,
+        "KeyD" => 0x02,
+        "KeyF" => 0x03,
+        "KeyH" => 0x04,
+        "KeyG" => 0x05,
+        "KeyZ" => 0x06,
+        "KeyX" => 0x07,
+        "KeyC" => 0x08,
+        "KeyV" => 0x09,
+        "KeyB" => 0x0B,
+        "KeyQ" => 0x0C,
+        "KeyW" => 0x0D,
+        "KeyE" => 0x0E,
+        "KeyR" => 0x0F,
+        "KeyY" => 0x10,
+        "KeyT" => 0x11,
+        "Digit1" => 0x12,
+        "Digit2" => 0x13,
+        "Digit3" => 0x14,
+        "Digit4" => 0x15,
+        "Digit6" => 0x16,
+        "Digit5" => 0x17,
+        "Equal" => 0x18,
+        "Digit9" => 0x19,
+        "Digit7" => 0x1A,
+        "Minus" => 0x1B,
+        "Digit8" => 0x1C,
+        "Digit0" => 0x1D,
+        "BracketRight" => 0x1E,
+        "KeyO" => 0x1F,
+        "KeyU" => 0x20,
+        "BracketLeft" => 0x21,
+        "KeyI" => 0x22,
+        "KeyP" => 0x23,
+        "Enter" | "NumpadEnter" => 0x24,
+        "KeyL" => 0x25,
+        "KeyJ" => 0x26,
+        "Quote" => 0x27,
+        "KeyK" => 0x28,
+        "Semicolon" => 0x29,
+        "Backslash" | "IntlBackslash" => 0x2A,
+        "Comma" => 0x2B,
+        "Slash" => 0x2C,
+        "KeyN" => 0x2D,
+        "KeyM" => 0x2E,
+        "Period" => 0x2F,
+        "Tab" => 0x30,
+        "Space" => 0x31,
+        "Backquote" => 0x32,
+        "Backspace" => 0x33,
+        "Escape" => 0x35,
+        "MetaLeft" | "OSLeft" => 0x37,
+        "ShiftLeft" => 0x38,
+        "CapsLock" => 0x39,
+        "AltLeft" => 0x3A,
+        "ControlLeft" => 0x3B,
+        "ShiftRight" => 0x3C,
+        "AltRight" => 0x3D,
+        "ControlRight" => 0x3E,
+        "F17" => 0x40,
+        "NumpadDecimal" => 0x41,
+        "NumpadMultiply" => 0x43,
+        "NumpadAdd" => 0x45,
+        "NumLock" => 0x47,
+        "NumpadDivide" => 0x4B,
+        "NumpadSubtract" => 0x4E,
+        "F18" => 0x4F,
+        "F19" => 0x50,
+        "NumpadEqual" => 0x51,
+        "Numpad0" => 0x52,
+        "Numpad1" => 0x53,
+        "Numpad2" => 0x54,
+        "Numpad3" => 0x55,
+        "Numpad4" => 0x56,
+        "Numpad5" => 0x57,
+        "Numpad6" => 0x58,
+        "Numpad7" => 0x59,
+        "F20" => 0x5A,
+        "Numpad8" => 0x5B,
+        "Numpad9" => 0x5C,
+        "F5" => 0x60,
+        "F6" => 0x61,
+        "F7" => 0x62,
+        "F3" => 0x63,
+        "F8" => 0x64,
+        "F9" => 0x65,
+        "F11" => 0x67,
+        "F13" => 0x69,
+        "F16" => 0x6A,
+        "F14" => 0x6B,
+        "F10" => 0x6D,
+        "F12" => 0x6F,
+        "F15" => 0x71,
+        "Help" | "Insert" => 0x72,
+        "Home" => 0x73,
+        "PageUp" => 0x74,
+        "Delete" => 0x75,
+        "F4" => 0x76,
+        "End" => 0x77,
+        "F2" => 0x78,
+        "PageDown" => 0x79,
+        "F1" => 0x7A,
+        "ArrowLeft" => 0x7B,
+        "ArrowRight" => 0x7C,
+        "ArrowDown" => 0x7D,
+        "ArrowUp" => 0x7E,
         _ => return None,
     };
     Some(key)
@@ -426,7 +515,16 @@ mod tests {
 
     #[test]
     fn maps_dom_codes_used_by_the_ipad_keyboard() {
-        for code in ["KeyA", "Digit6", "Tab", "Enter", "Backspace", "Delete", "AltLeft", "ArrowDown"] {
+        for code in [
+            "KeyA",
+            "Digit6",
+            "Tab",
+            "Enter",
+            "Backspace",
+            "Delete",
+            "AltLeft",
+            "ArrowDown",
+        ] {
             assert!(keycode_for_dom_code(code).is_some(), "{code}");
         }
     }

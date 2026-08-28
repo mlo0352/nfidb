@@ -7,6 +7,8 @@ NFiDB has two deliberately separate benchmark levels.
 
 `scripts/benchmark.ps1` exports `environment.json`, `capabilities.json`, `results.json`, `results.csv`, and `summary.md` for host runs. Receiver runs add raw, CSV, and Markdown Edge reports. `build/benchmarks/latest.json` remains the machine-readable latest host result.
 
+On macOS the same `nfidb --benchmark quick|full` CLI writes those host exports. Deterministic source generation is outside the measured preprocess/encode window, stream bitrate uses the requested media timeline, and CPU sampling covers only preprocessing/encoding. This prevents a deliberately detailed CPU pattern generator from being mislabeled as VideoToolbox latency. ScreenCaptureKit live-capture metrics remain separate from deterministic host capacity.
+
 ## Auto gates and score
 
 For a candidate targeting `F` frames per second, Auto rejects it before scoring when any of these occurs:
@@ -33,6 +35,20 @@ Measured 2026-08-19 in optimized mode:
 - Receiver automation: Headless Microsoft Edge 151 on the local authenticated WebRTC path
 
 Windows also enumerated a Microsoft `H264 Encoder MFT`, but it was only initializeable in this run and was not promoted to functional because it was not the transform that returned the encoded probe sample.
+
+## Apple M1 Pro VideoToolbox validation
+
+Measured 2026-08-28 on a 2021 Apple M1 Pro MacBook Pro running arm64 macOS 27.0 beta build 26A5416b and Xcode 27.0 beta 6. `VTCopyVideoEncoderList` reported Apple H.264 and Apple HEVC hardware encoders. Each real-time compression session initialized at 1920×1080/60 and returned `UsingHardwareAcceleratedVideoEncoder = true`. No VideoToolbox AV1 encoder was exposed, so AV1 was skipped rather than treated as a failure. OpenH264 remained the CPU fallback.
+
+The corrected Quick run below used an optimized executable and 180 deterministic 1920×1080 drawing frames. It proves functional hardware and exposes relative headroom; it contains no receiver/presentation data.
+
+| Encoder | Path | Capacity | Preprocess p95 | Encode p95 | CPU during pipeline | Peak RAM | Media Mbps | Auto score |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Apple H.264 | `gpu-assisted` benchmark input | 101.58 fps | 2.17 ms | 8.42 ms | 26.37% | 46.55 MiB | 0.96 | 75.68 |
+| Apple HEVC | `gpu-assisted` benchmark input | 93.08 fps | 2.30 ms | 9.37 ms | 26.87% | 46.80 MiB | 2.37 | 72.37 |
+| OpenH264 | `cpu-preprocessing` | 60.26 fps | 3.10 ms | 15.14 ms | 100.02% | 83.44 MiB | 0.57 | rejected |
+
+The deterministic benchmark copies its generated BGRA source into an IOSurface, hence `gpu-assisted`; live ScreenCaptureKit frames already arrive IOSurface-backed and do not make that CPU upload. The synthetic sequence does not hold every encoder at its target bitrate, so the Media Mbps column is observed output, not an equal-quality efficiency ranking. Auto provisionally chooses H.264 hardware until the paired iPad proves another mutually supported path.
 
 ## D3D11 surface-path validation
 
@@ -102,4 +118,7 @@ The preserved OpenH264 release `0.2.0` end-to-end baseline was 53.8 encoded fps 
 - [Microsoft: CODECAPI_AVLowLatencyMode](https://learn.microsoft.com/en-us/windows/win32/medfound/codecapi-avlowlatencymode) describes real-time low-latency operation and the no-reordering expectation.
 - [Microsoft: Direct3D-aware MFTs](https://learn.microsoft.com/en-us/windows/win32/medfound/direct3d-aware-mfts) documents `MF_SA_D3D11_AWARE`, the DXGI device manager, and surface-backed samples. [Microsoft: `VideoProcessorBlt`](https://learn.microsoft.com/en-us/windows/win32/api/d3d11/nf-d3d11-id3d11videocontext-videoprocessorblt) documents the GPU video-processing operation used for scale and conversion.
 - [W3C WebRTC](https://www.w3.org/TR/webrtc/) defines `RTCRtpReceiver.getCapabilities()` as an optimistic receive-capability view and defines `setCodecPreferences()` negotiation behavior. That optimistic wording is why NFiDB requires SDP, negotiation, keyframe, and presentation evidence separately.
+- [Apple: ScreenCaptureKit configuration](https://developer.apple.com/documentation/screencapturekit/scstreamconfiguration) documents output dimensions, pixel format, queue depth, and frame interval. [Apple's capture sample](https://developer.apple.com/documentation/screencapturekit/capturing-screen-content-in-macos) notes that deeper queues cost memory; NFiDB deliberately uses two plus a one-frame replacement slot.
+- [Apple: VideoToolbox compression properties](https://developer.apple.com/documentation/videotoolbox/compression-properties) documents hardware identity, real-time mode, bitrate, frame-delay, speed priority, and encoder selection. [AllowFrameReordering](https://developer.apple.com/documentation/videotoolbox/kvtcompressionpropertykey_allowframereordering) explains why disabling B-frame reordering matters to latency.
+- [Apple: Quartz tablet point subtype](https://developer.apple.com/documentation/coregraphics/cgeventmousesubtype/kcgeventmousesubtypetabletpoint) and [tablet pressure](https://developer.apple.com/documentation/coregraphics/cgeventfield/tableteventpointpressure) define the public fields used by the macOS Pencil injector.
 - [WebKit: Safari 18 beta WebRTC HEVC](https://webkit.org/blog/15443/news-from-wwdc24-webkit-in-safari-18-beta/) documents RFC 7789 HEVC RTP support. [WebKit: Safari 18.4 media formats](https://webkit.org/blog/16574/webkit-features-in-safari-18-4/) documents H.264, HEVC, and hardware-dependent AV1 video-track support. NFiDB still trusts the actual browser report and playback test rather than the platform version alone.

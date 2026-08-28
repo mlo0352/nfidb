@@ -118,7 +118,7 @@ describe("outbound file notifications", () => {
     await internal.refreshFileListing();
 
     expect(root.querySelector("#connectionNotice")?.textContent).toBe(
-      "2 files are ready from Windows. Open Files to download.",
+      "2 files are ready from the host. Open Files to download.",
     );
     const badge = root.querySelector<HTMLElement>("#filesBadge");
     expect(badge?.textContent).toBe("2");

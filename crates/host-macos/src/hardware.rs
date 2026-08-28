@@ -1,6 +1,7 @@
 use nfidb_core::{CapabilityState, EncoderBackend, EncoderCapability, VideoCodec};
 use videotoolbox::compression::{CompressionSession, ProfileLevel};
 use videotoolbox::encoder_list::available_video_encoder_details;
+use videotoolbox::ffi;
 use videotoolbox::session::Codec;
 
 const H264_FOURCC: u32 = u32::from_be_bytes(*b"avc1");
@@ -13,9 +14,18 @@ pub fn discover_video_encoders() -> Vec<EncoderCapability> {
         Ok(details) => details,
         Err(status) => {
             return vec![
-                unavailable(VideoCodec::H264, format!("VTCopyVideoEncoderList failed with OSStatus {status}")),
-                unavailable(VideoCodec::Hevc, format!("VTCopyVideoEncoderList failed with OSStatus {status}")),
-                unavailable(VideoCodec::Av1, format!("VTCopyVideoEncoderList failed with OSStatus {status}")),
+                unavailable(
+                    VideoCodec::H264,
+                    format!("VTCopyVideoEncoderList failed with OSStatus {status}"),
+                ),
+                unavailable(
+                    VideoCodec::Hevc,
+                    format!("VTCopyVideoEncoderList failed with OSStatus {status}"),
+                ),
+                unavailable(
+                    VideoCodec::Av1,
+                    format!("VTCopyVideoEncoderList failed with OSStatus {status}"),
+                ),
                 software_fallback(),
             ];
         }
@@ -74,9 +84,8 @@ pub(crate) fn functional_probe(
     fps: u32,
     bitrate_bps: u32,
 ) -> Result<(), String> {
-    let codec = vt_codec(codec).ok_or_else(|| {
-        "VideoToolbox AV1 hardware encoding is not exposed by the current macOS SDK path".to_owned()
-    })?;
+    let codec = vt_codec(codec)
+        .ok_or_else(|| "VideoToolbox AV1 hardware encoding is not exposed by the current macOS SDK path".to_owned())?;
     let mut builder = CompressionSession::builder(width as i32, height as i32, codec)
         .with_real_time(true)
         .with_allow_frame_reordering(false)
@@ -88,7 +97,47 @@ pub(crate) fn functional_probe(
         Codec::HEVC => builder.with_profile_level(ProfileLevel::HEVCMainAutoLevel),
         _ => builder,
     };
-    builder.build().map(|_| ()).map_err(|error| error.to_string())
+    let session = builder.build().map_err(|error| error.to_string())?;
+    configure_interactive_latency(&session);
+    require_hardware_session(&session)
+}
+
+pub(crate) fn configure_interactive_latency(session: &CompressionSession) {
+    let max_delayed_frames = 1_i32;
+    let value = unsafe {
+        ffi::CFNumberCreate(
+            ffi::kCFAllocatorDefault,
+            ffi::kCFNumberSInt32Type,
+            (&raw const max_delayed_frames).cast(),
+        )
+    };
+    if !value.is_null() {
+        if let Err(error) =
+            unsafe { session.set_property(ffi::kVTCompressionPropertyKey_MaxFrameDelayCount, value.cast()) }
+        {
+            tracing::debug!(%error, "VideoToolbox does not accept MaxFrameDelayCount for this encoder");
+        }
+        unsafe { ffi::CFRelease(value.cast()) };
+    }
+    if let Err(error) = unsafe {
+        session.set_property(
+            ffi::kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality,
+            ffi::kCFBooleanTrue.cast(),
+        )
+    } {
+        tracing::debug!(%error, "VideoToolbox does not accept PrioritizeEncodingSpeedOverQuality for this encoder");
+    }
+}
+
+pub(crate) fn require_hardware_session(session: &CompressionSession) -> Result<(), String> {
+    let value = unsafe { session.copy_property(ffi::kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder) }
+        .map_err(|error| format!("could not verify VideoToolbox hardware acceleration: {error}"))?
+        .ok_or_else(|| "VideoToolbox did not report whether the active encoder uses hardware".to_owned())?;
+    if value.as_ptr().cast_const() == unsafe { ffi::kCFBooleanTrue.cast() } {
+        Ok(())
+    } else {
+        Err("VideoToolbox created a software encoder while hardware acceleration was required".to_owned())
+    }
 }
 
 pub(crate) const fn vt_codec(codec: VideoCodec) -> Option<Codec> {
@@ -168,6 +217,10 @@ mod tests {
     #[test]
     fn discovery_always_keeps_the_software_fallback() {
         let capabilities = discover_video_encoders();
-        assert!(capabilities.iter().any(|item| !item.hardware && item.codec == VideoCodec::H264));
+        assert!(
+            capabilities
+                .iter()
+                .any(|item| !item.hardware && item.codec == VideoCodec::H264)
+        );
     }
 }

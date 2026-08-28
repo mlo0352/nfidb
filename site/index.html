@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="NFiDB turns an iPad and Apple Pencil into a local Windows drawing bridge—no iPad app, account, subscription, or cloud relay." />
+    <meta name="description" content="NFiDB turns an iPad and Apple Pencil into a local Windows or Mac drawing bridge—no iPad app, account, subscription, or cloud relay." />
     <meta name="theme-color" content="#101514" />
     <title>NFiDB — No Frills iPad Drawing Bridge</title>
     <link rel="icon" href="favicon.svg" />
@@ -18,17 +18,17 @@
     <main id="top">
       <section class="hero">
         <div class="hero-art" aria-hidden="true"><img src="hero-drawing.webp" alt="" width="640" height="640" fetchpriority="high" /></div>
-        <h1>Your iPad.<br />Your Pencil.<br /><em>Your Windows canvas.</em></h1>
-        <p class="lede">See your Windows screen, draw with Apple Pencil pressure and tilt, and exchange files in either direction. No iPad app, account, subscription, or cloud service.</p>
+        <h1>Your iPad.<br />Your Pencil.<br /><em>Your desktop canvas.</em></h1>
+        <p class="lede">See your Windows or Mac screen, draw with Apple Pencil pressure and tilt, and exchange files in either direction. No iPad app, account, subscription, or cloud service.</p>
         <div class="actions">
-          <a class="primary button-with-icon" href="download.html"><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 3.4 10.5 2.2v8H2V3.4Zm9.7-1.3L22 .6v9.6H11.7V2.1ZM2 11.4h8.5v8.1L2 18.3v-6.9Zm9.7 0H22V23l-10.3-1.5V11.4Z" /></svg><span>Download for Windows</span></a>
+          <a class="primary button-with-icon" href="download.html"><span>Download NFiDB</span></a>
           <a class="secondary" href="https://ko-fi.com/arealmiown">Support on Ko-fi</a>
         </div>
-        <p class="caveat">v0.7.0 Alpha · Portable for Windows 11 x64.</p>
+        <p class="caveat">v0.8.0 Alpha · Windows 11 x64 and Apple-silicon macOS.</p>
       </section>
 
       <section class="signal" aria-label="Local connection architecture">
-        <div><span>WINDOWS</span><strong>Your drawing app</strong><small>Rebelle, Krita, and more</small></div>
+        <div><span>HOST</span><strong>Your drawing app</strong><small>Windows or macOS</small></div>
         <b aria-hidden="true">↔</b>
         <div class="center"><span>NFIDB</span><strong>Private connection</strong><small>No account or cloud required</small></div>
         <b aria-hidden="true">↔</b>
@@ -36,15 +36,15 @@
       </section>
 
       <section class="features">
-        <article><span>01</span><h2>Actually local</h2><p>Your PC and iPad talk directly. There is no account, cloud service, or internet connection involved in a drawing session.</p></article>
-        <article><span>02</span><h2>Your Pencil still feels like one</h2><p>Pressure and tilt reach your Windows drawing app, so you can work with the tools and brushes you already know.</p></article>
+        <article><span>01</span><h2>Actually local</h2><p>Your desktop and iPad talk directly. There is no account, cloud service, or internet connection involved in a drawing session.</p></article>
+        <article><span>02</span><h2>Your Pencil still feels like one</h2><p>Pressure and tilt reach your drawing app, so you can work with the tools and brushes you already know.</p></article>
         <article><span>03</span><h2>Nothing extra to carry</h2><p>Open Safari on the iPad you already own and leave the separate graphics tablet—and another subscription—at home.</p></article>
       </section>
 
       <section id="how" class="how">
-        <div class="section-copy"><p class="eyebrow">Three steps</p><h2>Nothing to install on the iPad.</h2><p>Start NFiDB on Windows, connect with Safari, then draw in the app you already use.</p><button class="technical-trigger" type="button" data-panel-open>Technical details <span aria-hidden="true">→</span></button></div>
+        <div class="section-copy"><p class="eyebrow">Three steps</p><h2>Nothing to install on the iPad.</h2><p>Start NFiDB on Windows or Mac, connect with Safari, then draw in the app you already use.</p><button class="technical-trigger" type="button" data-panel-open>Technical details <span aria-hidden="true">→</span></button></div>
         <ol>
-          <li><b>1</b><div><strong>Run NFiDB</strong><span>Choose the Windows screen you want to use.</span></div></li>
+          <li><b>1</b><div><strong>Run NFiDB</strong><span>Choose the desktop screen you want to use.</span></div></li>
           <li><b>2</b><div><strong>Connect your iPad</strong><span>Open Safari and scan the QR code or enter the six-digit PIN.</span></div></li>
           <li><b>3</b><div><strong>Draw</strong><span>Pick up your Pencil and get back to the app you already love.</span></div></li>
         </ol>
@@ -56,10 +56,10 @@
         <form method="dialog"><button class="panel-close" aria-label="Close technical details">Close <span aria-hidden="true">×</span></button></form>
         <p class="eyebrow">Technical details</p>
         <h2 id="technical-title">Under the hood.</h2>
-        <p class="panel-intro">The short version: your Windows PC does the work and your iPad connects directly to it.</p>
+        <p class="panel-intro">The short version: your desktop does the work and your iPad connects directly to it.</p>
         <div class="technical-list">
           <section><span>01</span><h3>Local video</h3><p>NFiDB detects working hardware codecs, verifies what the browser can present, and sends video over a direct WebRTC connection. No cloud relay is involved.</p></section>
-          <section><span>02</span><h3>Native pen input</h3><p>Safari Pointer Events carry pressure and tilt back to Windows as native <code>PT_PEN</code> input. Predicted events remain visual-only.</p></section>
+          <section><span>02</span><h3>Native pen input</h3><p>Safari Pointer Events carry pressure and tilt back through Windows Pointer or macOS Quartz tablet events. Predicted events remain visual-only.</p></section>
           <section><span>03</span><h3>Files and diagnostics</h3><p>Explicit file queues move data in either direction. Live stats cover latency, bandwidth, input integrity, and transfer results without sending data elsewhere.</p></section>
         </div>
         <div class="panel-links"><a href="https://github.com/mlo0352/nfidb#build-from-source">Build from source →</a><a href="https://github.com/mlo0352/nfidb/blob/main/docs/TEST_MATRIX.md">Read the test matrix →</a></div>

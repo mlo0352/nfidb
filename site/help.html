@@ -17,17 +17,17 @@
 
     <main>
       <section class="page-hero help-hero">
-        <p class="eyebrow"><i></i> v0.7.0 Alpha guide</p>
+        <p class="eyebrow"><i></i> v0.8.0 Alpha guide</p>
         <h1>One surface.<br /><em>Five ways to work.</em></h1>
-        <p class="lede">Draw, navigate, point, type, and exchange files with Windows—all from the same local Safari session.</p>
+        <p class="lede">Draw, navigate, point, type, and exchange files with Windows or Mac—all from the same local Safari session.</p>
         <div class="help-jump" aria-label="Help topics">
           <a href="#start">Start</a><a href="#input">Input</a><a href="#gestures">Gestures</a><a href="#files">Files</a><a href="#controls">Controls</a><a href="#fixes">Troubleshooting</a>
         </div>
       </section>
 
       <section class="help-summary" aria-label="Available input methods">
-        <article><span>01</span><h2>Pencil</h2><p>Native Windows pen input with pressure and tilt.</p></article>
-        <article><span>02</span><h2>Fingers</h2><p>Windows touch or three-finger app controls.</p></article>
+        <article><span>01</span><h2>Pencil</h2><p>Host pen/tablet events with pressure and tilt.</p></article>
+        <article><span>02</span><h2>Fingers</h2><p>Touch/pointer control or three-finger app commands.</p></article>
         <article><span>03</span><h2>Pointer</h2><p>Trackpad or mouse movement, clicks, and scrolling.</p></article>
         <article><span>04</span><h2>Keyboard</h2><p>Shortcuts, held keys, symbols, and Unicode text.</p></article>
         <article><span>05</span><h2>Files</h2><p>Explicit, paired transfers in either direction.</p></article>
@@ -36,14 +36,14 @@
       <section id="start" class="help-section split-help">
         <div class="section-copy">
           <p class="eyebrow">Start a session</p>
-          <h2>Windows first.<br />Safari second.</h2>
-          <p>The drawing page comes from your PC. GitHub Pages is only this documentation site.</p>
+          <h2>Desktop first.<br />Safari second.</h2>
+          <p>The drawing page comes from your host. GitHub Pages is only this documentation site.</p>
         </div>
         <ol>
-          <li><b>1</b><div><strong>Run <code>nfidb.exe</code></strong><span>Choose a monitor and keep the desktop window open.</span></div></li>
-          <li><b>2</b><div><strong>Open the local address</strong><span>Use the QR code, <code>.local</code> address, or numeric LAN address shown on Windows.</span></div></li>
+          <li><b>1</b><div><strong>Run NFiDB</strong><span>Start <code>nfidb.exe</code> on Windows or NFiDB.app on Mac, choose a monitor, and keep it open.</span></div></li>
+          <li><b>2</b><div><strong>Open the local address</strong><span>Use the QR code, <code>.local</code> address, or numeric LAN address shown by the host.</span></div></li>
           <li><b>3</b><div><strong>Pair</strong><span>Scan the QR code or type the six-digit PIN. Six digits are checked automatically.</span></div></li>
-          <li><b>4</b><div><strong>Work</strong><span>Bring your Windows drawing app forward and use the iPad surface.</span></div></li>
+          <li><b>4</b><div><strong>Work</strong><span>Bring your desktop drawing app forward and use the iPad surface.</span></div></li>
         </ol>
       </section>
 
@@ -56,19 +56,19 @@
           <article>
             <span class="help-number">01</span>
             <h3>Apple Pencil</h3>
-            <p>Draw directly into the selected Windows monitor. NFiDB forwards the primary tip, pressure, tilt, and coalesced samples as native Windows pen input.</p>
-            <small>In the drawing app, select its Windows Ink or pointer-input path when available.</small>
+            <p>Draw into the selected monitor. NFiDB forwards the primary tip, pressure, tilt, and coalesced samples through Windows Pointer or macOS Quartz tablet events.</p>
+            <small>On Windows, select Windows Ink/pointer input when the drawing app offers it.</small>
           </article>
           <article>
             <span class="help-number">02</span>
             <h3>Trackpad or mouse</h3>
-            <p>Move the Windows cursor, click, secondary-click, drag, and scroll horizontally or vertically. Pointer coordinates follow the video fit mode.</p>
+            <p>Move the host cursor, click, secondary-click, drag, and scroll horizontally or vertically. Pointer coordinates follow the video fit mode.</p>
             <small>Keep Safari in the foreground so iPadOS delivers pointer events to the page.</small>
           </article>
           <article>
             <span class="help-number">03</span>
             <h3>Hardware keyboard</h3>
-            <p>With the Keyboard panel closed, key-down and key-up events go straight to Windows. Held modifiers and drawing-app shortcuts work normally.</p>
+            <p>With the Keyboard panel closed, key-down and key-up events go straight to the host. Held modifiers and drawing-app shortcuts work normally.</p>
             <small>Open Keyboard when you want layout-independent text or the on-screen special keys.</small>
           </article>
         </div>
@@ -81,19 +81,20 @@
           <div><kbd>Delete</kbd><span>Backspace</span></div>
           <div><kbd>Option</kbd> + <kbd>Tab</kbd><span>Switch app</span></div>
         </div>
+        <p class="help-note"><strong>Mac mappings:</strong> Command stays Command, Option stays Option, Command+Tab switches apps, and the upward three-finger command opens Mission Control. NFiDB shows the correct shortcut labels after pairing.</p>
         <p class="help-note"><strong>Ctrl+Alt+Delete:</strong> Control+Option+Delete is sent, but Windows rejects synthetic input on the protected secure-attention screen. A portable user-mode app cannot override that boundary.</p>
       </section>
 
       <section id="gestures" class="help-section split-help">
         <div class="section-copy">
           <p class="eyebrow">Three fingers</p>
-          <h2>Move around Windows without leaving the canvas.</h2>
+          <h2>Move around the desktop without leaving the canvas.</h2>
           <p>Set <strong>Touch off</strong> and <strong>Gestures on</strong>. Pencil contact temporarily suppresses finger shortcuts.</p>
         </div>
         <div class="gesture-reference">
-          <div><b>→</b><span><strong>Next app</strong><small>Alt+Tab</small></span></div>
-          <div><b>←</b><span><strong>Previous app</strong><small>Alt+Shift+Tab</small></span></div>
-          <div><b>↑</b><span><strong>Task View</strong><small>Win+Tab</small></span></div>
+          <div><b>→</b><span><strong>Next app</strong><small>Alt+Tab / Cmd+Tab</small></span></div>
+          <div><b>←</b><span><strong>Previous app</strong><small>Alt+Shift+Tab / Cmd+Shift+Tab</small></span></div>
+          <div><b>↑</b><span><strong>Overview</strong><small>Task View / Mission Control</small></span></div>
           <div><b>↓</b><span><strong>Minimize</strong><small>Foreground window</small></span></div>
         </div>
       </section>
@@ -102,11 +103,11 @@
         <div class="section-copy">
           <p class="eyebrow">Files in either direction</p>
           <h2>Choose what moves.<br />Nothing else is shared.</h2>
-          <p>Open <strong>Files</strong> on Windows to queue downloads for the iPad. Open <strong>Files</strong> in the iPad toolbar to choose uploads or download those queued items.</p>
+          <p>Open <strong>Files</strong> on the host to queue downloads for the iPad. Open <strong>Files</strong> in the iPad toolbar to choose uploads or download those queued items.</p>
         </div>
         <div class="fix-list">
-          <details open><summary>Send to Windows</summary><p>Choose one or more iPad files. Progress, cancel, and retry stay in the panel. Completed files appear in <strong>Downloads\NFiDB Inbox</strong> by default; <strong>Open received files folder</strong> on Windows opens the configured Inbox.</p></details>
-          <details><summary>Send to iPad</summary><p>Use <strong>Add files for iPad</strong> on Windows. The iPad shows a notice and Files badge when items arrive. Download one or use <strong>Download all</strong>; Safari may ask once to allow multiple downloads.</p></details>
+          <details open><summary>Send to the host</summary><p>Choose one or more iPad files. Progress, cancel, and retry stay in the panel. Completed files appear in <strong>Downloads/NFiDB Inbox</strong> by default; <strong>Open received files folder</strong> opens the configured Inbox.</p></details>
+          <details><summary>Send to iPad</summary><p>Use <strong>Add files for iPad</strong> on the host. The iPad shows a notice and Files badge when items arrive. Download one or use <strong>Download all</strong>; Safari may ask once to allow multiple downloads.</p></details>
           <details><summary>Automatic queue cleanup</summary><p><strong>Clear each queue item after download</strong> is on by default and remembers your choice. An item clears only after its complete stream is delivered, so partial or interrupted downloads remain available.</p></details>
           <details><summary>Safety and drawing</summary><p>Only explicit files are exposed. Duplicate uploads do not overwrite. Transfers are rate-limited and pause by default while Pencil or touch is down.</p></details>
         </div>
@@ -121,8 +122,8 @@
           <div><strong>Fit</strong><span>Shows the complete monitor with letterboxing when needed.</span></div>
           <div><strong>Fill</strong><span>Fills the iPad screen and crops the monitor edges.</span></div>
           <div><strong>1:1</strong><span>Centers the encoded video at its native pixel size.</span></div>
-          <div><strong>Touch</strong><span>Changes the real Windows injector setting and forwards finger contact as native Windows touch. This pauses three-finger gestures.</span></div>
-          <div><strong>Gestures</strong><span>Enables or disables the three-finger Windows commands.</span></div>
+          <div><strong>Touch</strong><span>Forwards native touch on Windows or uses the first finger as the Mac pointer. This pauses three-finger commands.</span></div>
+          <div><strong>Gestures</strong><span>Enables or disables the host-specific three-finger commands.</span></div>
           <div><strong>Keyboard</strong><span>Opens text entry plus Esc, Tab, Backspace, Enter, app, Task View, and minimize buttons.</span></div>
           <div><strong>Video</strong><span>Chooses Auto or a verified codec, edits Fast/Balanced/Sharp, and runs a quick end-to-end Auto test.</span></div>
           <div><strong>Files</strong><span>Opens upload/download queues, progress, cancellation, checksums, and recent transfer results.</span></div>
@@ -139,11 +140,12 @@
           <p>NFiDB does not use a cloud relay. Both devices must be able to reach each other on the same trusted LAN.</p>
         </div>
         <div class="fix-list">
-          <details open><summary>No page or connection</summary><p>Use a normal private Wi-Fi network, not guest Wi-Fi. Allow NFiDB through Windows Firewall on Private networks only.</p></details>
-          <details><summary>Expired PIN or stale QR error</summary><p>Open <strong>Session</strong> on Windows and choose <strong>Reset PIN + QR</strong>, then reload Safari and use the new code.</p></details>
+          <details open><summary>No page or connection</summary><p>Use a normal private Wi-Fi network, not guest Wi-Fi. On Windows, allow NFiDB through Firewall on Private networks only.</p></details>
+          <details><summary>Mac has no picture or input</summary><p>Enable NFiDB in macOS <strong>Privacy & Security</strong> under <strong>Screen & System Audio Recording</strong> and <strong>Accessibility</strong>, then quit and reopen it.</p></details>
+          <details><summary>Expired PIN or stale QR error</summary><p>Open <strong>Session</strong> on the host and choose <strong>Reset PIN + QR</strong>, then reload Safari and use the new code.</p></details>
           <details><summary>Connected but no picture</summary><p>NFiDB now requests fresh video keyframes until Safari presents a frame. Give it a few seconds; if it still does not appear, reload the page and pair again.</p></details>
-          <details><summary>No pressure in a drawing app</summary><p>Enable the app's Windows Ink/pointer input option. Run <code>pointer-sink.exe --self-test</code> to verify the native pen path independently.</p></details>
-          <details><summary>Need measurements</summary><p>Open <strong>Stats</strong> on the iPad or <strong>Diagnostics</strong> on Windows. Reports stay local unless you export them.</p></details>
+          <details><summary>No pressure in a drawing app</summary><p>On Windows, enable the app's Windows Ink/pointer option and run <code>pointer-sink.exe --self-test</code>. On Mac, confirm Accessibility is enabled; Quartz pressure support still needs per-app alpha feedback.</p></details>
+          <details><summary>Need measurements</summary><p>Open <strong>Stats</strong> on the iPad or <strong>Diagnostics</strong> on the host. Reports stay local unless you export them.</p></details>
           <details><summary>A file transfer stopped</summary><p>Keep Safari in the foreground for uploads, then choose Retry. Safari downloads continue in its native download manager. Pairing reset intentionally cancels unfinished transfers.</p></details>
         </div>
       </section>
@@ -151,7 +153,7 @@
       <section class="help-cta">
         <p class="eyebrow">Trusted LAN only · no account · no cloud relay</p>
         <h2>Ready to draw?</h2>
-        <div class="actions"><a class="primary" href="download.html">Download v0.7.0 Alpha</a><a class="secondary" href="https://github.com/mlo0352/nfidb/blob/main/docs/TEST_MATRIX.md">Read the test matrix</a></div>
+        <div class="actions"><a class="primary" href="download.html">Download v0.8.0 Alpha</a><a class="secondary" href="https://github.com/mlo0352/nfidb/blob/main/docs/TEST_MATRIX.md">Read the test matrix</a></div>
       </section>
     </main>
 

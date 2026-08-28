@@ -2,6 +2,28 @@
 
 NFiDB is pre-release software. Releases remain GitHub prereleases until the physical drawing-app/multi-codec matrix, longer stability run, and broader hardware coverage are complete.
 
+## 0.8.0 — 2026-08-28 — Alpha
+
+### Native macOS host
+
+- Added an Apple-silicon macOS application using ScreenCaptureKit, IOSurface-backed newest-frame capture, VideoToolbox H.264/HEVC hardware encoding, and the existing OpenH264 compatibility path.
+- Added runtime VideoToolbox enumeration and functional session probes. NFiDB verifies `UsingHardwareAcceleratedVideoEncoder` before claiming a hardware path; the tested M1 Pro exposes Apple H.264 and HEVC hardware and no AV1 encoder.
+- Configured real-time compression, disabled frame reordering, bounded delayed frames, prioritized encoding speed where supported, preserved periodic parameter-set/keyframe recovery, and kept all capture/encoder queues bounded.
+- Added Quartz Pencil/tablet, mouse, wheel, keyboard, Unicode text, Command+Tab, Mission Control, and minimize injection behind macOS Accessibility permission. Touch-on uses the first finger as the Mac pointer because macOS has no public general-purpose synthetic multitouch API.
+- Added Screen Recording permission fallback so the app UI, input-only mode, and generated diagnostics can start before capture permission is granted.
+- Added macOS-specific host and iPad labels, keyboard shortcuts, permission guidance, application icon, `.app` packaging, ad-hoc signing, checksum generation, CI, and GitHub prerelease artifacts.
+
+### macOS evidence
+
+- Native macOS crate: 10/10 tests pass on an M1 Pro running macOS 27.0 beta; the full cross-platform application links and headless test-pattern/server smoke passes.
+- Corrected the Mac benchmark clock so deterministic source generation is excluded from encoder/preprocessor throughput and bitrate follows the media timeline rather than test-run wall time.
+- Optimized Quick 1080p drawing results: H.264 hardware 101.58 fps capacity / 8.42 ms encode p95; HEVC hardware 93.08 fps / 9.37 ms; OpenH264 60.26 fps / 15.14 ms encode p95. Hardware used about 47 MiB peak RAM and 26–27% of one core during the measured pipeline; OpenH264 used 83 MiB and one full core. These are host-only measurements, not iPad presentation results.
+- Added an arm64 app-bundle build that verifies its signature and runs from a downloaded-style ZIP without depending on an Xcode-only Swift runtime path.
+
+### Still required before stable
+
+- Physical Mac Screen Recording and Accessibility approval, real monitor capture, iPad Safari presentation, pressure-sensitive drawing-app behavior, and longer stability remain explicit field tests. No unperformed iPad or app result is claimed.
+
 ## 0.7.0 — 2026-08-22 — Alpha
 
 ### GPU video path

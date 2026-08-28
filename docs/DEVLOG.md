@@ -1,5 +1,23 @@
 # Engineering devlog
 
+## 2026-08-28 — Native macOS host
+
+### Goal
+
+Deliver the same no-install iPad pen-display, mouse, keyboard, gesture, file, diagnostic, and capability-aware video workflow against an Apple-silicon Mac.
+
+### Implementation
+
+Added a native ScreenCaptureKit capture source with a one-frame newest-wins slot, IOSurface-backed VideoToolbox H.264/HEVC compression, real hardware-property verification, OpenH264 fallback, and host-specific codec discovery. Added Quartz tablet/mouse/wheel/keyboard/text injection, Command+Tab, Mission Control, minimize, first-finger pointer control, host-aware browser labels, permission guidance, arm64 app packaging, ad-hoc signing, CI, and release assets. Screen Recording denial now leaves the UI and input-only mode usable instead of aborting startup.
+
+### Evidence
+
+**PASS ON THE M1 PRO HOST; PHYSICAL IPAD FIELD PASS PENDING.** Ten native host tests pass, the packaged application signature and runtime verify, and a generated-source LAN server smoke encoded 195 hardware H.264 frames without a stale-frame drop. In an optimized 1080p drawing workload, H.264 and HEVC sustained 101.58 and 93.08 fps of host pipeline capacity with 8.42 and 9.37 ms encode p95; OpenH264 sustained 60.26 fps with 15.14 ms p95 and materially higher CPU/RAM. VideoToolbox exposed hardware H.264 and HEVC but no AV1 encoder on the tested M1 Pro.
+
+### Decision
+
+Release as v0.8.0 alpha only after the exact packaged app receives macOS Screen Recording and Accessibility approval and a physical iPad verifies real-monitor presentation and input. Do not claim synthetic multitouch on macOS: the public Quartz path supports tablet and pointer events, so Touch-on deliberately maps the first finger to the Mac pointer.
+
 ## 2026-08-19 — Capability-aware hardware video and measured Auto
 
 ### Goal

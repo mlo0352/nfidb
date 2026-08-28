@@ -8,30 +8,26 @@ use std::time::{Duration, Instant};
 use apple_cf::cv::CVPixelBuffer;
 use apple_cf::iosurface::{IOSurface, IOSurfaceLockOptions};
 use nfidb_core::{
-    AppConfig, AutoBenchmarkObservation, BrowserVideoCapabilities, EncodedVideoFrame,
-    EncoderBackend, EncoderCapability, EncoderMode, KeyframeRequest, Metrics,
-    PipelineMemoryMode, VideoCodec, VideoConfig, VideoRuntimeStatus, VideoSettingsRuntime,
-    score_auto_candidate,
+    AppConfig, AutoBenchmarkObservation, BrowserVideoCapabilities, EncodedVideoFrame, EncoderBackend,
+    EncoderCapability, EncoderMode, KeyframeRequest, Metrics, PipelineMemoryMode, VideoCodec, VideoConfig,
+    VideoRuntimeStatus, VideoSettingsRuntime, score_auto_candidate,
 };
 use openh264::OpenH264API;
 use openh264::encoder::{
-    BitRate, Complexity, Encoder, EncoderConfig, FrameRate, FrameType, IntraFramePeriod, Level,
-    Profile, RateControlMode, UsageType, VuiConfig,
+    BitRate, Complexity, Encoder, EncoderConfig, FrameRate, FrameType, IntraFramePeriod, Level, Profile,
+    RateControlMode, UsageType, VuiConfig,
 };
 use openh264::formats::{BgraSliceU8, YUVBuffer};
 use parking_lot::{Condvar, Mutex};
-use screencapturekit::cm::{CMSampleBufferExt, CMSampleBufferSCExt, SCFrameStatus};
+use screencapturekit::cm::{CMSampleBuffer, CMSampleBufferExt, CMSampleBufferSCExt, SCFrameStatus};
 use screencapturekit::prelude::{
-    PixelFormat, SCContentFilter, SCShareableContent, SCStream, SCStreamConfiguration,
-    SCStreamOutputType,
+    PixelFormat, SCContentFilter, SCShareableContent, SCStream, SCStreamConfiguration, SCStreamOutputType,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
 use crate::hardware::functional_probe;
-use crate::videotoolbox_encoder::{
-    EncodedSurface, VideoToolboxEncoder, VideoToolboxEncoderConfig,
-};
+use crate::videotoolbox_encoder::{EncodedSurface, VideoToolboxEncoder, VideoToolboxEncoderConfig};
 
 #[derive(Debug, Clone)]
 pub struct CaptureStatus {
@@ -136,17 +132,12 @@ impl CaptureManager {
         capabilities: Vec<EncoderCapability>,
     ) -> Self {
         let learned = load_learned();
-        let (active_mode, reason, encoder_name) = select_encoder(
-            &video,
-            &BrowserVideoCapabilities::default(),
-            &capabilities,
-            &learned,
-        )
-        .unwrap_or((
-            EncoderMode::H264Software,
-            "VideoToolbox discovery produced no functional hardware path; using compatibility fallback".to_owned(),
-            "OpenH264 software encoder".to_owned(),
-        ));
+        let (active_mode, reason, encoder_name) =
+            select_encoder(&video, &BrowserVideoCapabilities::default(), &capabilities, &learned).unwrap_or((
+                EncoderMode::H264Software,
+                "VideoToolbox discovery produced no functional hardware path; using compatibility fallback".to_owned(),
+                "OpenH264 software encoder".to_owned(),
+            ));
         let preset = video.active_preset();
         let codec = active_mode.codec().unwrap_or(VideoCodec::H264);
         Self {
@@ -190,7 +181,14 @@ impl CaptureManager {
 
     pub fn start_monitor(&self, index: usize) -> Result<(), String> {
         self.stop();
-        let content = SCShareableContent::get().map_err(|error| permission_error(&error.to_string()))?;
+        let content = match SCShareableContent::get() {
+            Ok(content) => content,
+            Err(error) => {
+                let message = permission_error(&error.to_string());
+                self.status.lock().error = Some(message.clone());
+                return Err(message);
+            }
+        };
         let display = content
             .displays()
             .into_iter()
@@ -221,11 +219,14 @@ impl CaptureManager {
         let status = Arc::clone(&self.status);
         let mut stream = SCStream::new(&filter, &config);
         let handler = stream.add_output_handler(
-            move |sample, output_type| {
+            move |sample: CMSampleBuffer, output_type: SCStreamOutputType| {
                 if output_type != SCStreamOutputType::Screen {
                     return;
                 }
-                if sample.frame_status().is_some_and(|frame_status| frame_status != SCFrameStatus::Complete) {
+                if sample
+                    .frame_status()
+                    .is_some_and(|frame_status| frame_status != SCFrameStatus::Complete)
+                {
                     return;
                 }
                 let Some(buffer) = sample.image_buffer() else {
@@ -422,7 +423,10 @@ impl VideoSettingsRuntime for CaptureManager {
         if browser.user_agent.is_empty() || observation.receiver_runtime != browser.user_agent {
             return Err("benchmark receiver identity does not match the paired browser".to_owned());
         }
-        let codec = observation.mode.codec().ok_or_else(|| "benchmark mode has no codec".to_owned())?;
+        let codec = observation
+            .mode
+            .codec()
+            .ok_or_else(|| "benchmark mode has no codec".to_owned())?;
         if !browser.get(codec).presented || !observation.end_to_end_verified {
             return Err("an end-to-end benchmark requires verified decoded presentation".to_owned());
         }
@@ -493,8 +497,8 @@ impl ActiveEncoder {
                 .background_detection(false)
                 .intra_frame_period(IntraFramePeriod::from_num_frames(0))
                 .vui(VuiConfig::srgb());
-            let encoder = Encoder::with_api_config(OpenH264API::from_source(), config)
-                .map_err(|error| error.to_string())?;
+            let encoder =
+                Encoder::with_api_config(OpenH264API::from_source(), config).map_err(|error| error.to_string())?;
             Ok(Self::Software(encoder))
         } else {
             Ok(Self::Hardware(VideoToolboxEncoder::new(VideoToolboxEncoderConfig {
@@ -582,7 +586,12 @@ fn encode_loop(
             Ok(Some(packet)) => {
                 let elapsed = started.elapsed();
                 metrics.preprocessed(0);
-                metrics.encoded(packet.data.len(), elapsed.as_micros() as u64, dimensions.0, dimensions.1);
+                metrics.encoded(
+                    packet.data.len(),
+                    elapsed.as_micros() as u64,
+                    dimensions.0,
+                    dimensions.1,
+                );
                 if packet.keyframe {
                     metrics.encoded_keyframe();
                     last_keyframe_at = Instant::now();
@@ -637,9 +646,11 @@ pub(crate) fn bgra_iosurface(width: u32, height: u32, bytes: &[u8]) -> Result<IO
         .ok_or_else(|| "IOSurfaceCreate failed for generated test frame".to_owned())?;
     {
         let mut guard = surface
-            .lock(IOSurfaceLockOptions::empty())
+            .lock(IOSurfaceLockOptions::NONE)
             .map_err(|status| format!("IOSurfaceLock failed: {status}"))?;
-        let destination = guard.as_mut_slice();
+        let destination = guard
+            .as_slice_mut()
+            .ok_or_else(|| "IOSurface read-write lock did not expose writable memory".to_owned())?;
         let row_bytes = width as usize * 4;
         let stride = surface.bytes_per_row();
         for row in 0..height as usize {
@@ -680,7 +691,9 @@ fn render_test_pattern(width: u32, height: u32, frame: u32) -> Vec<u8> {
             let offset = (y as usize * width as usize + x as usize) * 4;
             let grid = if x % 64 == 0 || y % 64 == 0 { 40 } else { 0 };
             let stroke = (x.abs_diff(moving_x) < 5).then_some(210).unwrap_or(0);
-            bytes[offset] = ((x * 160 / width.max(1)) as u8).saturating_add(grid).saturating_add(stroke);
+            bytes[offset] = ((x * 160 / width.max(1)) as u8)
+                .saturating_add(grid)
+                .saturating_add(stroke);
             bytes[offset + 1] = ((y * 150 / height.max(1)) as u8).saturating_add(grid);
             bytes[offset + 2] = 28_u8.saturating_add(grid);
             bytes[offset + 3] = 255;
@@ -690,17 +703,29 @@ fn render_test_pattern(width: u32, height: u32, frame: u32) -> Vec<u8> {
 }
 
 fn preflight_encoder(settings: &VideoConfig, mode: EncoderMode) -> Result<(), String> {
-    let codec = mode.codec().ok_or_else(|| "Auto is not a concrete encoder".to_owned())?;
+    let codec = mode
+        .codec()
+        .ok_or_else(|| "Auto is not a concrete encoder".to_owned())?;
     let preset = settings.active_preset();
     if mode == EncoderMode::H264Software {
         ActiveEncoder::new(
-            &PipelineSelection { generation: 0, video: settings.clone(), active_mode: mode },
+            &PipelineSelection {
+                generation: 0,
+                video: settings.clone(),
+                active_mode: mode,
+            },
             preset.max_width.min(1920),
             1080,
         )
         .map(|_| ())
     } else {
-        functional_probe(codec, preset.max_width.min(1920), 1080, preset.max_fps, preset.bitrate_bps(codec))
+        functional_probe(
+            codec,
+            preset.max_width.min(1920),
+            1080,
+            preset.max_fps,
+            preset.bitrate_bps(codec),
+        )
     }
 }
 
@@ -710,11 +735,18 @@ fn select_encoder(
     capabilities: &[EncoderCapability],
     learned: &[AutoBenchmarkObservation],
 ) -> Result<(EncoderMode, String, String), String> {
-    let functional = |mode| capabilities.iter().find(|item| item.mode() == mode && item.state.is_usable());
+    let functional = |mode| {
+        capabilities
+            .iter()
+            .find(|item| item.mode() == mode && item.state.is_usable())
+    };
     if settings.encoder != EncoderMode::Auto {
         let codec = settings.encoder.codec().expect("manual mode has codec");
         if !browser.user_agent.is_empty() && !browser.get(codec).reported {
-            return Err(format!("the paired browser did not report {} receive support", codec.label()));
+            return Err(format!(
+                "the paired browser did not report {} receive support",
+                codec.label()
+            ));
         }
         let selected = functional(settings.encoder).ok_or_else(|| {
             capabilities
@@ -723,24 +755,54 @@ fn select_encoder(
                 .and_then(|item| item.failure_reason.clone())
                 .unwrap_or_else(|| format!("{} is unavailable on this Mac", settings.encoder.label()))
         })?;
-        return Ok((settings.encoder, "The encoder was selected manually and is mutually supported".to_owned(), selected.encoder_name.clone()));
+        return Ok((
+            settings.encoder,
+            "The encoder was selected manually and is mutually supported".to_owned(),
+            selected.encoder_name.clone(),
+        ));
     }
-    let measured = (!browser.user_agent.is_empty()).then(|| {
-        capabilities
-            .iter()
-            .filter(|item| item.state.is_usable() && browser.get(item.codec).reported)
-            .filter_map(|item| learned.iter().filter(|result| {
-                result.nfidb_version == env!("CARGO_PKG_VERSION")
-                    && result.receiver_runtime == browser.user_agent
-                    && result.encoder_id == item.id
-                    && result.profile == settings.profile
-                    && result.end_to_end_verified
-                    && result.score.passed_gates
-            }).max_by(|left, right| left.score.score.unwrap_or_default().total_cmp(&right.score.score.unwrap_or_default())).map(|result| (item, result)))
-            .max_by(|(_, left), (_, right)| left.score.score.unwrap_or_default().total_cmp(&right.score.score.unwrap_or_default()))
-    }).flatten();
+    let measured = (!browser.user_agent.is_empty())
+        .then(|| {
+            capabilities
+                .iter()
+                .filter(|item| item.state.is_usable() && browser.get(item.codec).reported)
+                .filter_map(|item| {
+                    learned
+                        .iter()
+                        .filter(|result| {
+                            result.nfidb_version == env!("CARGO_PKG_VERSION")
+                                && result.receiver_runtime == browser.user_agent
+                                && result.encoder_id == item.id
+                                && result.profile == settings.profile
+                                && result.end_to_end_verified
+                                && result.score.passed_gates
+                        })
+                        .max_by(|left, right| {
+                            left.score
+                                .score
+                                .unwrap_or_default()
+                                .total_cmp(&right.score.score.unwrap_or_default())
+                        })
+                        .map(|result| (item, result))
+                })
+                .max_by(|(_, left), (_, right)| {
+                    left.score
+                        .score
+                        .unwrap_or_default()
+                        .total_cmp(&right.score.score.unwrap_or_default())
+                })
+        })
+        .flatten();
     if let Some((selected, result)) = measured {
-        return Ok((selected.mode(), format!("{} won the verified end-to-end Auto benchmark with score {:.1}", selected.mode().label(), result.score.score.unwrap_or_default()), selected.encoder_name.clone()));
+        return Ok((
+            selected.mode(),
+            format!(
+                "{} won the verified end-to-end Auto benchmark with score {:.1}",
+                selected.mode().label(),
+                result.score.score.unwrap_or_default()
+            ),
+            selected.encoder_name.clone(),
+        ));
     }
     let selected = if browser.hevc.reported {
         functional(EncoderMode::HevcHardware)
@@ -748,7 +810,8 @@ fn select_encoder(
             .or_else(|| functional(EncoderMode::H264Software))
     } else {
         functional(EncoderMode::H264Hardware).or_else(|| functional(EncoderMode::H264Software))
-    }.ok_or_else(|| "no functional video encoder is available".to_owned())?;
+    }
+    .ok_or_else(|| "no functional video encoder is available".to_owned())?;
     let reason = if selected.mode() == EncoderMode::HevcHardware {
         "VideoToolbox HEVC is functional and the receiver reports HEVC; Auto will verify presentation before learning it".to_owned()
     } else if selected.mode() == EncoderMode::H264Hardware {
@@ -759,7 +822,7 @@ fn select_encoder(
     Ok((selected.mode(), reason, selected.encoder_name.clone()))
 }
 
-const fn backend_for_mode(mode: EncoderMode) -> EncoderBackend {
+fn backend_for_mode(mode: EncoderMode) -> EncoderBackend {
     if mode == EncoderMode::H264Software {
         EncoderBackend::OpenH264Software
     } else {
@@ -767,7 +830,7 @@ const fn backend_for_mode(mode: EncoderMode) -> EncoderBackend {
     }
 }
 
-const fn memory_mode_for_mode(mode: EncoderMode) -> PipelineMemoryMode {
+fn memory_mode_for_mode(mode: EncoderMode) -> PipelineMemoryMode {
     if mode == EncoderMode::H264Software {
         PipelineMemoryMode::CpuPreprocessing
     } else {
@@ -787,7 +850,9 @@ fn output_dimensions(source_width: u32, source_height: u32, max_width: u32) -> (
 }
 
 fn permission_error(error: &str) -> String {
-    format!("{error}. Allow NFiDB in System Settings > Privacy & Security > Screen & System Audio Recording, then try again.")
+    format!(
+        "{error}. Allow NFiDB in System Settings > Privacy & Security > Screen & System Audio Recording, then try again."
+    )
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -797,7 +862,9 @@ struct LearnedFile {
 }
 
 fn learned_path() -> Option<PathBuf> {
-    AppConfig::path().ok().and_then(|path| path.parent().map(|parent| parent.join("codec-benchmarks.json")))
+    AppConfig::path()
+        .ok()
+        .and_then(|path| path.parent().map(|parent| parent.join("codec-benchmarks.json")))
 }
 
 fn load_learned() -> Vec<AutoBenchmarkObservation> {
@@ -813,8 +880,11 @@ fn save_learned(results: &[AutoBenchmarkObservation]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    let bytes = serde_json::to_vec_pretty(&LearnedFile { schema_version: 1, results: results.to_vec() })
-        .map_err(|error| error.to_string())?;
+    let bytes = serde_json::to_vec_pretty(&LearnedFile {
+        schema_version: 1,
+        results: results.to_vec(),
+    })
+    .map_err(|error| error.to_string())?;
     fs::write(path, bytes).map_err(|error| error.to_string())
 }
 
@@ -834,8 +904,22 @@ mod tests {
     fn latest_frame_replaces_stale_work() {
         let slot = LatestFrame::default();
         let metrics = Metrics::default();
-        slot.submit(CapturedFrame::Bgra { width: 2, height: 2, bytes: vec![0; 16] }, &metrics);
-        slot.submit(CapturedFrame::Bgra { width: 4, height: 2, bytes: vec![0; 32] }, &metrics);
+        slot.submit(
+            CapturedFrame::Bgra {
+                width: 2,
+                height: 2,
+                bytes: vec![0; 16],
+            },
+            &metrics,
+        );
+        slot.submit(
+            CapturedFrame::Bgra {
+                width: 4,
+                height: 2,
+                bytes: vec![0; 32],
+            },
+            &metrics,
+        );
         assert_eq!(slot.take().unwrap().dimensions(), (4, 2));
     }
 }

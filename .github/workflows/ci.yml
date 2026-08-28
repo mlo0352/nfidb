@@ -64,3 +64,51 @@ jobs:
           path: |
             target/release/nfidb.exe
             target/release/pointer-sink.exe
+
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/ipad-web/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install and validate browser client
+        run: |
+          npm --prefix apps/ipad-web ci
+          npm --prefix apps/ipad-web run typecheck
+          npm --prefix apps/ipad-web test
+          npm --prefix apps/ipad-web run build
+      - name: Rust formatting
+        run: cargo fmt --all -- --check
+      - name: macOS Rust check
+        run: cargo check --locked -p nfidb-host-macos -p nfidb-core -p nfidb-protocol -p nfidb-transport -p nfidb
+      - name: macOS Clippy
+        run: cargo clippy --locked -p nfidb-host-macos -p nfidb-core -p nfidb-protocol -p nfidb-transport -p nfidb -- -D warnings
+      - name: macOS tests
+        run: cargo test --locked -p nfidb-host-macos -p nfidb-core -p nfidb-protocol -p nfidb-transport
+      - name: Build macOS application bundle
+        run: ./scripts/build-macos.sh --skip-tests --skip-web
+      - name: Verify macOS package
+        run: |
+          test -s build/packages/NFiDB-macos-arm64.zip
+          test -s build/packages/NFiDB-macos-arm64.zip.sha256
+          verify_dir="$(mktemp -d)"
+          ditto -x -k build/packages/NFiDB-macos-arm64.zip "$verify_dir"
+          codesign --verify --deep --strict "$verify_dir/NFiDB.app"
+          "$verify_dir/NFiDB.app/Contents/MacOS/nfidb" --version
+          rm -rf "$verify_dir"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: NFiDB-macos-arm64-ci
+          if-no-files-found: error
+          path: |
+            build/packages/NFiDB-macos-arm64.zip
+            build/packages/NFiDB-macos-arm64.zip.sha256

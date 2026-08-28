@@ -197,7 +197,7 @@ pub fn compatibility_matrix(host: &[EncoderCapability], browser: &BrowserVideoCa
                 format!("browser reports {}, pending an end-to-end playback test", codec.label())
             }
             ModeAvailability::Unavailable if !host_detected => {
-                format!("no {} encoder candidate was detected on this PC", mode.label())
+                format!("no {} encoder candidate was detected on this host", mode.label())
             }
             ModeAvailability::Unavailable if !host_functional => candidates
                 .iter()
