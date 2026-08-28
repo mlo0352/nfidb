@@ -502,6 +502,7 @@ fn is_overlay_or_virtual_interface(name: &str) -> bool {
         "hyper-v",
         "vmnet",
         "vbox",
+        "feth",
         "docker",
         "bridge",
         "loopback",
@@ -1322,7 +1323,8 @@ mod tests {
     #[test]
     fn macos_physical_lan_beats_overlay_interfaces() {
         let selected = select_best_local_ipv4(vec![
-            ("utun4".to_owned(), Ipv4Addr::new(10, 207, 7, 167)),
+            ("feth204".to_owned(), Ipv4Addr::new(10, 207, 7, 167)),
+            ("utun4".to_owned(), Ipv4Addr::new(100, 119, 178, 41)),
             ("en0".to_owned(), Ipv4Addr::new(192, 168, 1, 209)),
         ]);
         assert_eq!(selected, Some(Ipv4Addr::new(192, 168, 1, 209)));
