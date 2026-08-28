@@ -646,7 +646,7 @@ impl eframe::App for HostApp {
         egui::Panel::top("top_bar")
             .frame(
                 egui::Frame::NONE
-                    .fill(egui::Color32::from_rgb(9, 12, 13))
+                    .fill(egui::Color32::from_rgb(5, 7, 8))
                     .inner_margin(egui::Margin::symmetric(26, 18)),
             )
             .show(ui, |ui| {
@@ -657,13 +657,13 @@ impl eframe::App for HostApp {
                     ui.add_space(12.0);
                     ui.label(
                         egui::RichText::new("NO FRILLS IPAD DRAWING BRIDGE")
-                            .size(10.0)
+                            .size(12.0)
                             .color(muted()),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(
                             egui::RichText::new("LOCAL NETWORK ONLY")
-                                .size(10.0)
+                                .size(11.0)
                                 .strong()
                                 .color(accent()),
                         );
@@ -672,11 +672,11 @@ impl eframe::App for HostApp {
             });
 
         egui::Panel::left("navigation")
-            .exact_size(210.0)
+            .exact_size(224.0)
             .frame(
                 egui::Frame::NONE
                     .fill(egui::Color32::from_rgb(12, 16, 17))
-                    .inner_margin(egui::Margin::same(20)),
+                    .inner_margin(egui::Margin::same(18)),
             )
             .show(ui, |ui| {
                 ui.add_space(10.0);
@@ -700,7 +700,7 @@ impl eframe::App for HostApp {
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                     ui.label(
                         egui::RichText::new("MIT OR APACHE-2.0\nNo account · No telemetry")
-                            .size(10.0)
+                            .size(12.0)
                             .color(muted()),
                     );
                 });
@@ -1127,67 +1127,82 @@ impl HostApp {
         );
         ui.add_space(18.0);
         card(ui, |ui| {
-            ui.heading(egui::RichText::new("Permission check").size(17.0));
-            permission_row(ui, "Screen & System Audio Recording", self.screen_recording_verified);
-            permission_row(
-                ui,
-                "Accessibility / control this Mac",
-                self.permission_status.accessibility,
-            );
+            ui.heading(egui::RichText::new("Mac permissions").size(20.0).strong());
             ui.label(
-                egui::RichText::new("macOS requires you to approve these switches. NFiDB cannot silently bypass them.")
-                    .size(10.0)
-                    .color(muted()),
+                egui::RichText::new(
+                    "Both permissions must show READY here. A switch left over from an older NFiDB build may still appear enabled in System Settings without granting access to this build.",
+                )
+                .size(13.0)
+                .color(muted()),
+            );
+            ui.add_space(14.0);
+            let screen_action = permission_control(
+                ui,
+                "Screen & System Audio Recording",
+                "Allows the iPad to receive the selected Mac display.",
+                self.screen_recording_verified,
             );
             ui.add_space(10.0);
-            ui.horizontal_wrapped(|ui| {
-                if ui.button("Request Screen Recording").clicked() {
-                    if platform_host::request_screen_recording_access() {
-                        let capture_was_running = self.capture.status().running;
-                        self.screen_recording_verified = true;
-                        self.restart_capture_after_screen_permission();
-                        if capture_was_running {
-                            self.last_message = Some("Screen Recording is enabled and capture is active".to_owned());
-                        }
-                    } else {
-                        self.last_message = Some(match platform_host::open_privacy_pane(
-                            platform_host::PrivacyPane::ScreenRecording,
-                        ) {
-                            Ok(()) => "Opened Screen Recording settings. Enable NFiDB, then restart if macOS asks.".to_owned(),
-                            Err(error) => error,
-                        });
-                    }
-                }
-                if ui.button("Request Accessibility").clicked() {
-                    if platform_host::request_accessibility_access() {
-                        self.last_message = Some("Accessibility is enabled".to_owned());
-                    } else {
-                        self.last_message = Some(match platform_host::open_privacy_pane(
-                            platform_host::PrivacyPane::Accessibility,
-                        ) {
-                            Ok(()) => "Opened Accessibility settings. Enable NFiDB; if it is absent, use + to add NFiDB.app.".to_owned(),
-                            Err(error) => error,
-                        });
-                    }
-                }
-            });
-            ui.horizontal_wrapped(|ui| {
-                if ui.button("Open Screen Recording Settings").clicked() {
+            let accessibility_action = permission_control(
+                ui,
+                "Accessibility",
+                "Allows Pencil, pointer, keyboard, and gesture control.",
+                self.permission_status.accessibility,
+            );
+            ui.add_space(14.0);
+            ui.label(
+                egui::RichText::new(
+                    "macOS always requires your approval. NFiDB opens the correct page and checks the result live.",
+                )
+                .size(13.0)
+                .color(muted()),
+            );
+
+            if screen_action {
+                if self.screen_recording_verified {
                     self.last_message = Some(open_privacy_message(platform_host::open_privacy_pane(
                         platform_host::PrivacyPane::ScreenRecording,
                     )));
+                } else if platform_host::request_screen_recording_access() {
+                    let capture_was_running = self.capture.status().running;
+                    self.screen_recording_verified = true;
+                    self.restart_capture_after_screen_permission();
+                    if capture_was_running {
+                        self.last_message = Some("Screen Recording is enabled and capture is active".to_owned());
+                    }
+                } else {
+                    self.last_message = Some(match platform_host::open_privacy_pane(
+                        platform_host::PrivacyPane::ScreenRecording,
+                    ) {
+                        Ok(()) => "Opened Screen Recording settings. If NFiDB is already on, turn it off and on again to replace a stale approval.".to_owned(),
+                        Err(error) => error,
+                    });
                 }
-                if ui.button("Open Accessibility Settings").clicked() {
+            }
+            if accessibility_action {
+                if self.permission_status.accessibility {
                     self.last_message = Some(open_privacy_message(platform_host::open_privacy_pane(
                         platform_host::PrivacyPane::Accessibility,
                     )));
+                } else if platform_host::request_accessibility_access() {
+                    self.last_message = Some("Accessibility is enabled".to_owned());
+                } else {
+                    self.last_message = Some(
+                        match platform_host::open_privacy_pane(platform_host::PrivacyPane::Accessibility) {
+                            Ok(()) => {
+                                "Opened Accessibility settings. Enable NFiDB; if it is absent, use + to add NFiDB.app."
+                                    .to_owned()
+                            }
+                            Err(error) => error,
+                        },
+                    );
                 }
-            });
+            }
             ui.label(
                 egui::RichText::new(
                     "If NFiDB is missing from Accessibility: click +, press Command-Shift-G, enter ~/Applications/NFiDB.app, then choose Open.",
                 )
-                .size(10.0)
+                .size(13.0)
                 .color(muted()),
             );
             if self.screen_recording_verified && self.permission_status.accessibility {
@@ -1635,8 +1650,8 @@ impl HostApp {
 
     fn input_settings_card(&mut self, ui: &mut egui::Ui) {
         card(ui, |ui| {
-            ui.label(egui::RichText::new("FORWARDING").size(9.0).strong().color(muted()));
-            ui.add_space(8.0);
+            ui.label(egui::RichText::new("FORWARDING").size(11.0).strong().color(accent()));
+            ui.add_space(10.0);
             let mut changed = false;
             changed |= ui
                 .checkbox(
@@ -1673,7 +1688,7 @@ impl HostApp {
                 } else {
                     "With touch forwarding off, three-finger swipes control Windows apps. Trackpad and keyboard forwarding remain independent of Pencil input."
                 })
-                    .size(10.0)
+                    .size(13.0)
                     .color(muted()),
             );
         });
@@ -1684,9 +1699,9 @@ impl HostApp {
         card(ui, |ui| {
             ui.label(
                 egui::RichText::new("LIVE INPUT EVIDENCE")
-                    .size(9.0)
+                    .size(11.0)
                     .strong()
-                    .color(muted()),
+                    .color(accent()),
             );
             ui.add_space(8.0);
             egui::Grid::new("input_diagnostics_grid")
@@ -2368,33 +2383,53 @@ impl HostApp {
 
 fn configure_visuals(context: &egui::Context) {
     let mut visuals = egui::Visuals::dark();
-    let primary_text = egui::Color32::from_rgb(240, 247, 244);
-    let secondary_text = egui::Color32::from_rgb(190, 204, 199);
+    let primary_text = egui::Color32::from_rgb(252, 254, 253);
+    let secondary_text = egui::Color32::from_rgb(226, 234, 231);
     visuals.override_text_color = Some(primary_text);
-    visuals.weak_text_alpha = 0.86;
+    visuals.weak_text_alpha = 1.0;
     visuals.weak_text_color = Some(secondary_text);
-    visuals.panel_fill = egui::Color32::from_rgb(15, 20, 21);
-    visuals.window_fill = egui::Color32::from_rgb(18, 24, 25);
-    visuals.faint_bg_color = egui::Color32::from_rgb(24, 31, 32);
-    visuals.extreme_bg_color = egui::Color32::from_rgb(7, 10, 11);
-    visuals.text_edit_bg_color = Some(egui::Color32::from_rgb(8, 13, 14));
-    visuals.code_bg_color = egui::Color32::from_rgb(25, 34, 35);
+    visuals.panel_fill = egui::Color32::from_rgb(10, 13, 14);
+    visuals.window_fill = egui::Color32::from_rgb(12, 16, 17);
+    visuals.faint_bg_color = egui::Color32::from_rgb(27, 35, 36);
+    visuals.extreme_bg_color = egui::Color32::from_rgb(3, 5, 6);
+    visuals.text_edit_bg_color = Some(egui::Color32::from_rgb(3, 6, 7));
+    visuals.code_bg_color = egui::Color32::from_rgb(22, 30, 31);
     visuals.hyperlink_color = accent();
     visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, primary_text);
-    visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(224, 234, 230));
+    visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(244, 249, 247));
     visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.5, egui::Color32::WHITE);
     visuals.widgets.active.fg_stroke = egui::Stroke::new(1.5, egui::Color32::WHITE);
     visuals.widgets.open.fg_stroke = egui::Stroke::new(1.5, egui::Color32::WHITE);
-    visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(30, 39, 40);
-    visuals.widgets.inactive.weak_bg_fill = egui::Color32::from_rgb(24, 31, 32);
-    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(78, 94, 91));
-    visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(38, 56, 52);
-    visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, accent());
+    visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(35, 45, 46);
+    visuals.widgets.inactive.weak_bg_fill = egui::Color32::from_rgb(29, 37, 38);
+    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(111, 130, 126));
+    visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(42, 64, 59);
+    visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.5, accent());
     visuals.widgets.active.bg_fill = egui::Color32::from_rgb(35, 83, 71);
     visuals.selection.bg_fill = egui::Color32::from_rgb(30, 95, 80);
     visuals.selection.stroke = egui::Stroke::new(1.0, accent());
     visuals.window_corner_radius = egui::CornerRadius::same(2);
     context.set_visuals(visuals);
+    context.all_styles_mut(|style| {
+        use egui::{FontFamily::Proportional, FontId, TextStyle};
+        style
+            .text_styles
+            .insert(TextStyle::Heading, FontId::new(24.0, Proportional));
+        style
+            .text_styles
+            .insert(TextStyle::Body, FontId::new(15.0, Proportional));
+        style
+            .text_styles
+            .insert(TextStyle::Button, FontId::new(14.0, Proportional));
+        style
+            .text_styles
+            .insert(TextStyle::Small, FontId::new(12.5, Proportional));
+        style
+            .text_styles
+            .insert(TextStyle::Monospace, FontId::new(13.0, egui::FontFamily::Monospace));
+        style.spacing.item_spacing = egui::vec2(10.0, 10.0);
+        style.spacing.button_padding = egui::vec2(12.0, 7.0);
+    });
 }
 
 fn draw_qr(ui: &mut egui::Ui, value: &str, size: f32) {
@@ -2423,21 +2458,21 @@ fn draw_qr(ui: &mut egui::Ui, value: &str, size: f32) {
 }
 
 fn nav_button(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
-    let color = if active { accent() } else { muted() };
+    let color = if active { accent() } else { egui::Color32::WHITE };
     ui.add_sized(
-        [170.0, 38.0],
-        egui::Button::new(egui::RichText::new(label).size(10.0).strong().color(color))
+        [188.0, 44.0],
+        egui::Button::new(egui::RichText::new(label).size(12.5).strong().color(color))
             .fill(if active {
-                egui::Color32::from_rgb(20, 40, 36)
+                egui::Color32::from_rgb(19, 49, 42)
             } else {
-                egui::Color32::TRANSPARENT
+                egui::Color32::from_rgb(20, 27, 28)
             })
             .stroke(egui::Stroke::new(
-                1.0,
+                1.5,
                 if active {
-                    egui::Color32::from_rgb(48, 103, 90)
+                    egui::Color32::from_rgb(78, 183, 159)
                 } else {
-                    egui::Color32::TRANSPARENT
+                    egui::Color32::from_rgb(65, 79, 77)
                 },
             )),
     )
@@ -2450,23 +2485,63 @@ fn page_heading(ui: &mut egui::Ui, title: &str, subtitle: &str) {
 
 fn card(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::NONE
-        .fill(egui::Color32::from_rgb(19, 24, 25))
-        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(43, 54, 55)))
+        .fill(egui::Color32::from_rgb(16, 21, 22))
+        .stroke(egui::Stroke::new(1.5, egui::Color32::from_rgb(80, 96, 94)))
         .inner_margin(egui::Margin::same(18))
         .show(ui, contents);
 }
 
 #[cfg(target_os = "macos")]
-fn permission_row(ui: &mut egui::Ui, label: &str, granted: bool) {
-    ui.horizontal(|ui| {
-        let (state, color) = if granted {
-            ("ENABLED", accent())
-        } else {
-            ("ACTION NEEDED", egui::Color32::from_rgb(230, 184, 105))
-        };
-        ui.label(egui::RichText::new(state).size(9.0).strong().color(color));
-        ui.label(label);
-    });
+fn permission_control(ui: &mut egui::Ui, title: &str, description: &str, granted: bool) -> bool {
+    let mut clicked = false;
+    let (state, state_color, border, action) = if granted {
+        (
+            "READY",
+            egui::Color32::from_rgb(125, 255, 220),
+            egui::Color32::from_rgb(66, 161, 140),
+            "VIEW SETTINGS",
+        )
+    } else {
+        (
+            "ACCESS NOT ACTIVE",
+            egui::Color32::from_rgb(255, 213, 139),
+            egui::Color32::from_rgb(190, 137, 61),
+            "REPAIR ACCESS",
+        )
+    };
+    egui::Frame::NONE
+        .fill(egui::Color32::from_rgb(7, 11, 12))
+        .stroke(egui::Stroke::new(1.5, border))
+        .inner_margin(egui::Margin::symmetric(16, 14))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(egui::RichText::new(state).size(11.0).strong().color(state_color));
+                    ui.label(
+                        egui::RichText::new(title)
+                            .size(16.0)
+                            .strong()
+                            .color(egui::Color32::WHITE),
+                    );
+                    ui.label(egui::RichText::new(description).size(13.0).color(muted()));
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    clicked = ui
+                        .add_sized(
+                            [154.0, 40.0],
+                            egui::Button::new(egui::RichText::new(action).size(11.5).strong())
+                                .fill(if granted {
+                                    egui::Color32::from_rgb(28, 43, 41)
+                                } else {
+                                    egui::Color32::from_rgb(91, 60, 21)
+                                })
+                                .stroke(egui::Stroke::new(1.5, border)),
+                        )
+                        .clicked();
+                });
+            });
+        });
+    clicked
 }
 
 #[cfg(target_os = "macos")]
@@ -2479,18 +2554,14 @@ fn open_privacy_message(result: Result<(), String>) -> String {
 
 fn status_metric(ui: &mut egui::Ui, label: &str, value: &str) {
     ui.vertical(|ui| {
-        ui.label(egui::RichText::new(label).size(8.0).strong().color(accent()));
-        ui.label(
-            egui::RichText::new(value)
-                .size(11.0)
-                .color(egui::Color32::from_rgb(220, 227, 225)),
-        );
+        ui.label(egui::RichText::new(label).size(10.0).strong().color(accent()));
+        ui.label(egui::RichText::new(value).size(13.0).color(egui::Color32::WHITE));
     });
 }
 
 fn diagnostic_row(ui: &mut egui::Ui, label: &str, value: &str) {
-    ui.label(egui::RichText::new(label).size(10.0).color(muted()));
-    ui.label(egui::RichText::new(value).size(10.0).monospace());
+    ui.label(egui::RichText::new(label).size(12.0).color(muted()));
+    ui.label(egui::RichText::new(value).size(12.0).monospace());
     ui.end_row();
 }
 
@@ -2581,5 +2652,5 @@ const fn accent() -> egui::Color32 {
 }
 
 const fn muted() -> egui::Color32 {
-    egui::Color32::from_rgb(188, 202, 198)
+    egui::Color32::from_rgb(226, 234, 231)
 }
