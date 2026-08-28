@@ -50,6 +50,8 @@ The corrected Quick run below used an optimized executable and 180 deterministic
 
 The deterministic benchmark copies its generated BGRA source into an IOSurface, hence `gpu-assisted`; live ScreenCaptureKit frames already arrive IOSurface-backed and do not make that CPU upload. The synthetic sequence does not hold every encoder at its target bitrate, so the Media Mbps column is observed output, not an equal-quality efficiency ranking. Auto provisionally chooses H.264 hardware until the paired iPad proves another mutually supported path.
 
+After both physical Mac permissions were approved, an isolated 120-frame Quick repeat measured H.264 hardware at 100.89 fps / 9.10 ms encode p95 / 50.75 MiB peak working set, HEVC hardware at 116.44 fps / 7.24 ms / 51.03 MiB, and OpenH264 at 62.15 fps / 15.00 ms / 87.75 MiB. AV1 was again skipped because VideoToolbox exposed no hardware AV1 encoder. A separate LaunchServices-launched 15-second real-monitor run carried 557/557 1920×1080 IOSurface frames through hardware H.264 with zero newest-frame replacements; its 36.95 fps observation reflects that live desktop run and is not substituted for deterministic host capacity.
+
 ## D3D11 surface-path validation
 
 Measured 2026-08-22 from the optimized 0.7.0 candidate. The live-monitor check reported `gpu-zero-copy` with 184 WGC frames captured and 180 frames encoded by `NVIDIA H.264 Encoder MFT`. A separate hardware-conditional test submitted one D3D11 NV12 surface successfully to every functional NVIDIA encoder: H.264, HEVC, and AV1.
