@@ -46,7 +46,11 @@ impl SessionManager {
             host_name,
             session_id: state.session_id,
             paired: state.paired,
-            expires_in_seconds: UNPAIRED_TTL.saturating_sub(state.created_at.elapsed()).as_secs(),
+            expires_in_seconds: if state.paired {
+                UNPAIRED_TTL.as_secs()
+            } else {
+                UNPAIRED_TTL.saturating_sub(state.created_at.elapsed()).as_secs()
+            },
             mode,
             created_at: state.created_wall,
         }
@@ -126,6 +130,11 @@ impl SessionManager {
         let mut state = self.state.lock();
         state.access_token_hash = None;
         state.paired = false;
+        // Keep the displayed PIN and QR secret stable across an ordinary
+        // reconnect, but start a fresh unpaired grace period. Credentials only
+        // change on an explicit reset or after that full grace period elapses.
+        state.created_at = Instant::now();
+        state.created_wall = Utc::now();
     }
 }
 
@@ -264,5 +273,24 @@ mod tests {
             Err(SessionError::InvalidCredentials)
         ));
         assert!(session.expires_in_seconds() > 590);
+    }
+
+    #[test]
+    fn paired_credentials_do_not_appear_expired_and_survive_a_disconnect_grace_period() {
+        let session = SessionManager::new();
+        let pin = session.pin();
+        let result = session.pair_with_pin(&pin).expect("valid pin");
+        {
+            let mut state = session.state.lock();
+            state.created_at = Instant::now() - UNPAIRED_TTL - Duration::from_secs(1);
+        }
+        let public = session.public("test-host".to_owned(), "pen-display".to_owned());
+        assert!(public.paired);
+        assert_eq!(public.expires_in_seconds, UNPAIRED_TTL.as_secs());
+        assert!(session.authorize(&result.access_token));
+
+        session.disconnect();
+        assert!(session.expires_in_seconds() > 590);
+        assert!(session.pair_with_pin(&pin).is_ok());
     }
 }

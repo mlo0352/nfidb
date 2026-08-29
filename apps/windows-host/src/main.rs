@@ -479,6 +479,14 @@ fn run() -> Result<()> {
         native_options,
         Box::new(move |context| {
             configure_visuals(&context.egui_ctx);
+            #[cfg(target_os = "macos")]
+            let tray_icon = match create_macos_status_icon() {
+                Ok(icon) => Some(icon),
+                Err(error) => {
+                    tracing::warn!(%error, "macOS menu-bar icon could not be created");
+                    None
+                }
+            };
             Ok(Box::new(HostApp {
                 config,
                 monitors,
@@ -506,6 +514,8 @@ fn run() -> Result<()> {
                 benchmark_running_label: None,
                 benchmark_report_path: None,
                 resume_capture_after_benchmark: false,
+                #[cfg(target_os = "macos")]
+                _tray_icon: tray_icon,
             }))
         }),
     )
@@ -588,6 +598,22 @@ fn platform_setup_required() -> bool {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn create_macos_status_icon() -> Result<tray_icon::TrayIcon> {
+    let decoded = image::load_from_memory_with_format(include_bytes!("../assets/nfidb.ico"), image::ImageFormat::Ico)?;
+    let rgba = decoded
+        .resize_exact(32, 32, image::imageops::FilterType::Lanczos3)
+        .into_rgba8();
+    let icon = tray_icon::Icon::from_rgba(rgba.into_raw(), 32, 32)?;
+    Ok(tray_icon::TrayIconBuilder::new()
+        .with_tooltip("NFiDB — No Frills iPad Drawing Bridge")
+        .with_icon(icon)
+        .with_icon_as_template(false)
+        .with_menu_on_left_click(false)
+        .with_menu_on_right_click(false)
+        .build()?)
+}
+
 fn write_json(path: &PathBuf, value: &impl serde::Serialize) -> Result<()> {
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
@@ -619,6 +645,8 @@ struct HostApp {
     benchmark_running_label: Option<String>,
     benchmark_report_path: Option<PathBuf>,
     resume_capture_after_benchmark: bool,
+    #[cfg(target_os = "macos")]
+    _tray_icon: Option<tray_icon::TrayIcon>,
 }
 
 impl eframe::App for HostApp {
@@ -640,6 +668,20 @@ impl eframe::App for HostApp {
         }
         let context = ui.ctx().clone();
         context.request_repaint_after(Duration::from_millis(500));
+        #[cfg(target_os = "macos")]
+        while let Ok(event) = tray_icon::TrayIconEvent::receiver().try_recv() {
+            if matches!(
+                event,
+                tray_icon::TrayIconEvent::Click {
+                    button_state: tray_icon::MouseButtonState::Up,
+                    ..
+                }
+            ) {
+                context.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                context.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                context.send_viewport_cmd(egui::ViewportCommand::Focus);
+            }
+        }
         if context.input(|input| input.focused) && self.server.rotate_pairing_if_expired() {
             self.last_message = Some("Expired PIN and QR code rotated automatically".to_owned());
         }

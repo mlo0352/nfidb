@@ -28,7 +28,9 @@ nfidb-host-windows.workspace = true
 windows-sys.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
+image.workspace = true
 nfidb-host-macos.workspace = true
+tray-icon.workspace = true
 
 [build-dependencies]
 winresource = "0.1"

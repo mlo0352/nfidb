@@ -251,8 +251,8 @@ button { -webkit-tap-highlight-color: transparent; }
 .video-editor { display: grid; grid-template-columns: 1.2fr 0.8fr 1fr; gap: 8px; }
 .video-editor label { display: grid; gap: 6px; }
 .video-editor input { width: 100%; }
-.video-actions { display: grid; grid-template-columns: 1fr auto; gap: 7px; margin: 14px 0; }
-.video-actions button { min-height: 36px; padding: 0 12px; border: 1px solid var(--line); color: #aeb9b7; background: #111718; font-size: 0.65rem; }
+.video-actions { display: grid; grid-template-columns: 1fr auto auto; gap: 7px; margin: 14px 0; }
+.video-actions button { min-height: 36px; padding: 0 12px; border: 1px solid var(--line); color: #aeb9b7; background: #111718; font-size: 0.65rem; white-space: nowrap; }
 .video-actions .primary-button { width: auto; border-color: var(--accent); color: #07110f; background: var(--accent); }
 .video-benchmark { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; align-items: center; margin: 0 0 14px; padding: 12px; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.025); }
 .video-benchmark div { display: grid; gap: 2px; }

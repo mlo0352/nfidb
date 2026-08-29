@@ -271,6 +271,58 @@ describe("surface controls", () => {
     internal.stopVideoStallWatchdog();
   });
 
+  it("rebuilds a stalled peer even when neither control channel can request a keyframe", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(performance, "now").mockReturnValue(12_000);
+    const root = document.createElement("div");
+    const app = new NfidbApp(root);
+    const reconnect = vi.fn(async () => undefined);
+    const peer = { connectionState: "connected" } as RTCPeerConnection;
+    const internal = app as unknown as {
+      status: { mode: string };
+      peer: RTCPeerConnection;
+      socket: { readyState: number; send: (message: string) => void };
+      firstVideoFrameAtMs: number;
+      lastVideoProgressAtMs: number;
+      renderSurface: () => void;
+      connectVideo: () => Promise<void>;
+      startVideoStallWatchdog: (peer: RTCPeerConnection, video: HTMLVideoElement) => void;
+      stopVideoStallWatchdog: () => void;
+    };
+    internal.status = { mode: "display-and-input" };
+    internal.renderSurface();
+    internal.peer = peer;
+    internal.socket = { readyState: WebSocket.CLOSED, send: vi.fn() };
+    internal.firstVideoFrameAtMs = 500;
+    internal.lastVideoProgressAtMs = 1_000;
+    internal.connectVideo = reconnect;
+    const video = root.querySelector<HTMLVideoElement>("#remoteVideo")!;
+    Object.defineProperty(video, "play", { configurable: true, value: vi.fn(async () => undefined) });
+
+    internal.startVideoStallWatchdog(peer, video);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(reconnect).toHaveBeenCalledOnce();
+    internal.stopVideoStallWatchdog();
+  });
+
+  it("does not mistake repeated callbacks for advancing media time", () => {
+    const now = vi.spyOn(performance, "now");
+    const app = new NfidbApp(document.createElement("div"));
+    const internal = app as unknown as {
+      lastVideoProgressAtMs: number;
+      markFirstVideoFrame: (mediaTimeSeconds?: number) => void;
+    };
+
+    now.mockReturnValue(1_000);
+    internal.markFirstVideoFrame(4.25);
+    expect(internal.lastVideoProgressAtMs).toBe(1_000);
+    now.mockReturnValue(2_000);
+    internal.markFirstVideoFrame(4.25);
+    expect(internal.lastVideoProgressAtMs).toBe(1_000);
+    internal.markFirstVideoFrame(4.5);
+    expect(internal.lastVideoProgressAtMs).toBe(2_000);
+  });
+
   it("updates the host-authoritative touch gate before claiming touch is enabled", async () => {
     const root = document.createElement("div");
     const app = new NfidbApp(root);

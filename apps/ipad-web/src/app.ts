@@ -164,12 +164,15 @@ export class NfidbApp {
   private hideToolbarTimer = 0;
   private videoTrackAtMs = 0;
   private firstVideoFrameAtMs = 0;
+  private videoConnectStartedAtMs = 0;
   private videoRecoveryTimer = 0;
   private videoRecoveryAttempts = 0;
   private videoStallTimer = 0;
   private videoStallRecoveryAttempts = 0;
+  private lastVideoRecoveryRequestAtMs = 0;
   private videoReconnectActive = false;
   private videoReconnectCount = 0;
+  private consecutiveVideoReconnects = 0;
   private diagnosticTimer = 0;
   private diagnosticSequence = 0;
   private diagnosticFailures = 0;
@@ -183,6 +186,8 @@ export class NfidbApp {
   private frameCallbackCount = 0;
   private lastFrameCallbackAtMs = 0;
   private lastVideoProgressAtMs = 0;
+  private lastVideoMediaTimeSeconds: number | null = null;
+  private videoTimeUpdateHandler: (() => void) | null = null;
   private readonly frameGapsMs: number[] = [];
   private readonly captureToPresentMs: number[] = [];
   private readonly receiveToPresentMs: number[] = [];
@@ -316,6 +321,11 @@ export class NfidbApp {
       this.stopVideoRecovery();
       this.stopVideoStallWatchdog();
       this.stopVideoFrameTelemetry();
+      this.videoConnectStartedAtMs = performance.now();
+      this.videoTrackAtMs = 0;
+      this.firstVideoFrameAtMs = 0;
+      this.lastVideoProgressAtMs = 0;
+      this.lastVideoMediaTimeSeconds = null;
       const previousPeer = this.peer;
       this.peer = null;
       if (previousPeer) {
@@ -330,6 +340,8 @@ export class NfidbApp {
       this.videoPresentationReported = false;
       const peer = new RTCPeerConnection({ iceServers: [] });
       this.peer = peer;
+      const video = this.requiredElement<HTMLVideoElement>("remoteVideo");
+      this.startVideoStallWatchdog(peer, video);
       const channel = peer.createDataChannel("input", { ordered: true });
       channel.binaryType = "arraybuffer";
       this.channel = channel;
@@ -338,14 +350,10 @@ export class NfidbApp {
       const videoTransceiver = peer.addTransceiver("video", { direction: "recvonly" });
       applyCodecPreference(videoTransceiver, this.videoControl.runtime.codec);
       peer.addEventListener("track", (event) => {
-        const video = this.requiredElement<HTMLVideoElement>("remoteVideo");
         this.videoTrackAtMs = performance.now();
-        this.firstVideoFrameAtMs = 0;
         this.startVideoRecovery(peer);
         video.srcObject = event.streams[0] ?? new MediaStream([event.track]);
         this.startVideoFrameTelemetry(video);
-        this.startVideoStallWatchdog(peer, video);
-        video.addEventListener("playing", () => this.markFirstVideoFrame(), { once: true });
         const startPlayback = () => void video.play().catch(() => undefined);
         video.addEventListener("loadedmetadata", startPlayback, { once: true });
         startPlayback();
@@ -510,9 +518,20 @@ export class NfidbApp {
     filesButton.title = filesButton.disabled ? "File transfer is disabled on the host" : "Exchange files with the host";
   }
 
-  private markFirstVideoFrame(): void {
+  private markFirstVideoFrame(mediaTimeSeconds?: number): void {
+    if (mediaTimeSeconds !== undefined) {
+      if (
+        this.lastVideoMediaTimeSeconds !== null &&
+        mediaTimeSeconds <= this.lastVideoMediaTimeSeconds + 0.000_001
+      ) {
+        return;
+      }
+      this.lastVideoMediaTimeSeconds = mediaTimeSeconds;
+    }
     this.lastVideoProgressAtMs = performance.now();
     this.videoStallRecoveryAttempts = 0;
+    this.lastVideoRecoveryRequestAtMs = 0;
+    this.consecutiveVideoReconnects = 0;
     if (this.firstVideoFrameAtMs === 0) {
       this.firstVideoFrameAtMs = this.lastVideoProgressAtMs;
       this.stopVideoRecovery();
@@ -573,49 +592,67 @@ export class NfidbApp {
   private startVideoStallWatchdog(peer: RTCPeerConnection, video: HTMLVideoElement): void {
     this.stopVideoStallWatchdog();
     this.videoStallRecoveryAttempts = 0;
+    this.lastVideoRecoveryRequestAtMs = 0;
     const inspect = () => {
-      if (
-        this.peer !== peer ||
-        peer.connectionState === "closed" ||
-        peer.connectionState === "failed"
-      ) {
+      if (this.peer !== peer) {
         this.stopVideoStallWatchdog();
         return;
       }
       const now = performance.now();
-      const gapMs = this.lastVideoProgressAtMs > 0 ? now - this.lastVideoProgressAtMs : 0;
-      const hostIsProducingFrames = (this.metrics?.encoded_fps ?? 0) >= 2;
-      const shouldRecover =
-        this.firstVideoFrameAtMs > 0 &&
-        this.lastVideoProgressAtMs > 0 &&
-        gapMs >= 2500 &&
-        hostIsProducingFrames &&
-        document.visibilityState === "visible";
+      const progressAnchor = this.lastVideoProgressAtMs || this.videoTrackAtMs || this.videoConnectStartedAtMs;
+      const gapMs = progressAnchor > 0 ? now - progressAnchor : 0;
+      const terminal = peer.connectionState === "failed" || peer.connectionState === "closed";
+      const disconnected = peer.connectionState === "disconnected";
+      const visible = document.visibilityState === "visible";
+      const reconnectAfterMs = Math.min(20_000, 8_000 + this.consecutiveVideoReconnects * 4_000);
+      const shouldRecover = visible && (terminal || disconnected || gapMs >= 2_500);
+      if (shouldRecover && (terminal || gapMs >= reconnectAfterMs)) {
+        const reason = terminal || disconnected
+          ? "The WebRTC video path disconnected. Rebuilding it automatically…"
+          : this.firstVideoFrameAtMs > 0
+            ? "Safari stopped advancing video. Rebuilding the video connection…"
+            : "Safari did not present the first frame. Rebuilding the video connection…";
+        this.reconnectVideoPeer(peer, reason);
+        return;
+      }
       if (shouldRecover) {
         void video.play().catch(() => undefined);
-        if (this.videoStallRecoveryAttempts < 3) {
-          if (this.requestVideoKeyframe()) {
-            this.videoStallRecoveryAttempts += 1;
-            if (this.videoStallRecoveryAttempts === 1) {
-              this.showNotice("Video stalled while the host is still producing frames. Requesting a clean keyframe…");
-            }
+        if (
+          peer.connectionState === "connected" &&
+          now - this.lastVideoRecoveryRequestAtMs >= 1_500
+        ) {
+          this.lastVideoRecoveryRequestAtMs = now;
+          this.videoStallRecoveryAttempts += 1;
+          if (this.requestVideoKeyframe() && this.videoStallRecoveryAttempts === 1) {
+            this.showNotice(
+              this.firstVideoFrameAtMs > 0
+                ? "Video stopped advancing. Requesting a clean keyframe…"
+                : "Waiting for the first frame. Requesting a clean keyframe…",
+            );
           }
-        } else if (gapMs >= 8000 && !this.videoReconnectActive) {
-          this.videoReconnectActive = true;
-          this.videoReconnectCount += 1;
-          this.showNotice("Safari did not recover from fresh keyframes. Rebuilding the video connection…");
-          this.stopVideoStallWatchdog();
-          void this.connectVideo().finally(() => {
-            this.videoReconnectActive = false;
-          });
-          return;
         }
       } else if (gapMs < 1500) {
         this.videoStallRecoveryAttempts = 0;
+        this.lastVideoRecoveryRequestAtMs = 0;
       }
       this.videoStallTimer = window.setTimeout(inspect, 1000);
     };
     this.videoStallTimer = window.setTimeout(inspect, 1000);
+  }
+
+  private reconnectVideoPeer(peer: RTCPeerConnection | null, reason: string): void {
+    if (this.videoReconnectActive || (peer && this.peer !== peer)) {
+      return;
+    }
+    this.videoReconnectActive = true;
+    this.videoReconnectCount += 1;
+    this.consecutiveVideoReconnects += 1;
+    this.showNotice(reason);
+    this.stopVideoRecovery();
+    this.stopVideoStallWatchdog();
+    void this.connectVideo().finally(() => {
+      this.videoReconnectActive = false;
+    });
   }
 
   private stopVideoStallWatchdog(): void {
@@ -628,21 +665,27 @@ export class NfidbApp {
     this.frameCallbackCount = 0;
     this.lastFrameCallbackAtMs = 0;
     this.lastVideoProgressAtMs = 0;
+    this.lastVideoMediaTimeSeconds = null;
     this.frameGapsMs.length = 0;
     this.captureToPresentMs.length = 0;
     this.receiveToPresentMs.length = 0;
     this.frameProcessingMs.length = 0;
-    if (!("requestVideoFrameCallback" in video)) {
+    const supportsFrameCallback = typeof (video as unknown as { requestVideoFrameCallback?: unknown })
+      .requestVideoFrameCallback === "function";
+    if (!supportsFrameCallback) {
+      this.videoTimeUpdateHandler = () => this.markFirstVideoFrame(video.currentTime);
+      video.addEventListener("timeupdate", this.videoTimeUpdateHandler);
       return;
     }
     const callback = (now: DOMHighResTimeStamp, metadata: VideoFrameCallbackMetadata) => {
-      this.markFirstVideoFrame();
+      const values = metadata as unknown as Record<string, unknown>;
+      const mediaTime = finiteNumber(values.mediaTime) ?? video.currentTime;
+      this.markFirstVideoFrame(mediaTime);
       this.frameCallbackCount += 1;
       if (this.lastFrameCallbackAtMs > 0) {
         pushBounded(this.frameGapsMs, now - this.lastFrameCallbackAtMs, 900);
       }
       this.lastFrameCallbackAtMs = now;
-      const values = metadata as unknown as Record<string, unknown>;
       const presentation = finiteNumber(values.presentationTime) ?? now;
       const capture = finiteNumber(values.captureTime);
       const receive = finiteNumber(values.receiveTime);
@@ -666,6 +709,10 @@ export class NfidbApp {
     if (video && this.videoFrameRequest > 0 && "cancelVideoFrameCallback" in video) {
       video.cancelVideoFrameCallback(this.videoFrameRequest);
     }
+    if (video && this.videoTimeUpdateHandler) {
+      video.removeEventListener("timeupdate", this.videoTimeUpdateHandler);
+    }
+    this.videoTimeUpdateHandler = null;
     this.videoFrameRequest = 0;
   }
 
@@ -904,7 +951,7 @@ export class NfidbApp {
         <label>FPS<input id="videoFps" type="number" inputmode="numeric" min="1" max="120" value="${preset.max_fps}"></label>
         <label>MBPS<input id="videoBitrate" type="number" inputmode="decimal" min="0.5" max="200" step="0.1" value="${bitrate}"></label>
       </div>
-      <div class="video-actions"><button id="videoApply" class="primary-button">Apply live</button><button id="videoReset">Reset preset</button></div>
+      <div class="video-actions"><button id="videoApply" class="primary-button">Apply live</button><button id="videoReconnect">Reset video</button><button id="videoReset">Reset preset</button></div>
       <section class="video-benchmark">
         <div><b>AUTO TEST</b><small>${control.learned_results.length} learned result${control.learned_results.length === 1 ? "" : "s"} stored locally</small></div>
         <button id="videoAutoTest" class="primary-button" ${this.videoBenchmarkRunning ? "disabled" : ""}>${this.videoBenchmarkRunning ? "Testing…" : "Run quick test"}</button>
@@ -949,6 +996,9 @@ export class NfidbApp {
           bitrates: { h264_mbps: defaults.bitrate, hevc_mbps: null, av1_mbps: null },
         };
       });
+    });
+    content.querySelector<HTMLButtonElement>("#videoReconnect")?.addEventListener("click", () => {
+      this.reconnectVideoPeer(this.peer, "Resetting the video connection…");
     });
     content.querySelector<HTMLButtonElement>("#videoAutoTest")?.addEventListener("click", () => {
       void this.runQuickAutoTest();
@@ -2031,10 +2081,14 @@ export class NfidbApp {
     this.peer?.close();
     this.socket?.close();
     this.inputTransport = null;
+    this.videoConnectStartedAtMs = 0;
     this.videoTrackAtMs = 0;
     this.firstVideoFrameAtMs = 0;
     this.stopVideoFrameTelemetry();
     this.lastVideoProgressAtMs = 0;
+    this.lastVideoMediaTimeSeconds = null;
+    this.lastVideoRecoveryRequestAtMs = 0;
+    this.consecutiveVideoReconnects = 0;
     this.previousRtcCounters = null;
     this.liveClientDiagnostic = null;
     this.pendingInput.length = 0;

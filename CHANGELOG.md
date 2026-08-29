@@ -28,6 +28,9 @@ NFiDB is pre-release software. Releases remain GitHub prereleases until the phys
 - When the bounded WebRTC broadcast receiver sheds stale encoded frames, stop forwarding dependent delta frames, request a fresh keyframe immediately, and resume only from that clean decoder boundary.
 - Expanded live and exported WebRTC diagnostics with the transport-selected ICE pair, both candidate endpoints and attributes, codec/transport records, per-second RTP rate/loss, and NACK/PLI/FIR recovery counters. Address disclosure is labeled explicitly when Safari withholds it, and nominated-pair fallback is distinguished from transport-confirmed selection.
 - Added post-start Safari video recovery: when the host is still encoding but frame presentation stops, the iPad requests bounded clean keyframes and then rebuilds only the WebRTC video connection if the decoder remains stuck. Pairing and authenticated input stay active during recovery.
+- Hardened Safari recovery so it also handles missing host telemetry, an unavailable keyframe control channel, a failed/disconnected peer, an unchanged media-time callback, and a first frame that never arrives. Recovery now escalates independently to a bounded video-peer rebuild, while **Video → Reset video** provides the same repair manually without disturbing input or pairing.
+- Keep the current PIN and QR stable for an active paired session. An ordinary disconnect preserves those displayed credentials for a fresh ten-minute reconnect grace period; only explicit reset or expiry while unpaired rotates them.
+- Added a branded macOS menu-bar status icon using the same NFiDB artwork as Windows. Clicking it restores and focuses the host window.
 - Made Fullscreen a true enter/exit toggle, close the controls immediately on activation, and vertically center all toolbar icon buttons.
 - Added `NFIDB_CODESIGN_IDENTITY` support to the Mac packager. Stable Apple signing prevents development rebuilds from appearing as unrelated apps to macOS privacy controls; CI retains an explicit ad-hoc fallback until Developer ID/notarization credentials are configured.
 - Local Mac packaging now automatically reuses the installed NFiDB Apple identity, or another available stable Apple code-signing identity, when `NFIDB_CODESIGN_IDENTITY` is unset. Setup and release guidance also document Tahoe's required one-time reboot after a Screen Recording permission entry is removed or reset.
@@ -45,7 +48,7 @@ NFiDB is pre-release software. Releases remain GitHub prereleases until the phys
 
 ### Still required before stable
 
-- Physical Mac Screen Recording and Accessibility approval, real monitor capture, H.264 iPad Safari presentation, mouse, and keyboard have passed on the M1 Pro test system. Pressure-sensitive drawing-app behavior, HEVC, files, touch-mode confirmation, reconnect/sleep behavior, and longer stability remain explicit field tests.
+- Physical Mac Screen Recording and Accessibility approval, real monitor capture, H.264 iPad Safari presentation, mouse, keyboard, and automatic first-frame recovery have passed on the M1 Pro test system. Pressure-sensitive drawing-app behavior, HEVC, files, touch-mode confirmation, repeated stall recovery, sleep behavior, and longer stability remain explicit field tests.
 
 ## 0.7.0 — 2026-08-22 — Alpha
 
