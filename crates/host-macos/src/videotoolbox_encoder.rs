@@ -131,7 +131,10 @@ fn build_session(config: VideoToolboxEncoderConfig) -> Result<CompressionSession
         .with_allow_frame_reordering(false)
         .with_average_bit_rate(config.bitrate_bps.min(i32::MAX as u32) as i32)
         .with_expected_frame_rate(f64::from(config.max_fps))
-        .with_max_keyframe_interval((config.max_fps.saturating_mul(2)).min(i32::MAX as u32) as i32);
+        // Two-second IDRs created large avoidable bursts during high-motion
+        // screen video. Recovery is now receiver-driven, with a five-second
+        // safety interval matching the capture loop's explicit request.
+        .with_max_keyframe_interval((config.max_fps.saturating_mul(5)).min(i32::MAX as u32) as i32);
     builder = match config.codec {
         VideoCodec::H264 => builder.with_profile_level(ProfileLevel::H264BaselineAutoLevel),
         VideoCodec::Hevc => builder.with_profile_level(ProfileLevel::HEVCMainAutoLevel),

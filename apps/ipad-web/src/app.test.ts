@@ -170,6 +170,107 @@ describe("surface controls", () => {
     expect(root.querySelector("#toolbarReveal")?.getAttribute("aria-expanded")).toBe("false");
   });
 
+  it("closes the controls and toggles fullscreen in both directions", async () => {
+    const root = document.createElement("div");
+    const app = new NfidbApp(root);
+    const internal = app as unknown as {
+      status: { mode: string };
+      renderSurface: () => void;
+    };
+    internal.status = { mode: "display-and-input" };
+    internal.renderSurface();
+    const surface = root.querySelector<HTMLElement>("#surface")!;
+    let fullscreenElement: Element | null = null;
+    const requestFullscreen = vi.fn(async () => {
+      fullscreenElement = surface;
+    });
+    const exitFullscreen = vi.fn(async () => {
+      fullscreenElement = null;
+    });
+    const originalFullscreenElement = Object.getOwnPropertyDescriptor(document, "fullscreenElement");
+    const originalExitFullscreen = Object.getOwnPropertyDescriptor(document, "exitFullscreen");
+    Object.defineProperty(document, "fullscreenElement", {
+      configurable: true,
+      get: () => fullscreenElement,
+    });
+    Object.defineProperty(document, "exitFullscreen", {
+      configurable: true,
+      value: exitFullscreen,
+    });
+    Object.defineProperty(surface, "requestFullscreen", {
+      configurable: true,
+      value: requestFullscreen,
+    });
+
+    try {
+      root.querySelector<HTMLButtonElement>("#fullscreenButton")!.click();
+      await Promise.resolve();
+      expect(requestFullscreen).toHaveBeenCalledOnce();
+      expect(root.querySelector("#toolbar")?.classList.contains("visible")).toBe(false);
+
+      root.querySelector<HTMLButtonElement>("#toolbarReveal")!.click();
+      root.querySelector<HTMLButtonElement>("#fullscreenButton")!.click();
+      await Promise.resolve();
+      expect(exitFullscreen).toHaveBeenCalledOnce();
+      expect(root.querySelector("#toolbar")?.classList.contains("visible")).toBe(false);
+    } finally {
+      if (originalFullscreenElement) {
+        Object.defineProperty(document, "fullscreenElement", originalFullscreenElement);
+      } else {
+        Reflect.deleteProperty(document, "fullscreenElement");
+      }
+      if (originalExitFullscreen) {
+        Object.defineProperty(document, "exitFullscreen", originalExitFullscreen);
+      } else {
+        Reflect.deleteProperty(document, "exitFullscreen");
+      }
+    }
+  });
+
+  it("requests a keyframe for a live stall and rebuilds a persistently stuck peer", async () => {
+    vi.useFakeTimers();
+    const now = vi.spyOn(performance, "now").mockReturnValue(5_000);
+    const root = document.createElement("div");
+    const app = new NfidbApp(root);
+    const send = vi.fn();
+    const reconnect = vi.fn(async () => undefined);
+    const peer = { connectionState: "connected" } as RTCPeerConnection;
+    const internal = app as unknown as {
+      status: { mode: string };
+      peer: RTCPeerConnection;
+      socket: { readyState: number; send: (message: string) => void };
+      metrics: { encoded_fps: number };
+      firstVideoFrameAtMs: number;
+      lastVideoProgressAtMs: number;
+      videoStallRecoveryAttempts: number;
+      renderSurface: () => void;
+      connectVideo: () => Promise<void>;
+      startVideoStallWatchdog: (peer: RTCPeerConnection, video: HTMLVideoElement) => void;
+      stopVideoStallWatchdog: () => void;
+    };
+    internal.status = { mode: "display-and-input" };
+    internal.renderSurface();
+    internal.peer = peer;
+    internal.socket = { readyState: WebSocket.OPEN, send };
+    internal.metrics = { encoded_fps: 60 };
+    internal.firstVideoFrameAtMs = 500;
+    internal.lastVideoProgressAtMs = 1_000;
+    internal.connectVideo = reconnect;
+    const video = root.querySelector<HTMLVideoElement>("#remoteVideo")!;
+    Object.defineProperty(video, "play", { configurable: true, value: vi.fn(async () => undefined) });
+
+    internal.startVideoStallWatchdog(peer, video);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(send).toHaveBeenCalledWith(JSON.stringify({ type: "request-keyframe" }));
+    expect(reconnect).not.toHaveBeenCalled();
+
+    internal.videoStallRecoveryAttempts = 3;
+    now.mockReturnValue(10_000);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(reconnect).toHaveBeenCalledOnce();
+    internal.stopVideoStallWatchdog();
+  });
+
   it("updates the host-authoritative touch gate before claiming touch is enabled", async () => {
     const root = document.createElement("div");
     const app = new NfidbApp(root);

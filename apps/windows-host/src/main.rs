@@ -2127,7 +2127,7 @@ impl HostApp {
                         ui,
                         "RTP recovery",
                         &format!(
-                            "NACK {} (+{}) · PLI {} (+{}) · FIR {} (+{}) · {} keyframes decoded",
+                            "NACK {} (+{}) · PLI {} (+{}) · FIR {} (+{}) · {} keyframes decoded · {:.0} ms stalled · {} attempts · {} reconnects{}",
                             client.video.nack_count,
                             client.video.nack_delta,
                             client.video.pli_count,
@@ -2135,6 +2135,10 @@ impl HostApp {
                             client.video.fir_count,
                             client.video.fir_delta,
                             client.video.key_frames_decoded,
+                            client.video.presentation_stall_ms,
+                            client.video.stall_recovery_attempts,
+                            client.video.reconnect_count,
+                            if client.video.reconnect_active { " (active)" } else { "" },
                         ),
                     );
                     diagnostic_row(
@@ -2236,12 +2240,14 @@ impl HostApp {
                         ui,
                         "Integrity totals",
                         &format!(
-                            "{} packet loss · {} freezes · NACK/PLI/FIR {}/{}/{} · {} input gaps · {} input errors · {} transport skips",
+                            "{} packet loss · {} freezes · NACK/PLI/FIR {}/{}/{} · {:.0} ms latest stall · {} video reconnects · {} input gaps · {} input errors · {} transport skips",
                             summary.packet_loss_total,
                             summary.latest_freeze_count,
                             summary.latest_nack_count,
                             summary.latest_pli_count,
                             summary.latest_fir_count,
+                            summary.latest_presentation_stall_ms,
+                            summary.latest_video_reconnect_count,
                             summary.latest_input_sample_gaps,
                             summary.latest_input_errors,
                             summary.latest_video_transport_drops

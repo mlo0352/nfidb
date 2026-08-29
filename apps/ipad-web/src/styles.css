@@ -149,8 +149,8 @@ button { -webkit-tap-highlight-color: transparent; }
 .tool-button[aria-pressed="true"] { border-color: #327767; color: var(--accent); background: #0d241f; }
 .files-button { display: inline-flex; align-items: center; gap: 6px; }
 .file-badge { min-width: 16px; padding: 2px 4px; border-radius: 8px; color: #07110f; background: var(--accent); font-size: 0.55rem; font-weight: 900; line-height: 1; text-align: center; }
-.icon-button { width: 34px; border: 1px solid var(--line); font-size: 1rem; }
-.icon-button.danger { color: #bc8885; font-size: 1.3rem; }
+.icon-button { display: inline-flex; align-items: center; justify-content: center; width: 34px; padding: 0; border: 1px solid var(--line); font-size: 1rem; line-height: 1; }
+.icon-button.danger { color: #bc8885; font-size: 1.3rem; line-height: 1; }
 .connection-notice { position: absolute; z-index: 8; left: 50%; top: 82px; max-width: min(560px, calc(100% - 40px)); transform: translateX(-50%); padding: 10px 14px; border: 1px solid #775b34; color: #f2d39e; background: #211a11; font-size: 0.76rem; }
 .stats-panel { position: absolute; z-index: 4; top: 78px; right: max(12px, env(safe-area-inset-right)); width: min(520px, calc(100% - 24px)); max-height: calc(100% - 96px); overflow: auto; padding: 12px 15px; border: 1px solid var(--line); background: rgba(10, 13, 14, 0.95); }
 .stats-panel > div { display: flex; justify-content: space-between; gap: 18px; padding: 8px 0; border-bottom: 1px solid #1d2425; }

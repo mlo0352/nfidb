@@ -91,7 +91,7 @@ pub(crate) fn functional_probe(
         .with_allow_frame_reordering(false)
         .with_average_bit_rate(bitrate_bps.min(i32::MAX as u32) as i32)
         .with_expected_frame_rate(f64::from(fps))
-        .with_max_keyframe_interval((fps.saturating_mul(2)).min(i32::MAX as u32) as i32);
+        .with_max_keyframe_interval((fps.saturating_mul(5)).min(i32::MAX as u32) as i32);
     builder = match codec {
         Codec::H264 => builder.with_profile_level(ProfileLevel::H264BaselineAutoLevel),
         Codec::HEVC => builder.with_profile_level(ProfileLevel::HEVCMainAutoLevel),

@@ -49,6 +49,10 @@ pub struct ClientVideoDiagnostic {
     pub pli_delta: u64,
     pub fir_count: u64,
     pub fir_delta: u64,
+    pub presentation_stall_ms: f64,
+    pub stall_recovery_attempts: u64,
+    pub reconnect_active: bool,
+    pub reconnect_count: u64,
     pub startup_ms: Option<f64>,
 }
 
@@ -150,6 +154,8 @@ pub struct DiagnosticSummary {
     pub latest_pli_count: u64,
     pub latest_fir_count: u64,
     pub latest_freeze_count: u64,
+    pub latest_presentation_stall_ms: f64,
+    pub latest_video_reconnect_count: u64,
     pub latest_ice_selection_source: String,
     pub latest_local_candidate: String,
     pub latest_remote_candidate: String,
@@ -283,6 +289,8 @@ fn summarize(samples: &VecDeque<RecordedDiagnosticSample>, discarded_samples: u6
         latest_pli_count: latest.map_or(0, |sample| sample.client.video.pli_count),
         latest_fir_count: latest.map_or(0, |sample| sample.client.video.fir_count),
         latest_freeze_count: latest.map_or(0, |sample| sample.client.video.freeze_count),
+        latest_presentation_stall_ms: latest.map_or(0.0, |sample| sample.client.video.presentation_stall_ms),
+        latest_video_reconnect_count: latest.map_or(0, |sample| sample.client.video.reconnect_count),
         latest_ice_selection_source: latest
             .map_or_else(String::new, |sample| sample.client.network.selection_source.clone()),
         latest_local_candidate: latest.map_or_else(String::new, |sample| {
