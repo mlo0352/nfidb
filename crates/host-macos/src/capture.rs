@@ -89,6 +89,12 @@ struct LatestFrame {
     stopped: AtomicBool,
 }
 
+enum FrameWait {
+    Frame(CapturedFrame),
+    TimedOut,
+    Stopped,
+}
+
 impl LatestFrame {
     fn submit(&self, frame: CapturedFrame, metrics: &Metrics) {
         let mut current = self.frame.lock();
@@ -98,12 +104,18 @@ impl LatestFrame {
         self.ready.notify_one();
     }
 
-    fn take(&self) -> Option<CapturedFrame> {
+    fn take(&self) -> FrameWait {
         let mut current = self.frame.lock();
-        while current.is_none() && !self.stopped.load(Ordering::Acquire) {
+        if current.is_none() && !self.stopped.load(Ordering::Acquire) {
             self.ready.wait_for(&mut current, Duration::from_millis(250));
         }
-        current.take()
+        if let Some(frame) = current.take() {
+            FrameWait::Frame(frame)
+        } else if self.stopped.load(Ordering::Acquire) {
+            FrameWait::Stopped
+        } else {
+            FrameWait::TimedOut
+        }
     }
 
     fn stop(&self) {
@@ -538,7 +550,7 @@ impl ActiveEncoder {
         }
     }
 
-    fn encode(&mut self, frame: &CapturedFrame) -> Result<Option<EncodedSurface>, String> {
+    fn encode(&mut self, frame: &CapturedFrame, captured_at: Instant) -> Result<Option<EncodedSurface>, String> {
         match self {
             Self::Hardware(encoder) => {
                 let temporary;
@@ -553,7 +565,7 @@ impl ActiveEncoder {
                         temporary
                     }
                 };
-                encoder.encode_at(&surface, frame.captured_at()).map(Some)
+                encoder.encode_at(&surface, captured_at).map(Some)
             }
             Self::Software(encoder) => {
                 let (width, height) = frame.dimensions();
@@ -584,7 +596,23 @@ fn encode_loop(
     let mut generation = u64::MAX;
     let mut dimensions = (0, 0);
     let mut last_keyframe_at = Instant::now() - Duration::from_secs(10);
-    while let Some(frame) = slot.take() {
+    let mut last_frame = None;
+    loop {
+        let fresh_frame = match slot.take() {
+            FrameWait::Frame(frame) => {
+                last_frame = Some(frame);
+                true
+            }
+            FrameWait::TimedOut => false,
+            FrameWait::Stopped => break,
+        };
+        let force_keyframe = keyframe_request.take() || last_keyframe_at.elapsed() >= Duration::from_secs(5);
+        if !fresh_frame && !force_keyframe {
+            continue;
+        }
+        let Some(frame) = last_frame.as_ref() else {
+            continue;
+        };
         let selection = pipeline.lock().clone();
         let frame_dimensions = frame.dimensions();
         if selection.generation != generation || frame_dimensions != dimensions {
@@ -600,11 +628,20 @@ fn encode_loop(
             }
         }
         let Some(active) = encoder.as_mut() else { continue };
-        if keyframe_request.take() || last_keyframe_at.elapsed() >= Duration::from_secs(5) {
+        if force_keyframe {
             active.request_keyframe();
         }
+        // ScreenCaptureKit may not emit another surface while the desktop is
+        // static. A newly connected or recovering receiver still needs a
+        // current IDR, so re-encode the retained IOSurface with a fresh
+        // monotonic timestamp when a keyframe was explicitly requested.
+        let captured_at = if fresh_frame {
+            frame.captured_at()
+        } else {
+            Instant::now()
+        };
         let started = Instant::now();
-        match active.encode(&frame) {
+        match active.encode(frame, captured_at) {
             Ok(Some(packet)) => {
                 let elapsed = started.elapsed();
                 metrics.preprocessed(0);
@@ -622,7 +659,7 @@ fn encode_loop(
                 let encoded = EncodedVideoFrame {
                     data: Arc::from(packet.data),
                     codec,
-                    captured_at: frame.captured_at(),
+                    captured_at,
                     width: dimensions.0,
                     height: dimensions.1,
                     keyframe: packet.keyframe,
@@ -978,7 +1015,13 @@ mod tests {
             },
             &metrics,
         );
-        assert_eq!(slot.take().unwrap().dimensions(), (4, 2));
+        let FrameWait::Frame(frame) = slot.take() else {
+            panic!("submitted frame was not returned");
+        };
+        assert_eq!(frame.dimensions(), (4, 2));
+        assert!(matches!(slot.take(), FrameWait::TimedOut));
+        slot.stop();
+        assert!(matches!(slot.take(), FrameWait::Stopped));
     }
 
     #[test]
