@@ -203,12 +203,20 @@ describe("surface controls", () => {
     });
 
     try {
+      root.querySelector<HTMLButtonElement>("#statsButton")!.click();
+      expect(root.querySelector<HTMLElement>("#statsPanel")!.hidden).toBe(false);
       root.querySelector<HTMLButtonElement>("#fullscreenButton")!.click();
       await Promise.resolve();
       expect(requestFullscreen).toHaveBeenCalledOnce();
       expect(root.querySelector("#toolbar")?.classList.contains("visible")).toBe(false);
+      expect(root.querySelector<HTMLElement>("#statsPanel")!.hidden).toBe(true);
+      expect(root.querySelector("#statsButton")?.getAttribute("aria-pressed")).toBe("false");
 
       root.querySelector<HTMLButtonElement>("#toolbarReveal")!.click();
+      root.querySelector<HTMLButtonElement>("#statsButton")!.click();
+      root.querySelector<HTMLButtonElement>("#statsClose")!.click();
+      expect(root.querySelector<HTMLElement>("#statsPanel")!.hidden).toBe(true);
+
       root.querySelector<HTMLButtonElement>("#fullscreenButton")!.click();
       await Promise.resolve();
       expect(exitFullscreen).toHaveBeenCalledOnce();

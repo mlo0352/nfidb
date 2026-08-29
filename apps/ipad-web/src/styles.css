@@ -155,6 +155,9 @@ button { -webkit-tap-highlight-color: transparent; }
 .stats-panel { position: absolute; z-index: 4; top: 78px; right: max(12px, env(safe-area-inset-right)); width: min(520px, calc(100% - 24px)); max-height: calc(100% - 96px); overflow: auto; padding: 12px 15px; border: 1px solid var(--line); background: rgba(10, 13, 14, 0.95); }
 .stats-panel > div { display: flex; justify-content: space-between; gap: 18px; padding: 8px 0; border-bottom: 1px solid #1d2425; }
 .stats-panel > div:last-child { border-bottom: 0; }
+.stats-panel > .stats-panel-header { position: sticky; z-index: 1; top: -12px; align-items: center; margin: -12px -15px 4px; padding: 8px 8px 8px 15px; border-bottom-color: var(--line); background: #0a0d0e; }
+.stats-panel-header > b { color: var(--accent); font-size: 0.64rem; letter-spacing: 0.12em; text-align: left; }
+.stats-panel-header .icon-button { flex: none; }
 .stats-panel span { color: #697675; font-size: 0.58rem; font-weight: 800; letter-spacing: 0.1em; }
 .stats-panel b { min-width: 0; color: #dbe1df; font-size: 0.67rem; font-weight: 600; text-align: right; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .toolbar-reveal {

@@ -422,6 +422,7 @@ export class NfidbApp {
           </div>
         </header>
         <aside id="statsPanel" class="stats-panel" hidden>
+          <div class="stats-panel-header"><b>LIVE STATS</b><button id="statsClose" class="icon-button" aria-label="Close stats">×</button></div>
           <div><span>VIDEO</span><b id="videoStats">Waiting…</b></div>
           <div><span>NETWORK</span><b id="networkStats">Local</b></div>
           <div><span>SELECTED ICE PATH</span><b id="icePathStats">Inspecting…</b></div>
@@ -817,7 +818,13 @@ export class NfidbApp {
       this.requiredElement("statsButton").setAttribute("aria-pressed", String(!panel.hidden));
       this.scheduleToolbarHide();
     });
+    this.requiredElement("statsClose").addEventListener("click", () => {
+      this.requiredElement<HTMLElement>("statsPanel").hidden = true;
+      this.requiredElement("statsButton").setAttribute("aria-pressed", "false");
+      this.scheduleToolbarHide();
+    });
     this.requiredElement("fullscreenButton").addEventListener("click", () => {
+      this.closeSurfacePanels();
       this.hideToolbar();
       void (async () => {
         try {
@@ -840,6 +847,21 @@ export class NfidbApp {
     this.requiredElement("controlsClose").addEventListener("click", () => this.hideToolbar());
     this.requiredElement("toolbarReveal").addEventListener("click", () => this.showToolbar());
     this.requiredElement("interactionOverlay").addEventListener("pointerdown", () => this.hideToolbar(), { passive: true });
+  }
+
+  private closeSurfacePanels(): void {
+    for (const [panelId, buttonId] of [
+      ["statsPanel", "statsButton"],
+      ["filesPanel", "filesButton"],
+      ["videoPanel", "videoButton"],
+      ["keyboardPanel", "keyboardButton"],
+    ] as const) {
+      const panel = this.root.querySelector<HTMLElement>(`#${panelId}`);
+      if (panel) {
+        panel.hidden = true;
+      }
+      this.root.querySelector<HTMLElement>(`#${buttonId}`)?.setAttribute("aria-pressed", "false");
+    }
   }
 
   private async updateInputSettings(
