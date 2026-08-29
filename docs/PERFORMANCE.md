@@ -45,6 +45,8 @@ Those figures exclude deterministic source rendering from the encoder clock and 
 
 The signed Mac application subsequently presented its real monitor over hardware H.264 to a physical iPad Safari session after Auto was changed to require presentation evidence before preferring HEVC and VideoToolbox Baseline signaling was aligned with its emitted SPS. Mouse/trackpad and keyboard forwarding also passed in that session. This was a functional observation, not a timed benchmark; no Safari FPS, latency, bandwidth, drop, or quality number is inferred from it.
 
+An intermittent seconds-deep delay after static desktop periods was traced to media-clock construction rather than host throughput or an unbounded queue. ScreenCaptureKit may omit unchanged frames, while the old Mac path described every emitted frame as one nominal 60 Hz interval. The WebRTC sample helper applied the observed gap only after packetizing the resumed frame, allowing Safari to interpret that frame as extremely late and expand its jitter buffer. The transport now packetizes against explicit capture-derived RTP timestamps, and VideoToolbox receives the same monotonic cadence. Automated tests cover a three-second idle/resume discontinuity and fractional-tick drift; a physical Safari idle/resume run is recorded separately rather than inferred from those tests.
+
 ## Release-mode measurements
 
 These profile results are from the development Windows 11 PC (Intel Core i9-13900K), release `0.2.0`, Microsoft Edge headless, a real LAN-address WebRTC connection, a generated 60 fps 4K/1080p integrity pattern, and a simultaneous 240-sample/s pen stream. They measure software encoding and end-to-end decode, not physical Pencil glass-to-glass latency.

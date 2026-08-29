@@ -27,7 +27,12 @@ pub use video::{
 pub struct EncodedVideoFrame {
     pub data: Arc<[u8]>,
     pub codec: VideoCodec,
-    pub duration: std::time::Duration,
+    /// Monotonic time at which the source frame became available to capture.
+    ///
+    /// The transport uses this instead of an assumed fixed frame rate so RTP
+    /// media time continues to match wall time when a screen-capture API stops
+    /// producing frames for an unchanged desktop or sheds stale frames.
+    pub captured_at: std::time::Instant,
     pub width: u32,
     pub height: u32,
     pub keyframe: bool,

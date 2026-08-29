@@ -55,15 +55,29 @@ enum CaptureSource {
 }
 
 enum CapturedFrame {
-    PixelBuffer(CVPixelBuffer),
-    Bgra { width: u32, height: u32, bytes: Vec<u8> },
+    PixelBuffer {
+        buffer: CVPixelBuffer,
+        captured_at: Instant,
+    },
+    Bgra {
+        width: u32,
+        height: u32,
+        bytes: Vec<u8>,
+        captured_at: Instant,
+    },
 }
 
 impl CapturedFrame {
     fn dimensions(&self) -> (u32, u32) {
         match self {
-            Self::PixelBuffer(buffer) => (buffer.width() as u32, buffer.height() as u32),
+            Self::PixelBuffer { buffer, .. } => (buffer.width() as u32, buffer.height() as u32),
             Self::Bgra { width, height, .. } => (*width, *height),
+        }
+    }
+
+    fn captured_at(&self) -> Instant {
+        match self {
+            Self::PixelBuffer { captured_at, .. } | Self::Bgra { captured_at, .. } => *captured_at,
         }
     }
 }
@@ -236,7 +250,13 @@ impl CaptureManager {
                 let width = buffer.width() as u32;
                 let height = buffer.height() as u32;
                 metrics.captured(width, height);
-                handler_slot.submit(CapturedFrame::PixelBuffer(buffer), &metrics);
+                handler_slot.submit(
+                    CapturedFrame::PixelBuffer {
+                        buffer,
+                        captured_at: Instant::now(),
+                    },
+                    &metrics,
+                );
             },
             SCStreamOutputType::Screen,
         );
@@ -523,15 +543,17 @@ impl ActiveEncoder {
             Self::Hardware(encoder) => {
                 let temporary;
                 let surface = match frame {
-                    CapturedFrame::PixelBuffer(buffer) => buffer
+                    CapturedFrame::PixelBuffer { buffer, .. } => buffer
                         .io_surface()
                         .ok_or_else(|| "ScreenCaptureKit frame is not IOSurface-backed".to_owned())?,
-                    CapturedFrame::Bgra { width, height, bytes } => {
+                    CapturedFrame::Bgra {
+                        width, height, bytes, ..
+                    } => {
                         temporary = bgra_iosurface(*width, *height, bytes)?;
                         temporary
                     }
                 };
-                encoder.encode(&surface).map(Some)
+                encoder.encode_at(&surface, frame.captured_at()).map(Some)
             }
             Self::Software(encoder) => {
                 let (width, height) = frame.dimensions();
@@ -600,7 +622,7 @@ fn encode_loop(
                 let encoded = EncodedVideoFrame {
                     data: Arc::from(packet.data),
                     codec,
-                    duration: Duration::from_secs_f64(1.0 / f64::from(selection.video.active_preset().max_fps.max(1))),
+                    captured_at: frame.captured_at(),
                     width: dimensions.0,
                     height: dimensions.1,
                     keyframe: packet.keyframe,
@@ -619,7 +641,7 @@ fn encode_loop(
 fn bgra_bytes(frame: &CapturedFrame) -> Result<Vec<u8>, String> {
     match frame {
         CapturedFrame::Bgra { bytes, .. } => Ok(bytes.clone()),
-        CapturedFrame::PixelBuffer(buffer) => {
+        CapturedFrame::PixelBuffer { buffer, .. } => {
             let guard = buffer
                 .lock(apple_cf::cv::CVPixelBufferLockFlags::READ_ONLY)
                 .map_err(|status| format!("CVPixelBufferLockBaseAddress failed: {status}"))?;
@@ -676,7 +698,15 @@ fn test_pattern_loop(
         let started = Instant::now();
         let bytes = render_test_pattern(width, height, frame_number);
         metrics.captured(source_width, source_height);
-        slot.submit(CapturedFrame::Bgra { width, height, bytes }, &metrics);
+        slot.submit(
+            CapturedFrame::Bgra {
+                width,
+                height,
+                bytes,
+                captured_at: Instant::now(),
+            },
+            &metrics,
+        );
         frame_number = frame_number.wrapping_add(1);
         let interval = Duration::from_secs_f64(1.0 / f64::from(preset.max_fps.max(1)));
         thread::sleep(interval.saturating_sub(started.elapsed()));
@@ -935,6 +965,7 @@ mod tests {
                 width: 2,
                 height: 2,
                 bytes: vec![0; 16],
+                captured_at: Instant::now(),
             },
             &metrics,
         );
@@ -943,6 +974,7 @@ mod tests {
                 width: 4,
                 height: 2,
                 bytes: vec![0; 32],
+                captured_at: Instant::now(),
             },
             &metrics,
         );

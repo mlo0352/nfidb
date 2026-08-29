@@ -55,11 +55,15 @@ struct RawFrame {
     width: u32,
     height: u32,
     bgra: Vec<u8>,
+    captured_at: Instant,
 }
 
 enum CapturedFrame {
     Cpu(RawFrame),
-    Gpu(Arc<GpuSurface>),
+    Gpu {
+        surface: Arc<GpuSurface>,
+        captured_at: Instant,
+    },
 }
 
 enum PreparedFrameData {
@@ -71,6 +75,7 @@ struct PreparedFrame {
     width: u32,
     height: u32,
     data: PreparedFrameData,
+    captured_at: Instant,
 }
 
 #[derive(Default)]
@@ -183,7 +188,8 @@ impl GraphicsCaptureApiHandler for ScreenCapture {
         if self.last_frame.elapsed() < min_interval {
             return Ok(());
         }
-        self.last_frame = Instant::now();
+        let captured_at = Instant::now();
+        self.last_frame = captured_at;
         let source_width = frame.width();
         let width = source_width & !1;
         let height = frame.height() & !1;
@@ -202,7 +208,9 @@ impl GraphicsCaptureApiHandler for ScreenCapture {
             ) {
                 Ok(Some(surface)) => {
                     self.flags.metrics.captured(width, height);
-                    self.flags.slot.submit(CapturedFrame::Gpu(surface), &self.flags.metrics);
+                    self.flags
+                        .slot
+                        .submit(CapturedFrame::Gpu { surface, captured_at }, &self.flags.metrics);
                     return Ok(());
                 }
                 Ok(None) => {
@@ -227,7 +235,12 @@ impl GraphicsCaptureApiHandler for ScreenCapture {
         }
         self.flags.metrics.captured(width, height);
         self.flags.slot.submit(
-            CapturedFrame::Cpu(RawFrame { width, height, bgra }),
+            CapturedFrame::Cpu(RawFrame {
+                width,
+                height,
+                bgra,
+                captured_at,
+            }),
             &self.flags.metrics,
         );
         Ok(())
@@ -930,7 +943,6 @@ fn encode_video_loop(
     const RECOVERY_KEYFRAME_INTERVAL: Duration = Duration::from_secs(5);
     let mut encoder: Option<Box<dyn crate::VideoEncoder>> = None;
     let mut generation = u64::MAX;
-    let mut last_sent_at: Option<Instant> = None;
     let mut last_keyframe_at: Option<Instant> = None;
     while let Some(frame) = prepared.take() {
         let selection = pipeline.lock().clone();
@@ -944,7 +956,6 @@ fn encode_video_loop(
                 previous.shutdown();
             }
             generation = selection.generation;
-            last_sent_at = None;
             last_keyframe_at = None;
         }
         if encoder.is_none() {
@@ -1007,17 +1018,10 @@ fn encode_video_loop(
                     last_keyframe_at = Some(sent_at);
                     metrics.encoded_keyframe();
                 }
-                let nominal_duration = Duration::from_secs_f64(1.0 / f64::from(max_fps.max(1)));
-                let duration = last_sent_at
-                    .replace(sent_at)
-                    .map_or(nominal_duration, |previous| sent_at.duration_since(previous));
                 let _ = video_tx.send(EncodedVideoFrame {
                     data: Arc::from(packet.data),
                     codec,
-                    // RTP timestamps must follow the frames we actually encode. When the
-                    // bounded latest-frame queue sheds work, using the requested frame
-                    // rate here would make media time run behind wall time and grow lag.
-                    duration,
+                    captured_at: frame.captured_at,
                     width: frame.width,
                     height: frame.height,
                     keyframe: packet.keyframe,
@@ -1051,7 +1055,7 @@ fn preprocess_loop(
     while let Some(frame) = slot.take() {
         let started = Instant::now();
         let selection = pipeline.lock().clone();
-        if let CapturedFrame::Gpu(surface) = &frame
+        if let CapturedFrame::Gpu { surface, captured_at } = &frame
             && selection.active_mode.requires_hardware()
             && gpu_failed_generation != Some(selection.generation)
         {
@@ -1081,6 +1085,7 @@ fn preprocess_loop(
                                 width,
                                 height,
                                 data: PreparedFrameData::D3D11Nv12(surface),
+                                captured_at: *captured_at,
                             },
                             &metrics,
                         );
@@ -1101,11 +1106,12 @@ fn preprocess_loop(
         }
         let raw = match frame {
             CapturedFrame::Cpu(frame) => frame,
-            CapturedFrame::Gpu(surface) => match read_bgra(&surface) {
+            CapturedFrame::Gpu { surface, captured_at } => match read_bgra(&surface) {
                 Ok(bgra) => RawFrame {
                     width: surface.width,
                     height: surface.height,
                     bgra,
+                    captured_at,
                 },
                 Err(error) => {
                     status.lock().error = Some(format!("GPU frame readback failed: {error}"));
@@ -1113,6 +1119,7 @@ fn preprocess_loop(
                 }
             },
         };
+        let captured_at = raw.captured_at;
         let (bgra, width, height) = match resize_frame(raw, max_width.load(Ordering::Relaxed), &mut resizer, &options) {
             Ok(frame) => frame,
             Err(error) => {
@@ -1127,6 +1134,7 @@ fn preprocess_loop(
                 width,
                 height,
                 data: PreparedFrameData::I420(yuv),
+                captured_at,
             },
             &metrics,
         );
@@ -1181,7 +1189,15 @@ fn test_pattern_loop(slot: Arc<LatestFrame>, metrics: Arc<Metrics>, max_fps: Arc
         }
         draw_integrity_marker(&mut bgra, width, height, frame_number);
         metrics.captured(width, height);
-        slot.submit(CapturedFrame::Cpu(RawFrame { width, height, bgra }), &metrics);
+        slot.submit(
+            CapturedFrame::Cpu(RawFrame {
+                width,
+                height,
+                bgra,
+                captured_at: Instant::now(),
+            }),
+            &metrics,
+        );
         frame_number = frame_number.wrapping_add(1);
         thread::sleep(period.saturating_sub(started.elapsed()));
     }

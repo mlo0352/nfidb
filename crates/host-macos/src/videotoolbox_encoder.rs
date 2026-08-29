@@ -1,4 +1,5 @@
 use std::ffi::c_void;
+use std::time::Instant;
 
 use apple_cf::iosurface::IOSurface;
 use nfidb_core::VideoCodec;
@@ -39,7 +40,8 @@ pub(crate) struct VideoToolboxEncoderConfig {
 pub(crate) struct VideoToolboxEncoder {
     session: CompressionSession,
     config: VideoToolboxEncoderConfig,
-    frame_number: i64,
+    presentation_origin: Option<Instant>,
+    last_presentation_tick: i64,
     restart_for_keyframe: bool,
 }
 
@@ -53,7 +55,8 @@ impl VideoToolboxEncoder {
         Ok(Self {
             session: build_session(config)?,
             config,
-            frame_number: 0,
+            presentation_origin: None,
+            last_presentation_tick: -1,
             restart_for_keyframe: false,
         })
     }
@@ -62,17 +65,44 @@ impl VideoToolboxEncoder {
         self.restart_for_keyframe = true;
     }
 
+    /// Encodes a synthetic/benchmark frame on the configured nominal cadence.
     pub fn encode(&mut self, surface: &IOSurface) -> Result<EncodedSurface, String> {
+        self.reset_for_keyframe_if_needed()?;
+        let frame_ticks = 90_000_i64 / i64::from(self.config.max_fps.max(1));
+        let presentation_tick = if self.last_presentation_tick < 0 {
+            0
+        } else {
+            self.last_presentation_tick.saturating_add(frame_ticks)
+        };
+        self.encode_with_tick(surface, presentation_tick)
+    }
+
+    /// Encodes a live frame using the real monotonic capture time.
+    pub fn encode_at(&mut self, surface: &IOSurface, captured_at: Instant) -> Result<EncodedSurface, String> {
+        self.reset_for_keyframe_if_needed()?;
+        let origin = *self.presentation_origin.get_or_insert(captured_at);
+        let elapsed = captured_at.checked_duration_since(origin).unwrap_or_default();
+        let presentation_tick = (duration_to_timescale(elapsed, 90_000).min(i64::MAX as u64) as i64)
+            .max(self.last_presentation_tick.saturating_add(1));
+        self.encode_with_tick(surface, presentation_tick)
+    }
+
+    fn reset_for_keyframe_if_needed(&mut self) -> Result<(), String> {
         if self.restart_for_keyframe {
             self.session = build_session(self.config)?;
-            self.frame_number = 0;
+            self.presentation_origin = None;
+            self.last_presentation_tick = -1;
             self.restart_for_keyframe = false;
         }
+        Ok(())
+    }
+
+    fn encode_with_tick(&mut self, surface: &IOSurface, presentation_tick: i64) -> Result<EncodedSurface, String> {
         let encoded = self
             .session
-            .encode(surface, (self.frame_number, self.config.max_fps.max(1) as i32))
+            .encode(surface, (presentation_tick, 90_000))
             .map_err(|error| error.to_string())?;
-        self.frame_number = self.frame_number.saturating_add(1);
+        self.last_presentation_tick = presentation_tick;
         let (mut data, keyframe) = length_prefixed_to_annex_b(self.config.codec, &encoded.data)?;
         if keyframe {
             let parameter_sets = unsafe { parameter_sets(encoded.cm_sample_buffer_ptr().cast(), self.config.codec) }?;
@@ -85,6 +115,13 @@ impl VideoToolboxEncoder {
         }
         Ok(EncodedSurface { data, keyframe })
     }
+}
+
+fn duration_to_timescale(duration: std::time::Duration, timescale: u64) -> u64 {
+    duration
+        .as_secs()
+        .saturating_mul(timescale)
+        .saturating_add(u64::from(duration.subsec_nanos()).saturating_mul(timescale) / 1_000_000_000)
 }
 
 fn build_session(config: VideoToolboxEncoderConfig) -> Result<CompressionSession, String> {

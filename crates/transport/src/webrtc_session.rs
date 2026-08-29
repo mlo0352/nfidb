@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
@@ -16,14 +16,16 @@ use webrtc::data_channel::RTCDataChannel;
 use webrtc::data_channel::data_channel_message::DataChannelMessage;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::interceptor::registry::Registry;
-use webrtc::media::Sample;
 use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
+use webrtc::rtp::packet::Packet;
+use webrtc::rtp::packetizer::{Packetizer, new_packetizer};
+use webrtc::rtp::sequence::new_random_sequencer;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::track::track_local::TrackLocal;
-use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
+use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 
 use crate::process_input_packet;
 
@@ -73,6 +75,77 @@ impl StartupKeyframeGate {
         }
         true
     }
+
+    fn require_keyframe(&mut self) {
+        self.awaiting_keyframe = true;
+    }
+}
+
+#[derive(Debug, Default)]
+struct CaptureTimeline {
+    origin: Option<Instant>,
+    current_ticks: u64,
+}
+
+impl CaptureTimeline {
+    fn advance_before(&mut self, captured_at: Instant, clock_rate: u32) -> u64 {
+        let Some(origin) = self.origin else {
+            self.origin = Some(captured_at);
+            return 0;
+        };
+        let elapsed = captured_at.checked_duration_since(origin).unwrap_or_default();
+        let absolute_ticks = duration_to_ticks(elapsed, clock_rate);
+        let advance = absolute_ticks.saturating_sub(self.current_ticks).max(1);
+        self.current_ticks = self.current_ticks.saturating_add(advance);
+        advance
+    }
+}
+
+#[derive(Debug)]
+struct TimedRtpPacketizer {
+    packetizer: Box<dyn Packetizer + Send + Sync>,
+    timeline: CaptureTimeline,
+    clock_rate: u32,
+}
+
+impl TimedRtpPacketizer {
+    const OUTBOUND_MTU: usize = 1200;
+
+    fn new(capability: &RTCRtpCodecCapability) -> Result<Self> {
+        let packetizer = new_packetizer(
+            Self::OUTBOUND_MTU,
+            0,
+            0,
+            capability.payloader_for_codec()?,
+            Box::new(new_random_sequencer()),
+            capability.clock_rate,
+        );
+        Ok(Self {
+            packetizer: Box::new(packetizer),
+            timeline: CaptureTimeline::default(),
+            clock_rate: capability.clock_rate,
+        })
+    }
+
+    fn packetize(&mut self, data: Bytes, captured_at: Instant) -> std::result::Result<Vec<Packet>, webrtc::rtp::Error> {
+        let mut advance = self.timeline.advance_before(captured_at, self.clock_rate);
+        while advance != 0 {
+            let chunk = advance.min(u64::from(u32::MAX)) as u32;
+            self.packetizer.skip_samples(chunk);
+            advance -= u64::from(chunk);
+        }
+        // The next frame advances the clock before it is packetized. Keeping
+        // the packetizer's post-frame increment at zero makes an idle gap land
+        // on the resumed frame instead of one frame late.
+        self.packetizer.packetize(&data, 0)
+    }
+}
+
+fn duration_to_ticks(duration: Duration, clock_rate: u32) -> u64 {
+    duration
+        .as_secs()
+        .saturating_mul(u64::from(clock_rate))
+        .saturating_add(u64::from(duration.subsec_nanos()).saturating_mul(u64::from(clock_rate)) / 1_000_000_000)
 }
 
 impl ActivePeer {
@@ -120,8 +193,10 @@ pub async fn accept_offer(
         .await?,
     );
 
-    let video_track = Arc::new(TrackLocalStaticSample::new(
-        codec_capability(codec, video.backend),
+    let video_capability = codec_capability(codec, video.backend);
+    let mut video_packetizer = TimedRtpPacketizer::new(&video_capability)?;
+    let video_track = Arc::new(TrackLocalStaticRTP::new(
+        video_capability,
         "screen".to_owned(),
         "nfidb".to_owned(),
     ));
@@ -233,34 +308,49 @@ pub async fn accept_offer(
         keyframe_request.request();
         let startup_started = Instant::now();
         let mut startup_gate = StartupKeyframeGate::new();
-        loop {
+        let mut video_started = false;
+        'video: loop {
             match video_rx.recv().await {
                 Ok(frame) => {
                     if frame.codec != codec {
                         video_metrics.video_transport_dropped(1);
                         continue;
                     }
-                    let first_decodable_frame = startup_gate.awaiting_keyframe;
                     if !startup_gate.admit(frame.keyframe) {
-                        video_metrics.video_startup_delta_frame_skipped();
+                        if video_started {
+                            video_metrics.video_transport_dropped(1);
+                        } else {
+                            video_metrics.video_startup_delta_frame_skipped();
+                        }
                         continue;
                     }
-                    if first_decodable_frame {
+                    if !video_started {
                         video_metrics.video_started(startup_started.elapsed());
+                        video_started = true;
                     }
-                    let sample = Sample {
-                        data: Bytes::copy_from_slice(&frame.data),
-                        duration: frame.duration,
-                        ..Default::default()
-                    };
-                    if let Err(error) = video_track.write_sample(&sample).await {
-                        tracing::debug!(%error, "video track closed");
-                        break;
+                    let packets =
+                        match video_packetizer.packetize(Bytes::copy_from_slice(&frame.data), frame.captured_at) {
+                            Ok(packets) => packets,
+                            Err(error) => {
+                                tracing::warn!(%error, "video RTP packetization failed");
+                                break;
+                            }
+                        };
+                    for packet in packets {
+                        if let Err(error) = video_track.write_rtp_with_extensions(&packet, &[]).await {
+                            tracing::debug!(%error, "video track closed");
+                            break 'video;
+                        }
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(skipped)) => {
                     video_metrics.video_transport_dropped(skipped);
-                    tracing::debug!(skipped, "dropped stale video frames before WebRTC");
+                    startup_gate.require_keyframe();
+                    keyframe_request.request();
+                    tracing::debug!(
+                        skipped,
+                        "dropped stale video frames before WebRTC; requesting a recovery keyframe"
+                    );
                 }
                 Err(broadcast::error::RecvError::Closed) => break,
             }
@@ -310,7 +400,10 @@ fn codec_capability(codec: VideoCodec, backend: EncoderBackend) -> RTCRtpCodecCa
 
 #[cfg(test)]
 mod tests {
-    use super::{StartupKeyframeGate, codec_capability};
+    use std::time::{Duration, Instant};
+
+    use super::{CaptureTimeline, StartupKeyframeGate, TimedRtpPacketizer, codec_capability};
+    use bytes::Bytes;
     use nfidb_core::{EncoderBackend, VideoCodec};
     use webrtc::api::media_engine::{MIME_TYPE_AV1, MIME_TYPE_H264, MIME_TYPE_HEVC};
 
@@ -321,6 +414,42 @@ mod tests {
         assert!(!gate.admit(false));
         assert!(gate.admit(true));
         assert!(gate.admit(false));
+        gate.require_keyframe();
+        assert!(!gate.admit(false));
+        assert!(gate.admit(true));
+    }
+
+    #[test]
+    fn capture_timeline_does_not_accumulate_fractional_frame_drift() {
+        let start = Instant::now();
+        let mut timeline = CaptureTimeline::default();
+        assert_eq!(timeline.advance_before(start, 90_000), 0);
+        let mut advanced = 0;
+        for frame in 1..=60_u32 {
+            advanced += timeline.advance_before(start + Duration::from_nanos(u64::from(frame) * 16_666_667), 90_000);
+        }
+        assert_eq!(advanced, 90_000);
+    }
+
+    #[test]
+    fn resumed_frame_carries_the_idle_gap_in_its_rtp_timestamp() {
+        let capability = codec_capability(VideoCodec::H264, EncoderBackend::VideoToolboxHardware);
+        let mut packetizer = TimedRtpPacketizer::new(&capability).unwrap();
+        let frame = Bytes::from_static(&[0, 0, 0, 1, 0x65, 0x88, 0x84]);
+        let start = Instant::now();
+
+        let first = packetizer.packetize(frame.clone(), start).unwrap();
+        let second = packetizer
+            .packetize(frame.clone(), start + Duration::from_nanos(16_666_667))
+            .unwrap();
+        let resumed = packetizer.packetize(frame, start + Duration::from_secs(3)).unwrap();
+
+        assert!(!first.is_empty());
+        assert!(!second.is_empty());
+        assert!(!resumed.is_empty());
+        let initial_timestamp = first[0].header.timestamp;
+        assert_eq!(second[0].header.timestamp.wrapping_sub(initial_timestamp), 1_500);
+        assert_eq!(resumed[0].header.timestamp.wrapping_sub(initial_timestamp), 270_000);
     }
 
     #[test]
