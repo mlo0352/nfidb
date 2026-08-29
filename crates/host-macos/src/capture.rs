@@ -804,17 +804,13 @@ fn select_encoder(
             selected.encoder_name.clone(),
         ));
     }
-    let selected = if browser.hevc.reported {
-        functional(EncoderMode::HevcHardware)
-            .or_else(|| functional(EncoderMode::H264Hardware))
-            .or_else(|| functional(EncoderMode::H264Software))
-    } else {
-        functional(EncoderMode::H264Hardware).or_else(|| functional(EncoderMode::H264Software))
-    }
-    .ok_or_else(|| "no functional video encoder is available".to_owned())?;
-    let reason = if selected.mode() == EncoderMode::HevcHardware {
-        "VideoToolbox HEVC is functional and the receiver reports HEVC; Auto will verify presentation before learning it".to_owned()
-    } else if selected.mode() == EncoderMode::H264Hardware {
+    // Browser capability reports are only claims. Start Auto on the broadly
+    // interoperable H.264 path until an actual receiver benchmark has proved
+    // HEVC/AV1 negotiation and presentation for this browser/runtime.
+    let selected = functional(EncoderMode::H264Hardware)
+        .or_else(|| functional(EncoderMode::H264Software))
+        .ok_or_else(|| "no functional video encoder is available".to_owned())?;
+    let reason = if selected.mode() == EncoderMode::H264Hardware {
         "VideoToolbox H.264 is the safe accelerated path before an end-to-end benchmark".to_owned()
     } else {
         "Hardware encoding is unavailable; OpenH264 is the compatibility fallback".to_owned()
@@ -899,6 +895,29 @@ fn save_learned(results: &[AutoBenchmarkObservation]) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    fn functional_hardware(codec: VideoCodec) -> EncoderCapability {
+        EncoderCapability {
+            id: format!("test-{}", codec.label()),
+            codec,
+            backend: EncoderBackend::VideoToolboxHardware,
+            hardware: true,
+            encoder_name: format!("Test {} hardware", codec.label()),
+            adapter_name: Some("Test Mac".to_owned()),
+            adapter_luid: None,
+            vendor: Some("Apple".to_owned()),
+            driver_version: None,
+            input_formats: vec!["BGRA IOSurface".to_owned()],
+            profiles: Vec::new(),
+            low_latency: Some(true),
+            rate_control: vec!["bitrate".to_owned()],
+            maximum_tested_width: Some(1920),
+            maximum_tested_height: Some(1080),
+            maximum_tested_fps: Some(60),
+            state: nfidb_core::CapabilityState::Functional,
+            failure_reason: None,
+        }
+    }
+
     #[test]
     fn output_dimensions_preserve_aspect_ratio_and_evenness() {
         assert_eq!(output_dimensions(3840, 2160, 1920), (1920, 1080));
@@ -939,5 +958,22 @@ mod tests {
         assert!(!frame_status_may_contain_image(Some(SCFrameStatus::Blank)));
         assert!(!frame_status_may_contain_image(Some(SCFrameStatus::Suspended)));
         assert!(!frame_status_may_contain_image(Some(SCFrameStatus::Stopped)));
+    }
+
+    #[test]
+    fn provisional_auto_does_not_trust_reported_hevc_without_presentation() {
+        let mut browser = BrowserVideoCapabilities {
+            user_agent: "Safari test".to_owned(),
+            ..BrowserVideoCapabilities::default()
+        };
+        browser.h264.reported = true;
+        browser.hevc.reported = true;
+        let capabilities = [
+            functional_hardware(VideoCodec::H264),
+            functional_hardware(VideoCodec::Hevc),
+        ];
+
+        let selected = select_encoder(&VideoConfig::default(), &browser, &capabilities, &[]).unwrap();
+        assert_eq!(selected.0, EncoderMode::H264Hardware);
     }
 }

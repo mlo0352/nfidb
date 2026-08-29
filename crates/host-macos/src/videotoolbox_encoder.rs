@@ -96,10 +96,7 @@ fn build_session(config: VideoToolboxEncoderConfig) -> Result<CompressionSession
         .with_expected_frame_rate(f64::from(config.max_fps))
         .with_max_keyframe_interval((config.max_fps.saturating_mul(2)).min(i32::MAX as u32) as i32);
     builder = match config.codec {
-        // The WebRTC transport advertises profile-level-id=42e01f. Safari
-        // accepts the track but cannot decode a Constrained High bitstream
-        // sent under that negotiated Constrained Baseline payload type.
-        VideoCodec::H264 => builder.with_profile_level(ProfileLevel::H264ConstrainedBaselineAutoLevel),
+        VideoCodec::H264 => builder.with_profile_level(ProfileLevel::H264BaselineAutoLevel),
         VideoCodec::Hevc => builder.with_profile_level(ProfileLevel::HEVCMainAutoLevel),
         VideoCodec::Av1 => builder,
     };
@@ -206,5 +203,76 @@ mod tests {
     #[test]
     fn rejects_truncated_video_toolbox_output() {
         assert!(length_prefixed_to_annex_b(VideoCodec::H264, &[0, 0, 0, 8, 1]).is_err());
+    }
+
+    #[test]
+    fn hardware_h264_keyframe_contains_baseline_decoder_configuration() {
+        let width = 1920;
+        let height = 1080;
+        let pixels = vec![0x80_u8; width as usize * height as usize * 4];
+        let surface = crate::capture::bgra_iosurface(width, height, &pixels).unwrap();
+        let mut encoder = VideoToolboxEncoder::new(VideoToolboxEncoderConfig {
+            codec: VideoCodec::H264,
+            width,
+            height,
+            max_fps: 60,
+            bitrate_bps: 4_000_000,
+        })
+        .unwrap();
+
+        encoder.request_keyframe();
+        let encoded = encoder.encode(&surface).unwrap();
+        assert!(encoded.keyframe);
+
+        let nals = annex_b_nals(&encoded.data);
+        let sps = nals
+            .iter()
+            .find(|nal| !nal.is_empty() && nal[0] & 0x1f == 7)
+            .expect("keyframe must carry an SPS");
+        assert!(
+            nals.iter().any(|nal| !nal.is_empty() && nal[0] & 0x1f == 8),
+            "keyframe must carry a PPS"
+        );
+        assert!(
+            nals.iter().any(|nal| !nal.is_empty() && nal[0] & 0x1f == 5),
+            "keyframe must carry an IDR slice"
+        );
+        assert_eq!(
+            sps.get(1).copied(),
+            Some(66),
+            "SPS must advertise H.264 Baseline profile"
+        );
+        assert_eq!(
+            sps.get(2).copied(),
+            Some(0),
+            "SPS compatibility flags must match the 4200 WebRTC profile"
+        );
+    }
+
+    fn annex_b_nals(bytes: &[u8]) -> Vec<&[u8]> {
+        let mut starts = Vec::new();
+        let mut cursor = 0;
+        while cursor + 3 < bytes.len() {
+            if bytes[cursor..].starts_with(&[0, 0, 0, 1]) {
+                starts.push(cursor + 4);
+                cursor += 4;
+            } else if bytes[cursor..].starts_with(&[0, 0, 1]) {
+                starts.push(cursor + 3);
+                cursor += 3;
+            } else {
+                cursor += 1;
+            }
+        }
+        starts
+            .iter()
+            .enumerate()
+            .map(|(index, start)| {
+                let end = starts
+                    .get(index + 1)
+                    .map(|next| next.saturating_sub(4))
+                    .unwrap_or(bytes.len());
+                &bytes[*start..end]
+            })
+            .collect()
     }
 }

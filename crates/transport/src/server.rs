@@ -1067,13 +1067,14 @@ async fn webrtc_offer(State(state): State<Arc<AppState>>, Json(offer): Json<WebR
     if !state.session.authorize(&offer.token) {
         return api_error(StatusCode::UNAUTHORIZED, "invalid session token");
     }
+    let runtime = state.video_runtime.video_runtime_status();
     match accept_offer(
         offer,
         Arc::clone(&state.input),
         Arc::clone(&state.metrics),
         state.video_tx.subscribe(),
         state.keyframe_request.clone(),
-        state.video_runtime.video_runtime_status().codec,
+        runtime,
         &state.peer,
     )
     .await

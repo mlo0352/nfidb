@@ -3,7 +3,9 @@ use std::time::Instant;
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use nfidb_core::{EncodedVideoFrame, InputSink, KeyframeRequest, Metrics, VideoCodec};
+use nfidb_core::{
+    EncodedVideoFrame, EncoderBackend, InputSink, KeyframeRequest, Metrics, VideoCodec, VideoRuntimeStatus,
+};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, watch};
@@ -95,12 +97,13 @@ pub async fn accept_offer(
     metrics: Arc<Metrics>,
     mut video_rx: broadcast::Receiver<EncodedVideoFrame>,
     keyframe_request: KeyframeRequest,
-    codec: VideoCodec,
+    video: VideoRuntimeStatus,
     active: &ActivePeer,
 ) -> Result<WebRtcAnswer> {
     if offer.kind != "offer" {
         anyhow::bail!("expected SDP offer, received {}", offer.kind);
     }
+    let codec = video.codec;
     let mut media = MediaEngine::default();
     media.register_default_codecs()?;
     let mut registry = Registry::new();
@@ -118,7 +121,7 @@ pub async fn accept_offer(
     );
 
     let video_track = Arc::new(TrackLocalStaticSample::new(
-        codec_capability(codec),
+        codec_capability(codec, video.backend),
         "screen".to_owned(),
         "nfidb".to_owned(),
     ));
@@ -271,12 +274,24 @@ pub async fn accept_offer(
     })
 }
 
-fn codec_capability(codec: VideoCodec) -> RTCRtpCodecCapability {
+fn codec_capability(codec: VideoCodec, backend: EncoderBackend) -> RTCRtpCodecCapability {
     match codec {
         VideoCodec::H264 => RTCRtpCodecCapability {
             mime_type: MIME_TYPE_H264.to_owned(),
             clock_rate: 90_000,
-            sdp_fmtp_line: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f".to_owned(),
+            // Apple VideoToolbox's Baseline profile emits an SPS beginning
+            // 4200, while the existing Windows encoders use Constrained
+            // Baseline. Profile constraints are symmetric in RFC 6184, even
+            // when level asymmetry is permitted, and Safari enforces them.
+            sdp_fmtp_line: match backend {
+                EncoderBackend::VideoToolboxHardware => {
+                    "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f"
+                }
+                EncoderBackend::MediaFoundationHardware | EncoderBackend::OpenH264Software => {
+                    "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f"
+                }
+            }
+            .to_owned(),
             ..Default::default()
         },
         VideoCodec::Hevc => RTCRtpCodecCapability {
@@ -296,7 +311,7 @@ fn codec_capability(codec: VideoCodec) -> RTCRtpCodecCapability {
 #[cfg(test)]
 mod tests {
     use super::{StartupKeyframeGate, codec_capability};
-    use nfidb_core::VideoCodec;
+    use nfidb_core::{EncoderBackend, VideoCodec};
     use webrtc::api::media_engine::{MIME_TYPE_AV1, MIME_TYPE_H264, MIME_TYPE_HEVC};
 
     #[test]
@@ -310,8 +325,31 @@ mod tests {
 
     #[test]
     fn every_encoder_codec_has_matching_rtp_identity() {
-        assert_eq!(codec_capability(VideoCodec::H264).mime_type, MIME_TYPE_H264);
-        assert_eq!(codec_capability(VideoCodec::Hevc).mime_type, MIME_TYPE_HEVC);
-        assert_eq!(codec_capability(VideoCodec::Av1).mime_type, MIME_TYPE_AV1);
+        assert_eq!(
+            codec_capability(VideoCodec::H264, EncoderBackend::MediaFoundationHardware).mime_type,
+            MIME_TYPE_H264
+        );
+        assert_eq!(
+            codec_capability(VideoCodec::Hevc, EncoderBackend::VideoToolboxHardware).mime_type,
+            MIME_TYPE_HEVC
+        );
+        assert_eq!(
+            codec_capability(VideoCodec::Av1, EncoderBackend::MediaFoundationHardware).mime_type,
+            MIME_TYPE_AV1
+        );
+    }
+
+    #[test]
+    fn h264_signaling_matches_the_encoder_profile_constraints() {
+        assert!(
+            codec_capability(VideoCodec::H264, EncoderBackend::VideoToolboxHardware)
+                .sdp_fmtp_line
+                .contains("profile-level-id=42001f")
+        );
+        assert!(
+            codec_capability(VideoCodec::H264, EncoderBackend::MediaFoundationHardware)
+                .sdp_fmtp_line
+                .contains("profile-level-id=42e01f")
+        );
     }
 }

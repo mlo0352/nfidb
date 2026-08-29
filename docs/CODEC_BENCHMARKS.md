@@ -3,7 +3,7 @@
 NFiDB has two deliberately separate benchmark levels.
 
 - The host benchmark needs no receiver. It renders deterministic screen-detail, drawing, and high-motion frames. Hardware rows upload the known BGRA source, then exercise the same D3D11 resize/BGRA-to-NV12 and Media Foundation DXGI-surface path as live monitor capture; software H.264 exercises CPU resize/I420. It records the actual memory path, throughput, bytes, startup, preprocess/encode distributions, process CPU, working set, and Auto score.
-- Quick Auto Test runs from a paired browser. It switches only among mutually supported modes, waits for a presented frame, samples the real capture/WebRTC/decode/presentation path for four seconds, stores the observation locally, and returns the host to Auto. Desktop browser automation is always labeled as Edge, never iPad Safari.
+- Quick Auto Test runs from a paired browser. It switches only among mutually reported modes, requires a presented frame, samples the real capture/WebRTC/decode/presentation path for four seconds, stores the observation locally, and returns the host to Auto. A browser codec report alone never promotes HEVC or AV1 over provisional hardware H.264. Desktop browser automation is always labeled as Edge, never iPad Safari.
 
 `scripts/benchmark.ps1` exports `environment.json`, `capabilities.json`, `results.json`, `results.csv`, and `summary.md` for host runs. Receiver runs add raw, CSV, and Markdown Edge reports. `build/benchmarks/latest.json` remains the machine-readable latest host result.
 
