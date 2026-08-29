@@ -239,9 +239,10 @@ describe("surface controls", () => {
       status: { mode: string };
       peer: RTCPeerConnection;
       socket: { readyState: number; send: (message: string) => void };
-      metrics: { encoded_fps: number };
+      metrics: { capture_fps: number; encoded_fps: number };
       firstVideoFrameAtMs: number;
       lastVideoProgressAtMs: number;
+      lastHostMetricsAtMs: number;
       videoStallRecoveryAttempts: number;
       renderSurface: () => void;
       connectVideo: () => Promise<void>;
@@ -252,9 +253,10 @@ describe("surface controls", () => {
     internal.renderSurface();
     internal.peer = peer;
     internal.socket = { readyState: WebSocket.OPEN, send };
-    internal.metrics = { encoded_fps: 60 };
+    internal.metrics = { capture_fps: 60, encoded_fps: 60 };
     internal.firstVideoFrameAtMs = 500;
     internal.lastVideoProgressAtMs = 1_000;
+    internal.lastHostMetricsAtMs = 4_500;
     internal.connectVideo = reconnect;
     const video = root.querySelector<HTMLVideoElement>("#remoteVideo")!;
     Object.defineProperty(video, "play", { configurable: true, value: vi.fn(async () => undefined) });
@@ -266,12 +268,13 @@ describe("surface controls", () => {
 
     internal.videoStallRecoveryAttempts = 3;
     now.mockReturnValue(10_000);
+    internal.lastHostMetricsAtMs = 9_500;
     await vi.advanceTimersByTimeAsync(1_000);
     expect(reconnect).toHaveBeenCalledOnce();
     internal.stopVideoStallWatchdog();
   });
 
-  it("rebuilds a stalled peer even when neither control channel can request a keyframe", async () => {
+  it("rebuilds an active stalled stream even when neither control channel can request a keyframe", async () => {
     vi.useFakeTimers();
     vi.spyOn(performance, "now").mockReturnValue(12_000);
     const root = document.createElement("div");
@@ -284,6 +287,8 @@ describe("surface controls", () => {
       socket: { readyState: number; send: (message: string) => void };
       firstVideoFrameAtMs: number;
       lastVideoProgressAtMs: number;
+      lastHostMetricsAtMs: number;
+      metrics: { capture_fps: number; encoded_fps: number };
       renderSurface: () => void;
       connectVideo: () => Promise<void>;
       startVideoStallWatchdog: (peer: RTCPeerConnection, video: HTMLVideoElement) => void;
@@ -295,6 +300,8 @@ describe("surface controls", () => {
     internal.socket = { readyState: WebSocket.CLOSED, send: vi.fn() };
     internal.firstVideoFrameAtMs = 500;
     internal.lastVideoProgressAtMs = 1_000;
+    internal.lastHostMetricsAtMs = 11_500;
+    internal.metrics = { capture_fps: 30, encoded_fps: 30 };
     internal.connectVideo = reconnect;
     const video = root.querySelector<HTMLVideoElement>("#remoteVideo")!;
     Object.defineProperty(video, "play", { configurable: true, value: vi.fn(async () => undefined) });
@@ -302,6 +309,45 @@ describe("surface controls", () => {
     internal.startVideoStallWatchdog(peer, video);
     await vi.advanceTimersByTimeAsync(1_000);
     expect(reconnect).toHaveBeenCalledOnce();
+    internal.stopVideoStallWatchdog();
+  });
+
+  it("does not rebuild a healthy static macOS screen", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(performance, "now").mockReturnValue(12_000);
+    const root = document.createElement("div");
+    const app = new NfidbApp(root);
+    const reconnect = vi.fn(async () => undefined);
+    const peer = { connectionState: "connected" } as RTCPeerConnection;
+    const internal = app as unknown as {
+      status: { mode: string };
+      peer: RTCPeerConnection;
+      socket: { readyState: number; send: (message: string) => void };
+      firstVideoFrameAtMs: number;
+      lastVideoProgressAtMs: number;
+      lastHostMetricsAtMs: number;
+      metrics: { capture_fps: number; encoded_fps: number };
+      renderSurface: () => void;
+      connectVideo: () => Promise<void>;
+      startVideoStallWatchdog: (peer: RTCPeerConnection, video: HTMLVideoElement) => void;
+      stopVideoStallWatchdog: () => void;
+    };
+    internal.status = { mode: "display-and-input" };
+    internal.renderSurface();
+    internal.peer = peer;
+    internal.socket = { readyState: WebSocket.OPEN, send: vi.fn() };
+    internal.firstVideoFrameAtMs = 500;
+    internal.lastVideoProgressAtMs = 1_000;
+    internal.lastHostMetricsAtMs = 11_500;
+    internal.metrics = { capture_fps: 0, encoded_fps: 0 };
+    internal.connectVideo = reconnect;
+    const video = root.querySelector<HTMLVideoElement>("#remoteVideo")!;
+    Object.defineProperty(video, "play", { configurable: true, value: vi.fn(async () => undefined) });
+
+    internal.startVideoStallWatchdog(peer, video);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(reconnect).not.toHaveBeenCalled();
+    expect(internal.socket.send).not.toHaveBeenCalled();
     internal.stopVideoStallWatchdog();
   });
 

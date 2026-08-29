@@ -170,6 +170,7 @@ export class NfidbApp {
   private videoStallTimer = 0;
   private videoStallRecoveryAttempts = 0;
   private lastVideoRecoveryRequestAtMs = 0;
+  private lastHostMetricsAtMs = 0;
   private videoReconnectActive = false;
   private videoReconnectCount = 0;
   private consecutiveVideoReconnects = 0;
@@ -605,7 +606,19 @@ export class NfidbApp {
       const disconnected = peer.connectionState === "disconnected";
       const visible = document.visibilityState === "visible";
       const reconnectAfterMs = Math.min(20_000, 8_000 + this.consecutiveVideoReconnects * 4_000);
-      const shouldRecover = visible && (terminal || disconnected || gapMs >= 2_500);
+      const waitingForFirstFrame = this.firstVideoFrameAtMs === 0;
+      const hostMetricsAreFresh =
+        this.lastHostMetricsAtMs > 0 && now - this.lastHostMetricsAtMs <= 2_500;
+      const hostIsProducingFrames =
+        hostMetricsAreFresh &&
+        ((this.metrics?.capture_fps ?? 0) >= 2 || (this.metrics?.encoded_fps ?? 0) >= 2);
+      // ScreenCaptureKit intentionally emits no frames while the desktop is
+      // unchanged. That is a healthy static screen, not a Safari stall. After
+      // the first presented frame, only recover while the independent host
+      // control channel proves that capture/encoding is still advancing.
+      const presentationNeedsRecovery =
+        gapMs >= 2_500 && (waitingForFirstFrame || hostIsProducingFrames);
+      const shouldRecover = visible && (terminal || disconnected || presentationNeedsRecovery);
       if (shouldRecover && (terminal || gapMs >= reconnectAfterMs)) {
         const reason = terminal || disconnected
           ? "The WebRTC video path disconnected. Rebuilding it automatically…"
@@ -1537,6 +1550,7 @@ export class NfidbApp {
       const message = JSON.parse(data) as { type?: string; t0?: number; t1?: number; t2?: number; stats?: HostMetrics };
       if (message.type === "stats" && message.stats) {
         this.metrics = message.stats;
+        this.lastHostMetricsAtMs = performance.now();
         this.renderStats();
       } else if (
         message.type === "pong" &&
@@ -2088,6 +2102,7 @@ export class NfidbApp {
     this.lastVideoProgressAtMs = 0;
     this.lastVideoMediaTimeSeconds = null;
     this.lastVideoRecoveryRequestAtMs = 0;
+    this.lastHostMetricsAtMs = 0;
     this.consecutiveVideoReconnects = 0;
     this.previousRtcCounters = null;
     this.liveClientDiagnostic = null;
