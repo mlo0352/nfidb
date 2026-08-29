@@ -16,8 +16,7 @@
 
 html,
 body,
-#app,
-#surface {
+#app {
   width: 100%;
   height: 100%;
   margin: 0;
@@ -109,15 +108,25 @@ button { -webkit-tap-highlight-color: transparent; }
 .loader { width: 28px; height: 28px; margin-top: 24px; border: 2px solid #24302e; border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.surface { position: relative; isolation: isolate; background: #000; }
+.surface {
+  position: absolute;
+  isolation: isolate;
+  left: var(--nfidb-viewport-left, 0);
+  top: var(--nfidb-viewport-top, 0);
+  width: var(--nfidb-viewport-width, 100%);
+  height: var(--nfidb-viewport-height, 100%);
+  overflow: hidden;
+  background: #000;
+}
 #remoteVideo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
 #interactionOverlay { position: absolute; z-index: 2; inset: 0; width: 100%; height: 100%; touch-action: none; user-select: none; -webkit-user-select: none; }
 .toolbar {
   position: absolute;
-  z-index: 5;
-  top: max(12px, env(safe-area-inset-top));
+  z-index: 30;
+  top: auto;
   left: max(12px, env(safe-area-inset-left));
   right: max(12px, env(safe-area-inset-right));
+  bottom: max(12px, env(safe-area-inset-bottom));
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -162,7 +171,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .stats-panel b { min-width: 0; color: #dbe1df; font-size: 0.67rem; font-weight: 600; text-align: right; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .toolbar-reveal {
   position: absolute;
-  z-index: 20;
+  z-index: 31;
   left: max(18px, env(safe-area-inset-left));
   bottom: max(18px, env(safe-area-inset-bottom));
   display: inline-flex;

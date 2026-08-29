@@ -184,6 +184,7 @@ export class NfidbApp {
   private clockOffsetMs = 0;
   private pairingRequestActive = false;
   private videoFrameRequest = 0;
+  private surfaceViewportCleanup: (() => void) | null = null;
   private frameCallbackCount = 0;
   private lastFrameCallbackAtMs = 0;
   private lastVideoProgressAtMs = 0;
@@ -464,6 +465,11 @@ export class NfidbApp {
         </section>
         <button id="toolbarReveal" class="toolbar-reveal" aria-label="Show NFiDB controls" aria-controls="toolbar" aria-expanded="true"><b>NFiDB</b><span>Controls</span></button>
       </main>`;
+    // Keep toolbar recovery independent from the much larger input/video
+    // initialization below. If Safari rejects an optional input or media API,
+    // the user must still be able to open Controls and repair the session.
+    this.bindToolbarVisibilityControls();
+    this.bindSurfaceToVisibleViewport(this.requiredElement<HTMLElement>("surface"));
     const overlay = this.requiredElement<HTMLCanvasElement>("interactionOverlay");
     const video = this.requiredElement<HTMLVideoElement>("remoteVideo");
     const resize = () => {
@@ -844,9 +850,70 @@ export class NfidbApp {
       })();
     });
     this.requiredElement("disconnectButton").addEventListener("click", () => void this.disconnect());
-    this.requiredElement("controlsClose").addEventListener("click", () => this.hideToolbar());
-    this.requiredElement("toolbarReveal").addEventListener("click", () => this.showToolbar());
     this.requiredElement("interactionOverlay").addEventListener("pointerdown", () => this.hideToolbar(), { passive: true });
+  }
+
+  private bindToolbarVisibilityControls(): void {
+    const bindActivation = (element: HTMLElement, activate: () => void): void => {
+      // iPadOS browsers occasionally suppress the synthetic click when a tap
+      // begins beside a full-screen canvas/video layer. Pointer-down gives the
+      // control an immediate path; touch-end covers older WebKit; click keeps
+      // keyboard and assistive activation intact. The action is idempotent, so
+      // receiving more than one of these events is harmless.
+      element.addEventListener("pointerdown", (event) => {
+        event.stopPropagation();
+        activate();
+      });
+      element.addEventListener("touchend", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        activate();
+      }, { passive: false });
+      element.addEventListener("click", (event) => {
+        event.stopPropagation();
+        activate();
+      });
+    };
+    bindActivation(this.requiredElement("controlsClose"), () => this.hideToolbar());
+    bindActivation(this.requiredElement("toolbarReveal"), () => this.showToolbar());
+  }
+
+  private bindSurfaceToVisibleViewport(surface: HTMLElement): void {
+    this.surfaceViewportCleanup?.();
+    let pendingFrame = 0;
+    const update = () => {
+      pendingFrame = 0;
+      const fullscreen = document.fullscreenElement === surface;
+      const viewport = window.visualViewport;
+      const left = fullscreen ? 0 : Math.max(0, viewport?.offsetLeft ?? 0);
+      const top = fullscreen ? 0 : Math.max(0, viewport?.offsetTop ?? 0);
+      const width = fullscreen ? window.innerWidth : Math.max(1, viewport?.width ?? window.innerWidth);
+      const height = fullscreen ? window.innerHeight : Math.max(1, viewport?.height ?? window.innerHeight);
+      surface.style.setProperty("--nfidb-viewport-left", `${left}px`);
+      surface.style.setProperty("--nfidb-viewport-top", `${top}px`);
+      surface.style.setProperty("--nfidb-viewport-width", `${width}px`);
+      surface.style.setProperty("--nfidb-viewport-height", `${height}px`);
+    };
+    const scheduleUpdate = () => {
+      if (pendingFrame === 0) {
+        pendingFrame = window.requestAnimationFrame(update);
+      }
+    };
+    window.addEventListener("resize", scheduleUpdate, { passive: true });
+    window.visualViewport?.addEventListener("resize", scheduleUpdate, { passive: true });
+    window.visualViewport?.addEventListener("scroll", scheduleUpdate, { passive: true });
+    document.addEventListener("fullscreenchange", scheduleUpdate);
+    update();
+    this.surfaceViewportCleanup = () => {
+      if (pendingFrame !== 0) {
+        window.cancelAnimationFrame(pendingFrame);
+      }
+      window.removeEventListener("resize", scheduleUpdate);
+      window.visualViewport?.removeEventListener("resize", scheduleUpdate);
+      window.visualViewport?.removeEventListener("scroll", scheduleUpdate);
+      document.removeEventListener("fullscreenchange", scheduleUpdate);
+      this.surfaceViewportCleanup = null;
+    };
   }
 
   private closeSurfacePanels(): void {
