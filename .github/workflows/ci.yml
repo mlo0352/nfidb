@@ -96,6 +96,20 @@ jobs:
         run: cargo test --locked -p nfidb-host-macos -p nfidb-core -p nfidb-protocol -p nfidb-transport
       - name: Build macOS application bundle
         run: ./scripts/build-macos.sh --skip-tests --skip-web
+      - name: Install deterministic smoke-test browser
+        working-directory: apps/ipad-web
+        run: npx playwright install chromium
+      - name: macOS decoded-video and DataChannel smoke
+        env:
+          NFIDB_E2E_CHANNEL: bundled
+        run: ./scripts/macos-video-smoke.sh
+      - name: Upload macOS media smoke diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nfidb-macos-video-smoke-ci
+          if-no-files-found: warn
+          path: build/macos-video-smoke
       - name: Verify macOS package
         run: |
           test -s build/packages/NFiDB-macos-arm64.zip

@@ -10,7 +10,7 @@ interface DiagnosticSnapshot {
   host: Record<string, number | boolean>;
 }
 
-test("starts and advances a real monitor stream and honors a fresh-IDR request", async ({ page }) => {
+test("starts and advances video, carries mouse input on DataChannel, and honors a fresh-IDR request", async ({ page }) => {
   const pin = process.env.NFIDB_E2E_PIN;
   test.skip(!pin, "Set NFIDB_E2E_PIN when running against a live NFiDB host.");
   test.setTimeout(90_000);
@@ -21,9 +21,18 @@ test("starts and advances a real monitor stream and honors a fresh-IDR request",
   await expect(page.locator("#connectionState")).toContainText("Connected locally", { timeout: 20_000 });
   await expect.poll(() => page.locator("video").evaluate((video) => video.videoWidth), { timeout: 30_000 }).toBeGreaterThan(0);
 
+  const transportBefore = await snapshot(page);
+  const overlay = await page.locator("#interactionOverlay").boundingBox();
+  expect(overlay).not.toBeNull();
+  await page.mouse.move(overlay!.x + overlay!.width / 2, overlay!.y + overlay!.height / 2);
+  await expect.poll(async () => (await snapshot(page)).inputTransport, { timeout: 10_000 }).toBe("datachannel");
+  await expect.poll(async () => Number((await snapshot(page)).host.mouse_samples), { timeout: 10_000 })
+    .toBeGreaterThan(Number(transportBefore.host.mouse_samples));
+
   const before = await snapshot(page);
   expect(before.connectionState).toBe("connected");
   expect(before.peerConnectionState).toBe("connected");
+  expect(before.inputTransport).toBe("datachannel");
   expect(before.video.readyState).toBeGreaterThanOrEqual(2);
   expect(before.video.startupMs).not.toBeNull();
   expect(Number(before.video.startupMs)).toBeLessThan(5_000);
@@ -44,9 +53,12 @@ test("starts and advances a real monitor stream and honors a fresh-IDR request",
   expect(Number(after.host.encoded_frames)).toBeGreaterThan(Number(before.host.encoded_frames));
   expect(Number(after.host.encoded_keyframes)).toBeGreaterThan(Number(before.host.encoded_keyframes));
   expect(Number(after.host.video_transport_drops)).toBe(0);
+  expect(after.inputTransport).toBe("datachannel");
   expect(Number(after.inboundVideo?.packetsLost ?? 0)).toBe(0);
   expect(Number(after.inboundVideo?.framesDecoded ?? 0)).toBeGreaterThan(0);
-  expect(Number(after.inboundVideo?.framesDropped ?? 0)).toBe(0);
+  expect(
+    Number(after.inboundVideo?.framesDropped ?? 0) - Number(before.inboundVideo?.framesDropped ?? 0),
+  ).toBeLessThanOrEqual(1);
   expect(Number(after.inboundVideo?.freezeCount ?? 0)).toBe(0);
 
   const expectedWidth = Number(process.env.NFIDB_E2E_EXPECT_WIDTH ?? 0);

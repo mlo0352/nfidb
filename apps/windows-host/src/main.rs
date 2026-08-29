@@ -455,19 +455,28 @@ fn run() -> Result<()> {
         return Ok(());
     }
 
+    let viewport = egui::ViewportBuilder::default()
+        .with_title("NFiDB — No Frills iPad Drawing Bridge")
+        .with_inner_size([980.0, 690.0])
+        .with_min_inner_size([760.0, 560.0])
+        // Windows file dropping is not an NFiDB input path. Disabling the
+        // unused winit hook also prevents it from imposing an OLE/STA
+        // apartment requirement on the host's media and capture process.
+        .with_drag_and_drop(false);
+    #[cfg(target_os = "macos")]
+    let viewport = match create_macos_dock_icon() {
+        Ok(icon) => viewport.with_icon(icon),
+        Err(error) => {
+            tracing::warn!(%error, "macOS Dock icon could not be loaded");
+            viewport
+        }
+    };
     let native_options = eframe::NativeOptions {
         // Use Windows' native graphics stack (or its software adapter) rather
         // than requiring a vendor OpenGL 2+ driver. This also makes the real
         // desktop shell testable on clean hosted-Windows environments.
         renderer: eframe::Renderer::Wgpu,
-        viewport: egui::ViewportBuilder::default()
-            .with_title("NFiDB — No Frills iPad Drawing Bridge")
-            .with_inner_size([980.0, 690.0])
-            .with_min_inner_size([760.0, 560.0])
-            // Windows file dropping is not an NFiDB input path. Disabling the
-            // unused winit hook also prevents it from imposing an OLE/STA
-            // apartment requirement on the host's media and capture process.
-            .with_drag_and_drop(false),
+        viewport,
         ..Default::default()
     };
     #[cfg(target_os = "macos")]
@@ -599,9 +608,18 @@ fn platform_setup_required() -> bool {
 }
 
 #[cfg(target_os = "macos")]
+fn create_macos_dock_icon() -> Result<egui::IconData> {
+    let rgba = load_macos_logo()?.into_rgba8();
+    Ok(egui::IconData {
+        width: rgba.width(),
+        height: rgba.height(),
+        rgba: rgba.into_raw(),
+    })
+}
+
+#[cfg(target_os = "macos")]
 fn create_macos_status_icon() -> Result<tray_icon::TrayIcon> {
-    let decoded = image::load_from_memory_with_format(include_bytes!("../assets/nfidb.ico"), image::ImageFormat::Ico)?;
-    let rgba = decoded
+    let rgba = load_macos_logo()?
         .resize_exact(32, 32, image::imageops::FilterType::Lanczos3)
         .into_rgba8();
     let icon = tray_icon::Icon::from_rgba(rgba.into_raw(), 32, 32)?;
@@ -612,6 +630,14 @@ fn create_macos_status_icon() -> Result<tray_icon::TrayIcon> {
         .with_menu_on_left_click(false)
         .with_menu_on_right_click(false)
         .build()?)
+}
+
+#[cfg(target_os = "macos")]
+fn load_macos_logo() -> Result<image::DynamicImage> {
+    Ok(image::load_from_memory_with_format(
+        include_bytes!("../assets/nfidb.png"),
+        image::ImageFormat::Png,
+    )?)
 }
 
 fn write_json(path: &PathBuf, value: &impl serde::Serialize) -> Result<()> {

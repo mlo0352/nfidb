@@ -597,6 +597,7 @@ fn encode_loop(
     let mut dimensions = (0, 0);
     let mut last_keyframe_at = Instant::now() - Duration::from_secs(10);
     let mut last_frame = None;
+    let mut receiver_keyframe_pending = false;
     loop {
         let fresh_frame = match slot.take() {
             FrameWait::Frame(frame) => {
@@ -606,7 +607,8 @@ fn encode_loop(
             FrameWait::TimedOut => false,
             FrameWait::Stopped => break,
         };
-        let force_keyframe = keyframe_request.take() || last_keyframe_at.elapsed() >= Duration::from_secs(5);
+        latch_keyframe_request(&keyframe_request, &mut receiver_keyframe_pending);
+        let force_keyframe = receiver_keyframe_pending || last_keyframe_at.elapsed() >= Duration::from_secs(5);
         if !fresh_frame && !force_keyframe {
             continue;
         }
@@ -655,6 +657,7 @@ fn encode_loop(
                     metrics.encoded_keyframe();
                     last_keyframe_at = Instant::now();
                 }
+                acknowledge_keyframe(packet.keyframe, &mut receiver_keyframe_pending);
                 let codec = selection.active_mode.codec().unwrap_or(VideoCodec::H264);
                 let encoded = EncodedVideoFrame {
                     data: Arc::from(packet.data),
@@ -672,6 +675,16 @@ fn encode_loop(
             Ok(None) => metrics.dropped_frame(),
             Err(error) => status.lock().error = Some(error),
         }
+    }
+}
+
+fn latch_keyframe_request(request: &KeyframeRequest, pending: &mut bool) {
+    *pending |= request.take();
+}
+
+fn acknowledge_keyframe(encoded_keyframe: bool, pending: &mut bool) {
+    if encoded_keyframe {
+        *pending = false;
     }
 }
 
@@ -961,6 +974,32 @@ fn save_learned(results: &[AutoBenchmarkObservation]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn receiver_keyframe_request_survives_until_a_keyframe_is_encoded() {
+        let request = KeyframeRequest::default();
+        let mut pending = false;
+
+        request.request();
+        latch_keyframe_request(&request, &mut pending);
+        assert!(
+            pending,
+            "the request must remain latched while capture has no frame yet"
+        );
+        assert!(
+            !request.take(),
+            "the shared edge is consumed into the local latch exactly once"
+        );
+
+        // A timeout, failed encoder construction, or non-IDR output must not
+        // acknowledge the receiver's request. Only an encoded keyframe does.
+        latch_keyframe_request(&request, &mut pending);
+        assert!(pending);
+        acknowledge_keyframe(false, &mut pending);
+        assert!(pending);
+        acknowledge_keyframe(true, &mut pending);
+        assert!(!pending);
+    }
 
     fn functional_hardware(codec: VideoCodec) -> EncoderCapability {
         EncoderCapability {

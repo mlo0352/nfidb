@@ -95,10 +95,11 @@ sed "s/__NFIDB_VERSION__/$version/g" apps/windows-host/assets/Info.plist > "$con
 icon_work="$stage_root/icon-work"
 iconset="$icon_work/NFiDB.iconset"
 mkdir -p "$iconset"
-qlmanage -t -s 1024 -o "$icon_work" apps/windows-host/assets/nfidb.svg >/dev/null 2>&1
-icon_source="$icon_work/nfidb.svg.png"
-if [[ ! -f "$icon_source" ]]; then
-  echo "Quick Look failed to render the NFiDB icon." >&2
+icon_source="apps/windows-host/assets/nfidb.png"
+icon_width="$(sips -g pixelWidth "$icon_source" | awk '/pixelWidth:/ { print $2 }')"
+icon_alpha="$(sips -g hasAlpha "$icon_source" | awk '/hasAlpha:/ { print $2 }')"
+if [[ -z "$icon_width" || "$icon_width" -lt 512 || "$icon_alpha" != "yes" ]]; then
+  echo "NFiDB source icon must be at least 512 px with transparency (found ${icon_width:-unknown} px, alpha ${icon_alpha:-unknown})." >&2
   exit 1
 fi
 for spec in \
@@ -117,6 +118,14 @@ for spec in \
   sips -z "$size" "$size" "$icon_source" --out "$iconset/$name" >/dev/null
 done
 iconutil -c icns "$iconset" -o "$contents/Resources/NFiDB.icns"
+if [[ "$(plutil -extract CFBundleIconFile raw "$contents/Info.plist")" != "NFiDB.icns" ]]; then
+  echo "macOS bundle does not declare the NFiDB icon." >&2
+  exit 1
+fi
+if [[ ! -s "$contents/Resources/NFiDB.icns" ]]; then
+  echo "macOS NFiDB icon asset is missing or empty." >&2
+  exit 1
+fi
 
 codesign --force --deep --sign "$sign_identity" --timestamp=none "$app"
 codesign --verify --deep --strict "$app"

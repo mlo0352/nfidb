@@ -60,6 +60,20 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build and validate macOS application
         run: ./scripts/build-macos.sh
+      - name: Install deterministic smoke-test browser
+        working-directory: apps/ipad-web
+        run: npx playwright install chromium
+      - name: Gate release on decoded video and DataChannel input
+        env:
+          NFIDB_E2E_CHANNEL: bundled
+        run: ./scripts/macos-video-smoke.sh
+      - name: Upload macOS media smoke diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nfidb-macos-video-smoke-release
+          if-no-files-found: warn
+          path: build/macos-video-smoke
       - name: Publish macOS release assets
         uses: softprops/action-gh-release@v2
         with:
