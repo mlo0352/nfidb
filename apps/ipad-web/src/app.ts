@@ -46,9 +46,12 @@ type InputTransport = "datachannel" | "websocket";
 
 interface RtcDiagnosticStats {
   inboundVideo: Record<string, unknown> | null;
+  codec: Record<string, unknown> | null;
+  transport: Record<string, unknown> | null;
   candidatePair: Record<string, unknown> | null;
   localCandidate: Record<string, unknown> | null;
   remoteCandidate: Record<string, unknown> | null;
+  selectionSource: "transport-selected" | "nominated-succeeded" | "unavailable";
 }
 
 interface PreviousRtcCounters {
@@ -56,9 +59,13 @@ interface PreviousRtcCounters {
   bytesReceived: number;
   framesDecoded: number;
   packetsLost: number;
+  packetsReceived: number;
   jitterBufferDelay: number;
   jitterBufferEmittedCount: number;
   totalDecodeTime: number;
+  nackCount: number;
+  pliCount: number;
+  firCount: number;
   totalVideoFrames: number;
   droppedVideoFrames: number;
 }
@@ -76,7 +83,21 @@ interface LiveClientDiagnostic {
     receiveMbps: number;
     availableIncomingMbps: number;
     packetsLost: number;
+    packetLossDelta: number;
+    packetLossPercent: number;
+    packetsReceivedPerSecond: number;
     jitterMs: number;
+    selectedPath: string;
+    pathDisclosure: string;
+    selectionSource: string;
+  };
+  recovery: {
+    nackDelta: number;
+    pliDelta: number;
+    firDelta: number;
+    nackCount: number;
+    pliCount: number;
+    firCount: number;
   };
   frameTiming: {
     frameGapP95Ms: number;
@@ -111,7 +132,12 @@ export interface ClientDiagnosticSnapshot {
     startupMs: number | null;
   };
   inboundVideo: Record<string, unknown> | null;
+  codec: Record<string, unknown> | null;
+  transport: Record<string, unknown> | null;
   candidatePair: Record<string, unknown> | null;
+  localCandidate: Record<string, unknown> | null;
+  remoteCandidate: Record<string, unknown> | null;
+  candidateSelectionSource: string;
   host: HostMetrics;
   hostDiagnostics: HostDiagnosticSummary;
 }
@@ -377,6 +403,8 @@ export class NfidbApp {
         <aside id="statsPanel" class="stats-panel" hidden>
           <div><span>VIDEO</span><b id="videoStats">Waiting…</b></div>
           <div><span>NETWORK</span><b id="networkStats">Local</b></div>
+          <div><span>SELECTED ICE PATH</span><b id="icePathStats">Inspecting…</b></div>
+          <div><span>RTP RECOVERY</span><b id="recoveryStats">Waiting…</b></div>
           <div><span>PLAYOUT</span><b id="playoutStats">Waiting…</b></div>
           <div><span>PIPELINE</span><b id="pipelineStats">Waiting…</b></div>
           <div><span>PENCIL</span><b id="pencilStats">Waiting…</b></div>
@@ -1432,9 +1460,13 @@ export class NfidbApp {
         bytesReceived: numeric(inbound?.bytesReceived),
         framesDecoded: numeric(inbound?.framesDecoded),
         packetsLost: numeric(inbound?.packetsLost),
+        packetsReceived: numeric(inbound?.packetsReceived),
         jitterBufferDelay: numeric(inbound?.jitterBufferDelay),
         jitterBufferEmittedCount: numeric(inbound?.jitterBufferEmittedCount),
         totalDecodeTime: numeric(inbound?.totalDecodeTime),
+        nackCount: numeric(inbound?.nackCount),
+        pliCount: numeric(inbound?.pliCount),
+        firCount: numeric(inbound?.firCount),
         totalVideoFrames: quality?.totalVideoFrames ?? 0,
         droppedVideoFrames: quality?.droppedVideoFrames ?? 0,
       };
@@ -1452,6 +1484,14 @@ export class NfidbApp {
       );
       const decodeTimeDelta = nonnegativeDelta(current.totalDecodeTime, previous?.totalDecodeTime);
       const lossDelta = current.packetsLost - (previous?.packetsLost ?? current.packetsLost);
+      const packetsReceivedDelta = nonnegativeDelta(current.packetsReceived, previous?.packetsReceived);
+      const positiveLossDelta = Math.max(0, lossDelta);
+      const packetLossPercent =
+        (positiveLossDelta / Math.max(1, packetsReceivedDelta + positiveLossDelta)) * 100;
+      const nackDelta = nonnegativeDelta(current.nackCount, previous?.nackCount);
+      const pliDelta = nonnegativeDelta(current.pliCount, previous?.pliCount);
+      const firDelta = nonnegativeDelta(current.firCount, previous?.firCount);
+      const path = describeIcePath(rtc.localCandidate, rtc.remoteCandidate);
       const frameGapValues = this.frameGapsMs.splice(0);
       const captureValues = this.captureToPresentMs.splice(0);
       const receiveValues = this.receiveToPresentMs.splice(0);
@@ -1516,6 +1556,13 @@ export class NfidbApp {
           jitterBufferMsPerFrame,
           freezeCount: numeric(inbound?.freezeCount),
           totalFreezeSeconds: numeric(inbound?.totalFreezesDuration),
+          keyFramesDecoded: numeric(inbound?.keyFramesDecoded),
+          nackCount: current.nackCount,
+          nackDelta,
+          pliCount: current.pliCount,
+          pliDelta,
+          firCount: current.firCount,
+          firDelta,
           startupMs:
             this.firstVideoFrameAtMs > 0 && this.videoTrackAtMs > 0
               ? this.firstVideoFrameAtMs - this.videoTrackAtMs
@@ -1531,9 +1578,31 @@ export class NfidbApp {
           packetsReceived: numeric(inbound?.packetsReceived),
           packetsLost: current.packetsLost,
           packetLossDelta: lossDelta,
+          packetLossPercent,
+          packetsReceivedPerSecond: packetsReceivedDelta / intervalSeconds,
           jitterMs: numeric(inbound?.jitter) * 1000,
           candidateType: String(rtc.remoteCandidate?.candidateType ?? "unknown"),
           protocol: String(rtc.remoteCandidate?.protocol ?? "unknown"),
+          candidatePairId: stringStat(rtc.candidatePair, "id"),
+          localCandidateId: stringStat(rtc.localCandidate, "id"),
+          remoteCandidateId: stringStat(rtc.remoteCandidate, "id"),
+          localAddress: candidateAddress(rtc.localCandidate),
+          localPort: numeric(rtc.localCandidate?.port),
+          localCandidateType: stringStat(rtc.localCandidate, "candidateType"),
+          localProtocol: stringStat(rtc.localCandidate, "protocol"),
+          localNetworkType: stringStat(rtc.localCandidate, "networkType"),
+          localVpn: booleanStat(rtc.localCandidate, "vpn"),
+          remoteAddress: candidateAddress(rtc.remoteCandidate),
+          remotePort: numeric(rtc.remoteCandidate?.port),
+          remoteCandidateType: stringStat(rtc.remoteCandidate, "candidateType"),
+          remoteProtocol: stringStat(rtc.remoteCandidate, "protocol"),
+          remoteNetworkType: stringStat(rtc.remoteCandidate, "networkType"),
+          remoteVpn: booleanStat(rtc.remoteCandidate, "vpn"),
+          selectionSource: rtc.selectionSource,
+          pathDisclosure: path.disclosure,
+          pairBytesReceived: numeric(pair?.bytesReceived),
+          pairPacketsReceived: numeric(pair?.packetsReceived),
+          pairLastPacketReceivedTimestamp: numeric(pair?.lastPacketReceivedTimestamp),
         },
         frameTiming: {
           callbackCount: this.frameCallbackCount,
@@ -1554,9 +1623,12 @@ export class NfidbApp {
         },
         rawRtc: {
           inboundVideo: rtc.inboundVideo,
+          codec: rtc.codec,
+          transport: rtc.transport,
           candidatePair: rtc.candidatePair,
           localCandidate: rtc.localCandidate,
           remoteCandidate: rtc.remoteCandidate,
+          selectionSource: rtc.selectionSource,
         },
       };
       this.previousRtcCounters = current;
@@ -1573,7 +1645,21 @@ export class NfidbApp {
           receiveMbps,
           availableIncomingMbps,
           packetsLost: current.packetsLost,
+          packetLossDelta: lossDelta,
+          packetLossPercent,
+          packetsReceivedPerSecond: packetsReceivedDelta / intervalSeconds,
           jitterMs: numeric(inbound?.jitter) * 1000,
+          selectedPath: path.label,
+          pathDisclosure: path.disclosure,
+          selectionSource: rtc.selectionSource,
+        },
+        recovery: {
+          nackDelta,
+          pliDelta,
+          firDelta,
+          nackCount: current.nackCount,
+          pliCount: current.pliCount,
+          firCount: current.firCount,
         },
         frameTiming: {
           frameGapP95Ms,
@@ -1652,11 +1738,14 @@ export class NfidbApp {
 
   private async readRtcStats(): Promise<RtcDiagnosticStats> {
     let inboundVideo: Record<string, unknown> | null = null;
+    let codec: Record<string, unknown> | null = null;
+    let transport: Record<string, unknown> | null = null;
     let candidatePair: Record<string, unknown> | null = null;
     let localCandidate: Record<string, unknown> | null = null;
     let remoteCandidate: Record<string, unknown> | null = null;
+    let selectionSource: RtcDiagnosticStats["selectionSource"] = "unavailable";
     if (!this.peer) {
-      return { inboundVideo, candidatePair, localCandidate, remoteCandidate };
+      return { inboundVideo, codec, transport, candidatePair, localCandidate, remoteCandidate, selectionSource };
     }
     try {
       const reports = await this.peer.getStats();
@@ -1665,20 +1754,37 @@ export class NfidbApp {
       for (const record of records.values()) {
         if (record.type === "inbound-rtp" && (record.kind === "video" || record.mediaType === "video")) {
           inboundVideo = pickStats(record, INBOUND_VIDEO_STAT_KEYS);
-        } else if (record.type === "candidate-pair" && record.state === "succeeded" && record.nominated === true) {
-          candidatePair = pickStats(record, CANDIDATE_PAIR_STAT_KEYS);
-          const local = records.get(String(record.localCandidateId ?? ""));
-          const remote = records.get(String(record.remoteCandidateId ?? ""));
-          localCandidate = local ? pickStats(local, CANDIDATE_STAT_KEYS) : null;
-          remoteCandidate = remote ? pickStats(remote, CANDIDATE_STAT_KEYS) : null;
+        } else if (record.type === "transport" && typeof record.selectedCandidatePairId === "string") {
+          transport = pickStats(record, TRANSPORT_STAT_KEYS);
         }
+      }
+      const codecRecord = records.get(String(inboundVideo?.codecId ?? ""));
+      codec = codecRecord ? pickStats(codecRecord, CODEC_STAT_KEYS) : null;
+      const selectedPairId = String(transport?.selectedCandidatePairId ?? "");
+      let selectedPair = selectedPairId ? records.get(selectedPairId) : undefined;
+      if (selectedPair?.type === "candidate-pair") {
+        selectionSource = "transport-selected";
+      } else {
+        selectedPair = [...records.values()].find(
+          (record) => record.type === "candidate-pair" && record.state === "succeeded" && record.nominated === true,
+        );
+        if (selectedPair) {
+          selectionSource = "nominated-succeeded";
+        }
+      }
+      if (selectedPair) {
+        candidatePair = pickStats(selectedPair, CANDIDATE_PAIR_STAT_KEYS);
+        const local = records.get(String(selectedPair.localCandidateId ?? ""));
+        const remote = records.get(String(selectedPair.remoteCandidateId ?? ""));
+        localCandidate = local ? pickStats(local, CANDIDATE_STAT_KEYS) : null;
+        remoteCandidate = remote ? pickStats(remote, CANDIDATE_STAT_KEYS) : null;
       }
     } catch (error) {
       // Safari versions expose different subsets of the RTC stats surface.
       // A missing/failed report must not stop the one-second host recorder.
       console.debug("NFiDB RTC stats unavailable; recording fallback metrics", error);
     }
-    return { inboundVideo, candidatePair, localCandidate, remoteCandidate };
+    return { inboundVideo, codec, transport, candidatePair, localCandidate, remoteCandidate, selectionSource };
   }
 
   private updatePeerState(): void {
@@ -1721,7 +1827,19 @@ export class NfidbApp {
     const client = this.liveClientDiagnostic;
     this.setText(
       "networkStats",
-      `${(client?.network.rttMs ?? metrics.rtt_ms).toFixed(1)} ms RTT · ${(client?.network.receiveMbps ?? 0).toFixed(2)} Mbps receive · ${(client?.network.jitterMs ?? 0).toFixed(2)} ms jitter · ${client?.network.packetsLost ?? 0} lost`,
+      `${(client?.network.rttMs ?? metrics.rtt_ms).toFixed(1)} ms RTT · ${(client?.network.receiveMbps ?? 0).toFixed(2)} Mbps receive · ${(client?.network.jitterMs ?? 0).toFixed(2)} ms jitter · ${client?.network.packetsLost ?? 0} lost (${(client?.network.packetLossPercent ?? 0).toFixed(1)}% this second)`,
+    );
+    this.setText(
+      "icePathStats",
+      client
+        ? `${client.network.selectedPath} · ${client.network.selectionSource} · ${client.network.pathDisclosure}`
+        : "Waiting for Safari's selected candidate pair…",
+    );
+    this.setText(
+      "recoveryStats",
+      client
+        ? `${client.network.packetsReceivedPerSecond.toFixed(0)} packets/s · ${client.network.packetLossDelta} lost now · NACK ${client.recovery.nackDelta} / PLI ${client.recovery.pliDelta} / FIR ${client.recovery.firDelta} now · totals ${client.recovery.nackCount}/${client.recovery.pliCount}/${client.recovery.firCount}`
+        : "Waiting for RTP feedback…",
     );
     this.setText(
       "playoutStats",
@@ -1854,7 +1972,12 @@ export class NfidbApp {
             : null,
       },
       inboundVideo: rtc.inboundVideo,
+      codec: rtc.codec,
+      transport: rtc.transport,
       candidatePair: rtc.candidatePair,
+      localCandidate: rtc.localCandidate,
+      remoteCandidate: rtc.remoteCandidate,
+      candidateSelectionSource: rtc.selectionSource,
       host: await getMetrics(),
       hostDiagnostics: await getDiagnosticSummary(),
     };
@@ -2002,6 +2125,57 @@ function numeric(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
+function stringStat(source: Record<string, unknown> | null, key: string): string {
+  const value = source?.[key];
+  return typeof value === "string" ? value : "";
+}
+
+function booleanStat(source: Record<string, unknown> | null, key: string): boolean | null {
+  const value = source?.[key];
+  return typeof value === "boolean" ? value : null;
+}
+
+function candidateAddress(candidate: Record<string, unknown> | null): string {
+  for (const key of ["address", "ip", "hostname"] as const) {
+    const value = stringStat(candidate, key);
+    if (value) {
+      return value;
+    }
+  }
+  return "";
+}
+
+function describeIcePath(
+  localCandidate: Record<string, unknown> | null,
+  remoteCandidate: Record<string, unknown> | null,
+): { label: string; disclosure: string } {
+  const localAddress = candidateAddress(localCandidate);
+  const remoteAddress = candidateAddress(remoteCandidate);
+  const endpoint = (role: string, candidate: Record<string, unknown> | null, address: string): string => {
+    const port = numeric(candidate?.port);
+    const host = address ? (address.includes(":") ? `[${address}]` : address) : "address hidden";
+    const socket = port > 0 ? `${host}:${port}` : host;
+    const details = [
+      stringStat(candidate, "candidateType"),
+      stringStat(candidate, "protocol"),
+      stringStat(candidate, "networkType"),
+      booleanStat(candidate, "vpn") === true ? "VPN" : "",
+    ].filter(Boolean);
+    return `${role} ${socket}${details.length > 0 ? ` (${details.join(" · ")})` : ""}`;
+  };
+  const disclosure = localAddress && remoteAddress
+    ? "addresses exposed"
+    : !localAddress && !remoteAddress
+      ? "Safari withheld both addresses"
+      : localAddress
+        ? "Safari withheld the host address"
+        : "Safari withheld the iPad address";
+  return {
+    label: `${endpoint("iPad", localCandidate, localAddress)} → ${endpoint("Host", remoteCandidate, remoteAddress)}`,
+    disclosure,
+  };
+}
+
 function finiteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -2046,6 +2220,7 @@ function pushValidDuration(values: number[], value: number, limit: number): void
 }
 
 const INBOUND_VIDEO_STAT_KEYS = [
+  "id",
   "timestamp",
   "ssrc",
   "kind",
@@ -2057,6 +2232,11 @@ const INBOUND_VIDEO_STAT_KEYS = [
   "bytesReceived",
   "headerBytesReceived",
   "lastPacketReceivedTimestamp",
+  "estimatedPlayoutTimestamp",
+  "packetsDiscarded",
+  "retransmittedPacketsReceived",
+  "fecPacketsReceived",
+  "fecPacketsDiscarded",
   "framesReceived",
   "framesDecoded",
   "framesDropped",
@@ -2065,6 +2245,9 @@ const INBOUND_VIDEO_STAT_KEYS = [
   "frameHeight",
   "keyFramesDecoded",
   "totalDecodeTime",
+  "totalProcessingDelay",
+  "totalAssemblyTime",
+  "framesAssembledFromMultiplePackets",
   "totalInterFrameDelay",
   "totalSquaredInterFrameDelay",
   "jitterBufferDelay",
@@ -2082,15 +2265,20 @@ const INBOUND_VIDEO_STAT_KEYS = [
 ] as const;
 
 const CANDIDATE_PAIR_STAT_KEYS = [
+  "id",
   "timestamp",
+  "transportId",
   "state",
   "nominated",
+  "writable",
   "localCandidateId",
   "remoteCandidateId",
   "packetsSent",
   "packetsReceived",
   "bytesSent",
   "bytesReceived",
+  "packetsDiscardedOnSend",
+  "bytesDiscardedOnSend",
   "lastPacketSentTimestamp",
   "lastPacketReceivedTimestamp",
   "totalRoundTripTime",
@@ -2105,12 +2293,47 @@ const CANDIDATE_PAIR_STAT_KEYS = [
 ] as const;
 
 const CANDIDATE_STAT_KEYS = [
+  "id",
   "timestamp",
+  "transportId",
+  "address",
+  "ip",
+  "hostname",
   "candidateType",
   "protocol",
   "networkType",
   "tcpType",
   "relayProtocol",
   "port",
+  "priority",
+  "foundation",
+  "relatedAddress",
+  "relatedPort",
+  "url",
+  "usernameFragment",
   "vpn",
+] as const;
+
+const TRANSPORT_STAT_KEYS = [
+  "id",
+  "timestamp",
+  "dtlsState",
+  "iceRole",
+  "iceLocalUsernameFragment",
+  "selectedCandidatePairId",
+  "packetsSent",
+  "packetsReceived",
+  "bytesSent",
+  "bytesReceived",
+] as const;
+
+const CODEC_STAT_KEYS = [
+  "id",
+  "timestamp",
+  "payloadType",
+  "transportId",
+  "mimeType",
+  "clockRate",
+  "channels",
+  "sdpFmtpLine",
 ] as const;

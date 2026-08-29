@@ -156,7 +156,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .stats-panel > div { display: flex; justify-content: space-between; gap: 18px; padding: 8px 0; border-bottom: 1px solid #1d2425; }
 .stats-panel > div:last-child { border-bottom: 0; }
 .stats-panel span { color: #697675; font-size: 0.58rem; font-weight: 800; letter-spacing: 0.1em; }
-.stats-panel b { color: #dbe1df; font-size: 0.67rem; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+.stats-panel b { min-width: 0; color: #dbe1df; font-size: 0.67rem; font-weight: 600; text-align: right; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .toolbar-reveal {
   position: absolute;
   z-index: 20;

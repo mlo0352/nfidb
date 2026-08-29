@@ -1125,6 +1125,9 @@ impl HostApp {
             ui.collapsing(help_heading("Video connects but no picture appears"), |ui| {
                 ui.label("Reload Safari and pair again so NFiDB requests a fresh keyframe. In Source, choose Auto and Balanced, then run Quick Auto Test. Diagnostics shows first-frame and decoder evidence.");
             });
+            ui.collapsing(help_heading("Video freezes or delay keeps growing"), |ui| {
+                ui.label("On the iPad, open Stats and inspect Selected ICE Path, packet loss, RTT, and RTP recovery. The host endpoint should be the normal LAN address shown on Session. Reset the desktop Diagnostics recording, reproduce motion for 60 seconds, then Export detailed JSON. Prefer 5 GHz or 6 GHz Wi-Fi (or wire the host) when RTT, loss, NACK, or PLI rises during motion.");
+            });
             ui.collapsing(help_heading("Pencil moves or selects instead of drawing"), |ui| {
                 ui.label("Enable Windows Ink/Pointer input in the drawing app. Run pointer-sink.exe --self-test; if it passes, the remaining setting is inside the target app.");
             });
@@ -1290,6 +1293,9 @@ impl HostApp {
             });
             ui.collapsing(help_heading("There is no picture"), |ui| {
                 ui.label("Confirm Screen Recording says Enabled above, then restart NFiDB. Reload Safari and pair again. Source and Diagnostics expose capture, encoder, and first-frame errors.");
+            });
+            ui.collapsing(help_heading("Video freezes or delay keeps growing"), |ui| {
+                ui.label("On the iPad, open Stats and inspect Selected ICE Path, packet loss, RTT, and RTP recovery. The host endpoint should be the normal LAN address shown on Session. Reset the desktop Diagnostics recording, reproduce motion for 60 seconds, then Export detailed JSON. Prefer 5 GHz or 6 GHz Wi-Fi (or wire the Mac) when RTT, loss, NACK, or PLI rises during motion.");
             });
             ui.collapsing(help_heading("Mouse, keyboard, Pencil, or gestures do nothing"), |ui| {
                 ui.label("Confirm Accessibility says Enabled above. Touch-on maps the first finger to the Mac pointer; Touch-off plus Gestures-on enables the three-finger commands.");
@@ -2042,6 +2048,39 @@ impl HostApp {
                     );
                     diagnostic_row(
                         ui,
+                        "Selected ICE path",
+                        &format!(
+                            "iPad {} → host {}",
+                            format_browser_candidate(
+                                &client.network.local_address,
+                                client.network.local_port,
+                                &client.network.local_candidate_type,
+                                &client.network.local_protocol,
+                                &client.network.local_network_type,
+                                client.network.local_vpn,
+                            ),
+                            format_browser_candidate(
+                                &client.network.remote_address,
+                                client.network.remote_port,
+                                &client.network.remote_candidate_type,
+                                &client.network.remote_protocol,
+                                &client.network.remote_network_type,
+                                client.network.remote_vpn,
+                            ),
+                        ),
+                    );
+                    diagnostic_row(
+                        ui,
+                        "ICE selection evidence",
+                        &format!(
+                            "{} · {} · pair {}",
+                            nonempty_or(&client.network.selection_source, "unavailable"),
+                            nonempty_or(&client.network.path_disclosure, "address disclosure unknown"),
+                            nonempty_or(&client.network.candidate_pair_id, "ID unavailable"),
+                        ),
+                    );
+                    diagnostic_row(
+                        ui,
                         "Video",
                         &format!(
                             "{}×{} · {:.1} decode / {:.1} present fps",
@@ -2076,10 +2115,36 @@ impl HostApp {
                         ui,
                         "RTP integrity",
                         &format!(
-                            "{} packets · {} lost · {} lost this sample",
+                            "{} packets · {} lost · {} lost this sample ({:.2}%) · {:.0} packets/s",
                             client.network.packets_received,
                             client.network.packets_lost,
-                            client.network.packet_loss_delta
+                            client.network.packet_loss_delta,
+                            client.network.packet_loss_percent,
+                            client.network.packets_received_per_second,
+                        ),
+                    );
+                    diagnostic_row(
+                        ui,
+                        "RTP recovery",
+                        &format!(
+                            "NACK {} (+{}) · PLI {} (+{}) · FIR {} (+{}) · {} keyframes decoded",
+                            client.video.nack_count,
+                            client.video.nack_delta,
+                            client.video.pli_count,
+                            client.video.pli_delta,
+                            client.video.fir_count,
+                            client.video.fir_delta,
+                            client.video.key_frames_decoded,
+                        ),
+                    );
+                    diagnostic_row(
+                        ui,
+                        "Selected pair receive",
+                        &format!(
+                            "{} packets · {} · last packet timestamp {:.3}",
+                            client.network.pair_packets_received,
+                            format_bytes(client.network.pair_bytes_received),
+                            client.network.pair_last_packet_received_timestamp,
                         ),
                     );
                     diagnostic_row(
@@ -2149,6 +2214,14 @@ impl HostApp {
                 .show(ui, |ui| {
                     distribution_row(ui, "RTT", &summary.rtt_ms, "ms");
                     distribution_row(ui, "Receive bandwidth", &summary.receive_mbps, "Mbps");
+                    distribution_row(ui, "Network jitter", &summary.jitter_ms, "ms");
+                    distribution_row(ui, "Packet loss per interval", &summary.packet_loss_percent, "%");
+                    distribution_row(
+                        ui,
+                        "Packet receive rate",
+                        &summary.packets_received_per_second,
+                        "packets/s",
+                    );
                     distribution_row(ui, "Decode rate", &summary.decode_fps, "fps");
                     distribution_row(ui, "Presentation rate", &summary.playback_fps, "fps");
                     distribution_row(ui, "Jitter buffer", &summary.jitter_buffer_ms_per_frame, "ms/frame");
@@ -2163,11 +2236,26 @@ impl HostApp {
                         ui,
                         "Integrity totals",
                         &format!(
-                            "{} packet loss · {} input gaps · {} input errors · {} transport skips",
+                            "{} packet loss · {} freezes · NACK/PLI/FIR {}/{}/{} · {} input gaps · {} input errors · {} transport skips",
                             summary.packet_loss_total,
+                            summary.latest_freeze_count,
+                            summary.latest_nack_count,
+                            summary.latest_pli_count,
+                            summary.latest_fir_count,
                             summary.latest_input_sample_gaps,
                             summary.latest_input_errors,
                             summary.latest_video_transport_drops
+                        ),
+                    );
+                    diagnostic_row(
+                        ui,
+                        "Latest ICE path",
+                        &format!(
+                            "iPad {} → host {} · {} · {}",
+                            nonempty_or(&summary.latest_local_candidate, "unavailable"),
+                            nonempty_or(&summary.latest_remote_candidate, "unavailable"),
+                            nonempty_or(&summary.latest_ice_selection_source, "selection unavailable"),
+                            nonempty_or(&summary.latest_ice_path_disclosure, "address disclosure unknown"),
                         ),
                     );
                 });
@@ -2701,6 +2789,41 @@ fn json_number(value: &serde_json::Value, key: &str) -> String {
         .get(key)
         .and_then(serde_json::Value::as_f64)
         .map_or_else(|| "?".to_owned(), |number| format!("{number:.0}"))
+}
+
+fn nonempty_or<'a>(value: &'a str, fallback: &'a str) -> &'a str {
+    if value.is_empty() { fallback } else { value }
+}
+
+fn format_browser_candidate(
+    address: &str,
+    port: u16,
+    candidate_type: &str,
+    protocol: &str,
+    network_type: &str,
+    vpn: Option<bool>,
+) -> String {
+    let address = nonempty_or(address, "address hidden");
+    let socket = if port == 0 {
+        address.to_owned()
+    } else if address.contains(':') {
+        format!("[{address}]:{port}")
+    } else {
+        format!("{address}:{port}")
+    };
+    let mut details = [candidate_type, protocol, network_type]
+        .into_iter()
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    if vpn == Some(true) {
+        details.push("VPN".to_owned());
+    }
+    if details.is_empty() {
+        socket
+    } else {
+        format!("{socket} ({})", details.join(" · "))
+    }
 }
 
 fn optional_number(value: Option<f64>, suffix: &str) -> String {

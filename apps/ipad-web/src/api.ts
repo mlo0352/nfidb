@@ -108,6 +108,10 @@ export interface HostDiagnosticSummary {
   sample_count: number;
   retained_seconds: number;
   discarded_samples: number;
+  latest_ice_selection_source: string;
+  latest_local_candidate: string;
+  latest_remote_candidate: string;
+  latest_ice_path_disclosure: string;
 }
 
 export type VideoCodec = "h264" | "hevc" | "av1";
