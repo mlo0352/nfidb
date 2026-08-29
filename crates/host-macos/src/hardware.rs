@@ -93,7 +93,7 @@ pub(crate) fn functional_probe(
         .with_expected_frame_rate(f64::from(fps))
         .with_max_keyframe_interval((fps.saturating_mul(2)).min(i32::MAX as u32) as i32);
     builder = match codec {
-        Codec::H264 => builder.with_profile_level(ProfileLevel::H264ConstrainedHighAutoLevel),
+        Codec::H264 => builder.with_profile_level(ProfileLevel::H264ConstrainedBaselineAutoLevel),
         Codec::HEVC => builder.with_profile_level(ProfileLevel::HEVCMainAutoLevel),
         _ => builder,
     };
@@ -158,7 +158,7 @@ const fn fourcc(codec: VideoCodec) -> u32 {
 
 fn profiles(codec: VideoCodec) -> Vec<String> {
     match codec {
-        VideoCodec::H264 => vec!["Constrained High Auto Level".to_owned()],
+        VideoCodec::H264 => vec!["Constrained Baseline Auto Level".to_owned()],
         VideoCodec::Hevc => vec!["Main Auto Level".to_owned()],
         VideoCodec::Av1 => Vec::new(),
     }

@@ -96,7 +96,10 @@ fn build_session(config: VideoToolboxEncoderConfig) -> Result<CompressionSession
         .with_expected_frame_rate(f64::from(config.max_fps))
         .with_max_keyframe_interval((config.max_fps.saturating_mul(2)).min(i32::MAX as u32) as i32);
     builder = match config.codec {
-        VideoCodec::H264 => builder.with_profile_level(ProfileLevel::H264ConstrainedHighAutoLevel),
+        // The WebRTC transport advertises profile-level-id=42e01f. Safari
+        // accepts the track but cannot decode a Constrained High bitstream
+        // sent under that negotiated Constrained Baseline payload type.
+        VideoCodec::H264 => builder.with_profile_level(ProfileLevel::H264ConstrainedBaselineAutoLevel),
         VideoCodec::Hevc => builder.with_profile_level(ProfileLevel::HEVCMainAutoLevel),
         VideoCodec::Av1 => builder,
     };
