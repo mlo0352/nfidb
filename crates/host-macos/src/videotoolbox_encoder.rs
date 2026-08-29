@@ -141,7 +141,7 @@ fn build_session(config: VideoToolboxEncoderConfig) -> Result<CompressionSession
         VideoCodec::Av1 => builder,
     };
     let session = builder.build().map_err(|error| error.to_string())?;
-    configure_interactive_latency(&session);
+    configure_interactive_latency(&session, config.bitrate_bps);
     require_hardware_session(&session)?;
     Ok(session)
 }
@@ -259,6 +259,17 @@ mod tests {
             bitrate_bps: 4_000_000,
         })
         .unwrap();
+
+        let data_rate_limits = unsafe {
+            encoder
+                .session
+                .copy_property(videotoolbox::ffi::kVTCompressionPropertyKey_DataRateLimits)
+        }
+        .expect("DataRateLimits property query should succeed");
+        assert!(
+            data_rate_limits.is_some(),
+            "hardware encoder should retain the configured burst ceiling"
+        );
 
         encoder.request_keyframe();
         let encoded = encoder.encode(&surface).unwrap();

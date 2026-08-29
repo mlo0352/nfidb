@@ -595,7 +595,6 @@ fn encode_loop(
     let mut encoder: Option<ActiveEncoder> = None;
     let mut generation = u64::MAX;
     let mut dimensions = (0, 0);
-    let mut last_keyframe_at = Instant::now() - Duration::from_secs(10);
     let mut last_frame = None;
     loop {
         let fresh_frame = match slot.take() {
@@ -606,7 +605,11 @@ fn encode_loop(
             FrameWait::TimedOut => false,
             FrameWait::Stopped => break,
         };
-        let force_keyframe = keyframe_request.take() || last_keyframe_at.elapsed() >= Duration::from_secs(5);
+        // VideoToolbox already emits periodic IDRs according to the session's
+        // MaxKeyFrameInterval. Restarting the hardware session on a wall-clock
+        // timer caused a burst and short pause every five seconds under high
+        // motion. Rebuild only for an explicit receiver join/recovery request.
+        let force_keyframe = keyframe_request.take();
         if !fresh_frame && !force_keyframe {
             continue;
         }
@@ -653,7 +656,6 @@ fn encode_loop(
                 );
                 if packet.keyframe {
                     metrics.encoded_keyframe();
-                    last_keyframe_at = Instant::now();
                 }
                 let codec = selection.active_mode.codec().unwrap_or(VideoCodec::H264);
                 let encoded = EncodedVideoFrame {
