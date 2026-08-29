@@ -522,13 +522,15 @@ export class NfidbApp {
   private markFirstVideoFrame(mediaTimeSeconds?: number): void {
     if (mediaTimeSeconds !== undefined) {
       if (
-        this.lastVideoMediaTimeSeconds !== null &&
-        mediaTimeSeconds <= this.lastVideoMediaTimeSeconds + 0.000_001
+        this.lastVideoMediaTimeSeconds === null ||
+        mediaTimeSeconds > this.lastVideoMediaTimeSeconds
       ) {
-        return;
+        this.lastVideoMediaTimeSeconds = mediaTimeSeconds;
       }
-      this.lastVideoMediaTimeSeconds = mediaTimeSeconds;
     }
+    // Safari can present valid new frames while leaving rVFC.mediaTime
+    // unchanged. The callback itself is the presentation signal; requiring a
+    // monotonic mediaTime falsely rebuilds a healthy peer every few seconds.
     this.lastVideoProgressAtMs = performance.now();
     this.videoStallRecoveryAttempts = 0;
     this.lastVideoRecoveryRequestAtMs = 0;

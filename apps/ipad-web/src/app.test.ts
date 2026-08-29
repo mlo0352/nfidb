@@ -351,7 +351,7 @@ describe("surface controls", () => {
     internal.stopVideoStallWatchdog();
   });
 
-  it("does not mistake repeated callbacks for advancing media time", () => {
+  it("accepts Safari frame callbacks even when mediaTime remains unchanged", () => {
     const now = vi.spyOn(performance, "now");
     const app = new NfidbApp(document.createElement("div"));
     const internal = app as unknown as {
@@ -364,9 +364,10 @@ describe("surface controls", () => {
     expect(internal.lastVideoProgressAtMs).toBe(1_000);
     now.mockReturnValue(2_000);
     internal.markFirstVideoFrame(4.25);
-    expect(internal.lastVideoProgressAtMs).toBe(1_000);
-    internal.markFirstVideoFrame(4.5);
     expect(internal.lastVideoProgressAtMs).toBe(2_000);
+    now.mockReturnValue(3_000);
+    internal.markFirstVideoFrame(4.5);
+    expect(internal.lastVideoProgressAtMs).toBe(3_000);
   });
 
   it("updates the host-authoritative touch gate before claiming touch is enabled", async () => {
