@@ -1,6 +1,3 @@
-use core_foundation::array::CFArray;
-use core_foundation::base::TCFType;
-use core_foundation::number::CFNumber;
 use nfidb_core::{CapabilityState, EncoderBackend, EncoderCapability, VideoCodec};
 use videotoolbox::compression::{CompressionSession, ProfileLevel};
 use videotoolbox::encoder_list::available_video_encoder_details;
@@ -101,11 +98,11 @@ pub(crate) fn functional_probe(
         _ => builder,
     };
     let session = builder.build().map_err(|error| error.to_string())?;
-    configure_interactive_latency(&session, bitrate_bps);
+    configure_interactive_latency(&session);
     require_hardware_session(&session)
 }
 
-pub(crate) fn configure_interactive_latency(session: &CompressionSession, bitrate_bps: u32) {
+pub(crate) fn configure_interactive_latency(session: &CompressionSession) {
     let max_delayed_frames = 1_i32;
     let value = unsafe {
         ffi::CFNumberCreate(
@@ -129,21 +126,6 @@ pub(crate) fn configure_interactive_latency(session: &CompressionSession, bitrat
         )
     } {
         tracing::debug!(%error, "VideoToolbox does not accept PrioritizeEncodingSpeedOverQuality for this encoder");
-    }
-
-    // AverageBitRate alone permits large regional overshoots. A one-second
-    // hard ceiling at 125% of target leaves room for a clean IDR while keeping
-    // fullscreen transitions from dumping a large burst into Safari's jitter
-    // buffer.
-    let max_bytes_per_second = i64::from(bitrate_bps).saturating_mul(5) / 32;
-    let limits = CFArray::from_CFTypes(&[CFNumber::from(max_bytes_per_second), CFNumber::from(1_i64)]);
-    if let Err(error) = unsafe {
-        session.set_property(
-            ffi::kVTCompressionPropertyKey_DataRateLimits,
-            limits.as_CFTypeRef().cast(),
-        )
-    } {
-        tracing::debug!(%error, "VideoToolbox does not accept DataRateLimits for this encoder");
     }
 }
 
