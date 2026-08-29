@@ -412,7 +412,7 @@ export class NfidbApp {
           </div>
           <p>Three fingers: swipe left/right to switch apps, up for ${overviewLabel}, down to minimize.${macHost ? "" : " Windows blocks synthetic Ctrl+Alt+Del on its secure screen."}</p>
         </section>
-        <button id="toolbarReveal" class="toolbar-reveal" aria-label="Show controls" aria-controls="toolbar" aria-expanded="true"><b>NFi</b><span>Controls</span></button>
+        <button id="toolbarReveal" class="toolbar-reveal" aria-label="Show NFiDB controls" aria-controls="toolbar" aria-expanded="true"><b>NFiDB</b><span>Controls</span></button>
       </main>`;
     const overlay = this.requiredElement<HTMLCanvasElement>("interactionOverlay");
     const video = this.requiredElement<HTMLVideoElement>("remoteVideo");
@@ -1769,7 +1769,9 @@ export class NfidbApp {
   private showToolbar(): void {
     this.requiredElement("toolbar").classList.add("visible");
     this.requiredElement("toolbarReveal").setAttribute("aria-expanded", "true");
-    this.scheduleToolbarHide();
+    // An explicit reveal stays open. The surface pointer-down handler still
+    // gets controls out of the way immediately when drawing resumes.
+    window.clearTimeout(this.hideToolbarTimer);
   }
 
   private hideToolbar(): void {

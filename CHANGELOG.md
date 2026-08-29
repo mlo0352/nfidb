@@ -23,6 +23,7 @@ NFiDB is pre-release software. Releases remain GitHub prereleases until the phys
 - Accept valid ScreenCaptureKit IOSurface frames when macOS 27 omits the optional frame-status attachment or labels the initial/static image Started or Idle. Explicit blank, suspended, and stopped samples remain excluded, preventing a paired iPad from waiting forever for its first decodable frame.
 - Match the Mac VideoToolbox H.264 output and WebRTC signaling exactly: VideoToolbox emits Baseline `4200`, while Windows retains its Constrained Baseline payload. A hardware bitstream regression test requires SPS, PPS, IDR, and matching profile constraints in the first 1080p keyframe.
 - Make unbenchmarked Auto sessions start on hardware H.264. A Safari codec-capability report alone no longer promotes HEVC; HEVC/AV1 can win Auto only after that receiver has actually presented and benchmarked the path.
+- Make the iPad Controls reveal a large, high-contrast bottom-left target, keep an explicitly opened toolbar visible until the user closes it or returns to the canvas, and use the compact scrolling layout at common iPad portrait widths so Touch remains reachable.
 - Added `NFIDB_CODESIGN_IDENTITY` support to the Mac packager. Stable Apple signing prevents development rebuilds from appearing as unrelated apps to macOS privacy controls; CI retains an explicit ad-hoc fallback until Developer ID/notarization credentials are configured.
 - Local Mac packaging now automatically reuses the installed NFiDB Apple identity, or another available stable Apple code-signing identity, when `NFIDB_CODESIGN_IDENTITY` is unset. Setup and release guidance also document Tahoe's required one-time reboot after a Screen Recording permission entry is removed or reset.
 - Prefer physical macOS, Windows, and Linux LAN interfaces over VPN, overlay, and virtual adapters when choosing the Session URL and QR address. This prevents a Mac `utun` address from displacing its reachable `en0` Wi-Fi address.
@@ -32,13 +33,14 @@ NFiDB is pre-release software. Releases remain GitHub prereleases until the phys
 
 - Native macOS crate: 14/14 tests pass on an M1 Pro running macOS 27.0 beta, including a real 1080p VideoToolbox SPS/PPS/IDR profile check; the full cross-platform application links and headless test-pattern/server smoke passes.
 - The signed packaged H.264/WebRTC path negotiated Baseline `42001f` in automated Edge, presented its first frame, decoded 156/156 received frames during the assertion window, and reported zero RTP loss, decoder drops, or freezes. This remains desktop-browser evidence, not a physical Safari result.
+- A physical iPad Safari session then presented the real Mac display successfully from the signed app; the attached iPad mouse/trackpad and keyboard also controlled the Mac responsively. Pencil pressure, touch-mode UX, HEVC, files, and the longer diagnostic run remain separate field checks.
 - Corrected the Mac benchmark clock so deterministic source generation is excluded from encoder/preprocessor throughput and bitrate follows the media timeline rather than test-run wall time.
 - Optimized Quick 1080p drawing results: H.264 hardware 101.58 fps capacity / 8.42 ms encode p95; HEVC hardware 93.08 fps / 9.37 ms; OpenH264 60.26 fps / 15.14 ms encode p95. Hardware used about 47 MiB peak RAM and 26–27% of one core during the measured pipeline; OpenH264 used 83 MiB and one full core. These are host-only measurements, not iPad presentation results.
 - Added an arm64 app-bundle build that verifies its signature and runs from a downloaded-style ZIP without depending on an Xcode-only Swift runtime path.
 
 ### Still required before stable
 
-- Physical Mac Screen Recording and Accessibility approval, real monitor capture, iPad Safari presentation, pressure-sensitive drawing-app behavior, and longer stability remain explicit field tests. No unperformed iPad or app result is claimed.
+- Physical Mac Screen Recording and Accessibility approval, real monitor capture, H.264 iPad Safari presentation, mouse, and keyboard have passed on the M1 Pro test system. Pressure-sensitive drawing-app behavior, HEVC, files, touch-mode confirmation, reconnect/sleep behavior, and longer stability remain explicit field tests.
 
 ## 0.7.0 — 2026-08-22 — Alpha
 

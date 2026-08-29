@@ -43,6 +43,8 @@ The 0.8.0 macOS host was compiled and exercised on a 2021 M1 Pro MacBook Pro. Vi
 
 Those figures exclude deterministic source rendering from the encoder clock and calculate output Mbps against the requested 60 fps media timeline. They are optimized host-only evidence, not network, Safari presentation, quality-equivalent bitrate, or glass-to-glass claims. Live ScreenCaptureKit output is already IOSurface-backed and goes straight to VideoToolbox through a one-frame replacement slot; the deterministic benchmark must first copy its generated CPU image into an IOSurface and labels that test input `gpu-assisted`.
 
+The signed Mac application subsequently presented its real monitor over hardware H.264 to a physical iPad Safari session after Auto was changed to require presentation evidence before preferring HEVC and VideoToolbox Baseline signaling was aligned with its emitted SPS. Mouse/trackpad and keyboard forwarding also passed in that session. This was a functional observation, not a timed benchmark; no Safari FPS, latency, bandwidth, drop, or quality number is inferred from it.
+
 ## Release-mode measurements
 
 These profile results are from the development Windows 11 PC (Intel Core i9-13900K), release `0.2.0`, Microsoft Edge headless, a real LAN-address WebRTC connection, a generated 60 fps 4K/1080p integrity pattern, and a simultaneous 240-sample/s pen stream. They measure software encoding and end-to-end decode, not physical Pencil glass-to-glass latency.

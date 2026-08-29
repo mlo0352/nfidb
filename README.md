@@ -2,7 +2,7 @@
 
 **No Frills iPad Drawing Bridge** turns an iPad and Apple Pencil into a local-network pen display for Windows 11 or Apple-silicon macOS. Run the host app, open the address it shows in Safari, enter the six-digit PIN, and draw. There is no iPad app, account, subscription, cloud relay, or internet service involved in a session.
 
-> NFiDB 0.8.0 is a solid alpha. Windows remains the most field-tested host. The new native macOS host has automated capture, VideoToolbox, input-mapping, benchmark, and bundle coverage plus real H.264/HEVC hardware measurements on an M1 Pro. Screen Recording, Accessibility, physical Pencil behavior in drawing apps, and end-to-end iPad Safari playback still require the Mac/iPad field pass documented in [the test matrix](docs/TEST_MATRIX.md).
+> NFiDB 0.8.0 is a solid alpha. Windows remains the most field-tested host. On the M1 Pro test Mac, Screen Recording and Accessibility approval, real-monitor VideoToolbox H.264 playback in iPad Safari, and remote mouse/keyboard control have passed. Pencil behavior in drawing apps, HEVC, files, reconnect/sleep, and the longer physical-device matrix remain documented follow-ups in [the test matrix](docs/TEST_MATRIX.md).
 
 ## What works
 

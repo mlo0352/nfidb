@@ -162,6 +162,8 @@ describe("surface controls", () => {
     root.querySelector<HTMLButtonElement>("#toolbarReveal")?.click();
     expect(root.querySelector("#toolbar")?.classList.contains("visible")).toBe(true);
     expect(root.querySelector("#toolbarReveal")?.getAttribute("aria-expanded")).toBe("true");
+    vi.advanceTimersByTime(10_000);
+    expect(root.querySelector("#toolbar")?.classList.contains("visible")).toBe(true);
 
     root.querySelector("#interactionOverlay")?.dispatchEvent(new Event("pointerdown", { bubbles: true }));
     expect(root.querySelector("#toolbar")?.classList.contains("visible")).toBe(false);
