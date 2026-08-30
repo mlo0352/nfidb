@@ -170,6 +170,26 @@ describe("surface controls", () => {
     expect(root.querySelector("#toolbarReveal")?.getAttribute("aria-expanded")).toBe("false");
   });
 
+  it("opens controls from WebKit touch-end when no click is synthesized", () => {
+    const root = document.createElement("div");
+    const app = new NfidbApp(root);
+    const internal = app as unknown as {
+      status: { mode: string };
+      renderSurface: () => void;
+      hideToolbar: () => void;
+    };
+    internal.status = { mode: "display-and-input" };
+    internal.renderSurface();
+    internal.hideToolbar();
+
+    root.querySelector("#toolbarReveal")?.dispatchEvent(
+      new Event("touchend", { bubbles: true, cancelable: true }),
+    );
+
+    expect(root.querySelector("#toolbar")?.classList.contains("visible")).toBe(true);
+    expect(root.querySelector("#toolbarReveal")?.getAttribute("aria-expanded")).toBe("true");
+  });
+
   it("closes the controls and toggles fullscreen in both directions", async () => {
     const root = document.createElement("div");
     const app = new NfidbApp(root);

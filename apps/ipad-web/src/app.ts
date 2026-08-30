@@ -844,8 +844,24 @@ export class NfidbApp {
       })();
     });
     this.requiredElement("disconnectButton").addEventListener("click", () => void this.disconnect());
-    this.requiredElement("controlsClose").addEventListener("click", () => this.hideToolbar());
-    this.requiredElement("toolbarReveal").addEventListener("click", () => this.showToolbar());
+    const bindActivation = (id: string, activate: () => void): void => {
+      const element = this.requiredElement(id);
+      element.addEventListener("pointerdown", (event) => {
+        event.stopPropagation();
+        activate();
+      });
+      element.addEventListener("touchend", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        activate();
+      }, { passive: false });
+      element.addEventListener("click", (event) => {
+        event.stopPropagation();
+        activate();
+      });
+    };
+    bindActivation("controlsClose", () => this.hideToolbar());
+    bindActivation("toolbarReveal", () => this.showToolbar());
     this.requiredElement("interactionOverlay").addEventListener("pointerdown", () => this.hideToolbar(), { passive: true });
   }
 
