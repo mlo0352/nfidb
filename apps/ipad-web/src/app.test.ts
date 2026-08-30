@@ -166,6 +166,7 @@ describe("surface controls", () => {
       expect(surface.style.getPropertyValue("--nfidb-viewport-top")).toBe("116px");
       expect(surface.style.getPropertyValue("--nfidb-viewport-width")).toBe("980px");
       expect(surface.style.getPropertyValue("--nfidb-viewport-height")).toBe("620px");
+      expect(surface.style.getPropertyValue("--nfidb-video-top-inset")).toBe("48px");
     } finally {
       if (originalViewport) {
         Object.defineProperty(window, "visualViewport", originalViewport);
