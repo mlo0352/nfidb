@@ -397,7 +397,7 @@ async fn run_server(
     });
 
     ready.send(Ok(info)).map_err(|error| error.to_string())?;
-    let result = axum::serve(listener, app)
+    let result = axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(async move {
             let _ = shutdown.await;
         })
