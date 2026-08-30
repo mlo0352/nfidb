@@ -33,7 +33,7 @@ import {
   uploadFile,
   type FileListing,
 } from "./file-transfer";
-import type { FitMode } from "./geometry";
+import { calculateContentRect, type FitMode } from "./geometry";
 import { normalizePinEntry } from "./pin-entry";
 import { PointerEngine } from "./pointer-engine";
 import { RemoteInputEngine } from "./remote-input";
@@ -178,6 +178,7 @@ export class NfidbApp {
   private diagnosticSequence = 0;
   private diagnosticFailures = 0;
   private diagnosticCollectionActive = false;
+  private diagnosticPreviewPending = true;
   private previousRtcCounters: PreviousRtcCounters | null = null;
   private liveClientDiagnostic: LiveClientDiagnostic | null = null;
   private rttMs = 0;
@@ -1624,6 +1625,7 @@ export class NfidbApp {
     this.previousRtcCounters = null;
     this.diagnosticSequence = 0;
     this.diagnosticFailures = 0;
+    this.diagnosticPreviewPending = true;
     void this.captureClientDiagnostic();
     this.diagnosticTimer = window.setInterval(() => void this.captureClientDiagnostic(), 1000);
   }
@@ -1710,6 +1712,10 @@ export class NfidbApp {
       const playbackFps = playbackDelta / intervalSeconds;
       const decodeFps = decodedDelta / intervalSeconds;
       const presentationDropPercent = (playbackDropDelta / Math.max(1, playbackDelta)) * 100;
+      const layout = captureLayoutDiagnostic(this.root, video, this.fitMode, this.diagnosticPreviewPending);
+      if (layout.framePreviewDataUrl) {
+        this.diagnosticPreviewPending = false;
+      }
       const sample = {
         sequence: this.diagnosticSequence++,
         clientEpochMs: Date.now(),
@@ -1726,6 +1732,7 @@ export class NfidbApp {
           devicePixelRatio: window.devicePixelRatio,
           orientation: screen.orientation?.type ?? "unknown",
           visibilityState: document.visibilityState,
+          layout,
         },
         connection: {
           appState: this.state,
@@ -2327,6 +2334,94 @@ function escapeHtml(value: string): string {
 
 function pickStats(source: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
   return Object.fromEntries(keys.filter((key) => source[key] !== undefined).map((key) => [key, source[key]]));
+}
+
+function captureLayoutDiagnostic(
+  root: HTMLElement,
+  video: HTMLVideoElement | null,
+  fitMode: FitMode,
+  includeFramePreview: boolean,
+): Record<string, unknown> {
+  const surface = root.querySelector<HTMLElement>("#surface");
+  const surfaceRect = surface?.getBoundingClientRect();
+  const videoRect = video?.getBoundingClientRect();
+  const content = videoRect && video
+    ? calculateContentRect(videoRect.width, videoRect.height, video.videoWidth, video.videoHeight, fitMode)
+    : { left: 0, top: 0, width: 0, height: 0 };
+  const visual = window.visualViewport;
+  const surfaceStyle = surface ? window.getComputedStyle(surface) : null;
+  const videoStyle = video ? window.getComputedStyle(video) : null;
+  return {
+    windowInner: { width: window.innerWidth, height: window.innerHeight },
+    documentClient: {
+      width: document.documentElement.clientWidth,
+      height: document.documentElement.clientHeight,
+    },
+    visualViewport: visual
+      ? {
+          width: visual.width,
+          height: visual.height,
+          offsetLeft: visual.offsetLeft,
+          offsetTop: visual.offsetTop,
+          pageLeft: visual.pageLeft,
+          pageTop: visual.pageTop,
+          scale: visual.scale,
+        }
+      : null,
+    surfaceRect: snapshotRect(surfaceRect),
+    videoElementRect: snapshotRect(videoRect),
+    paintedVideoRect: videoRect
+      ? {
+          left: videoRect.left + content.left,
+          top: videoRect.top + content.top,
+          right: videoRect.left + content.left + content.width,
+          bottom: videoRect.top + content.top + content.height,
+          width: content.width,
+          height: content.height,
+        }
+      : null,
+    fitMode,
+    fullscreen: document.fullscreenElement === surface,
+    surfaceCss: surfaceStyle
+      ? { position: surfaceStyle.position, width: surfaceStyle.width, height: surfaceStyle.height }
+      : null,
+    videoCss: videoStyle
+      ? { objectFit: videoStyle.objectFit, objectPosition: videoStyle.objectPosition }
+      : null,
+    framePreviewDataUrl: includeFramePreview ? captureDecodedFramePreview(video) : "",
+  };
+}
+
+function snapshotRect(rect: DOMRect | undefined): Record<string, number> | null {
+  return rect
+    ? {
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+        width: rect.width,
+        height: rect.height,
+      }
+    : null;
+}
+
+function captureDecodedFramePreview(video: HTMLVideoElement | null): string {
+  if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth <= 0 || video.videoHeight <= 0) {
+    return "";
+  }
+  const render = (width: number): string => {
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = Math.max(1, Math.round((video.videoHeight * width) / video.videoWidth));
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) {
+      return "";
+    }
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", 0.5);
+  };
+  const preview = render(240);
+  return preview.length <= 24_000 ? preview : render(160);
 }
 
 function numeric(value: unknown): number {

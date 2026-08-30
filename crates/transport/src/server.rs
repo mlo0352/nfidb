@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::body::{Body, to_bytes};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{OriginalUri, Path, Query, State};
+use axum::extract::{ConnectInfo, OriginalUri, Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
@@ -361,6 +361,7 @@ async fn run_server(
     let command_state = Arc::clone(&state);
     let app = Router::new()
         .route("/api/status", get(status))
+        .route("/api/local/diagnostics", get(local_diagnostics_handler))
         .route("/api/metrics", get(metrics_handler))
         .route("/api/diagnostics", get(diagnostics_handler))
         .route("/api/input", get(input_handler).put(set_input_settings))
@@ -641,6 +642,30 @@ async fn diagnostics_handler(State(state): State<Arc<AppState>>, headers: Header
         return api_error(StatusCode::UNAUTHORIZED, "invalid session token");
     }
     Json(state.diagnostics.summary()).into_response()
+}
+
+async fn local_diagnostics_handler(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    State(state): State<Arc<AppState>>,
+) -> Response {
+    if !local_diagnostics_allowed(peer) {
+        return api_error(
+            StatusCode::FORBIDDEN,
+            "local diagnostics are available only from this computer",
+        );
+    }
+    Json(serde_json::json!({
+        "metrics": state.metrics.snapshot(),
+        "summary": state.diagnostics.summary(),
+        "latest": state.diagnostics.latest(),
+        "report": state.diagnostics.report(),
+        "video": video_response(&state),
+    }))
+    .into_response()
+}
+
+fn local_diagnostics_allowed(peer: SocketAddr) -> bool {
+    peer.ip().is_loopback()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1284,11 +1309,30 @@ fn insert_header(headers: &mut HeaderMap, name: impl header::IntoHeaderName, val
 
 #[cfg(test)]
 mod tests {
-    use std::net::Ipv4Addr;
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
     use axum::http::{HeaderMap, HeaderValue, header};
 
-    use super::{cookie_value, input_revision_matches, same_origin, select_best_local_ipv4, video_revision_matches};
+    use super::{
+        cookie_value, input_revision_matches, local_diagnostics_allowed, same_origin, select_best_local_ipv4,
+        video_revision_matches,
+    };
+
+    #[test]
+    fn raw_diagnostics_are_loopback_only() {
+        assert!(local_diagnostics_allowed(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            49131,
+        )));
+        assert!(local_diagnostics_allowed(SocketAddr::new(
+            IpAddr::V6(Ipv6Addr::LOCALHOST),
+            49131,
+        )));
+        assert!(!local_diagnostics_allowed(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 237)),
+            49131,
+        )));
+    }
 
     #[test]
     fn extracts_exact_cookie_without_prefix_confusion() {
