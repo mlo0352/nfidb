@@ -14,8 +14,9 @@ export default defineConfig({
   reporter: "line",
   use: {
     baseURL: process.env.NFIDB_E2E_URL ?? "http://127.0.0.1:47831/",
-      channel: requestedChannel === "bundled" ? undefined : (requestedChannel ?? (process.env.CI ? undefined : "msedge")),
+    channel: requestedChannel === "bundled" ? undefined : (requestedChannel ?? (process.env.CI ? undefined : "msedge")),
     headless: true,
+    hasTouch: true,
     viewport: { width: viewportWidth || 1280, height: viewportHeight || 720 },
     trace: "retain-on-failure",
   },
