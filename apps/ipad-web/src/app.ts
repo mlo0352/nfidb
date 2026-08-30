@@ -893,7 +893,6 @@ export class NfidbApp {
       surface.style.setProperty("--nfidb-viewport-top", `${top}px`);
       surface.style.setProperty("--nfidb-viewport-width", `${width}px`);
       surface.style.setProperty("--nfidb-viewport-height", `${height}px`);
-      surface.style.setProperty("--nfidb-video-top-inset", fullscreen ? "0px" : "48px");
     };
     const scheduleUpdate = () => {
       if (pendingFrame === 0) {

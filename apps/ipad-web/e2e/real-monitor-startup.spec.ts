@@ -19,6 +19,38 @@ test("starts and advances video, carries mouse input on DataChannel, and honors 
   await page.locator("#pin").fill(pin!);
   await expect(page.locator("#surface")).toBeVisible();
   await expect(page.locator("#connectionState")).toContainText("Connected locally", { timeout: 20_000 });
+
+  // Exercise the real rendered hit targets, not just the class-changing unit
+  // methods. A release is unusable on iPad if the Controls button cannot
+  // recover the toolbar after it has been dismissed.
+  await page.locator("#controlsClose").click();
+  await expect(page.locator("#toolbar")).not.toHaveClass(/visible/);
+  await expect(page.locator("#toolbarReveal")).toBeVisible();
+  await page.locator("#toolbarReveal").tap();
+  await expect(page.locator("#toolbar")).toHaveClass(/visible/);
+  await expect(page.locator("#touchButton")).toBeVisible();
+  const layout = await page.evaluate(() => {
+    const surface = document.querySelector<HTMLElement>("#surface")!.getBoundingClientRect();
+    const video = document.querySelector<HTMLVideoElement>("#remoteVideo")!;
+    const videoBox = video.getBoundingClientRect();
+    const toolbar = document.querySelector<HTMLElement>("#toolbar")!.getBoundingClientRect();
+    const style = getComputedStyle(video);
+    return {
+      surface: { top: surface.top, bottom: surface.bottom, height: surface.height },
+      video: { top: videoBox.top, bottom: videoBox.bottom, height: videoBox.height },
+      toolbar: { top: toolbar.top, bottom: toolbar.bottom },
+      objectFit: style.objectFit,
+      objectPosition: style.objectPosition,
+    };
+  });
+  expect(layout.video.top).toBeCloseTo(layout.surface.top, 0);
+  expect(layout.video.bottom).toBeCloseTo(layout.surface.bottom, 0);
+  expect(layout.video.height).toBeCloseTo(layout.surface.height, 0);
+  expect(layout.objectFit).toBe("contain");
+  expect(["center", "50% 50%", "center center"]).toContain(layout.objectPosition);
+  expect(layout.toolbar.top).toBeGreaterThanOrEqual(layout.surface.top);
+  expect(layout.toolbar.bottom).toBeLessThanOrEqual(layout.surface.bottom);
+
   await expect.poll(() => page.locator("video").evaluate((video) => video.videoWidth), { timeout: 30_000 }).toBeGreaterThan(0);
 
   const transportBefore = await snapshot(page);
@@ -45,7 +77,16 @@ test("starts and advances video, carries mouse input on DataChannel, and honors 
   await expect.poll(async () => Number((await snapshot(page)).host.video_recovery_requests), { timeout: 10_000 })
     .toBe(recoveryBefore + 1);
 
-  await page.waitForTimeout(2_500);
+  if (process.env.NFIDB_E2E_DRIVE_POINTER === "1") {
+    for (let index = 0; index < 14; index += 1) {
+      const x = overlay!.x + overlay!.width * (0.2 + (index % 7) * 0.1);
+      const y = overlay!.y + overlay!.height * (index % 2 === 0 ? 0.35 : 0.65);
+      await page.mouse.move(x, y);
+      await page.waitForTimeout(200);
+    }
+  } else {
+    await page.waitForTimeout(2_500);
+  }
   const after = await snapshot(page);
   expect(after.video.currentTime).toBeGreaterThan(before.video.currentTime + 1.5);
   expect(after.video.totalFrames).toBeGreaterThan(before.video.totalFrames);

@@ -121,24 +121,19 @@ button { -webkit-tap-highlight-color: transparent; }
 #remoteVideo {
   position: absolute;
   z-index: 1;
-  top: var(--nfidb-video-top-inset, 48px);
-  right: 0;
-  bottom: 0;
-  left: 0;
+  inset: 0;
   width: 100%;
-  height: auto;
+  height: 100%;
   object-fit: contain;
+  object-position: center center;
   background: #000;
 }
 #interactionOverlay {
   position: absolute;
   z-index: 2;
-  top: var(--nfidb-video-top-inset, 48px);
-  right: 0;
-  bottom: 0;
-  left: 0;
+  inset: 0;
   width: 100%;
-  height: auto;
+  height: 100%;
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
@@ -146,10 +141,10 @@ button { -webkit-tap-highlight-color: transparent; }
 .toolbar {
   position: absolute;
   z-index: 30;
-  top: auto;
+  top: max(12px, env(safe-area-inset-top));
   left: max(12px, env(safe-area-inset-left));
   right: max(12px, env(safe-area-inset-right));
-  bottom: max(12px, env(safe-area-inset-bottom));
+  bottom: auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -215,8 +210,6 @@ button { -webkit-tap-highlight-color: transparent; }
 }
 .toolbar-reveal b { color: var(--accent); font-size: 0.78rem; letter-spacing: -0.04em; }
 .toolbar-reveal[aria-expanded="true"] { opacity: 0; transform: translateY(6px); pointer-events: none; }
-
-#surface:fullscreen { --nfidb-video-top-inset: 0px; }
 
 .files-panel {
   position: absolute;
