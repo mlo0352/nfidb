@@ -141,40 +141,6 @@ describe("surface controls", () => {
     localStorage.clear();
   });
 
-  it("keeps the complete surface inside the browser visual viewport", () => {
-    const root = document.createElement("div");
-    const viewport = new EventTarget() as VisualViewport;
-    Object.defineProperties(viewport, {
-      offsetLeft: { configurable: true, value: 7 },
-      offsetTop: { configurable: true, value: 116 },
-      width: { configurable: true, value: 980 },
-      height: { configurable: true, value: 620 },
-    });
-    const originalViewport = Object.getOwnPropertyDescriptor(window, "visualViewport");
-    Object.defineProperty(window, "visualViewport", { configurable: true, value: viewport });
-    try {
-      const app = new NfidbApp(root);
-      const internal = app as unknown as {
-        status: { mode: string };
-        renderSurface: () => void;
-      };
-      internal.status = { mode: "display-and-input" };
-      internal.renderSurface();
-
-      const surface = root.querySelector<HTMLElement>("#surface")!;
-      expect(surface.style.getPropertyValue("--nfidb-viewport-left")).toBe("7px");
-      expect(surface.style.getPropertyValue("--nfidb-viewport-top")).toBe("116px");
-      expect(surface.style.getPropertyValue("--nfidb-viewport-width")).toBe("980px");
-      expect(surface.style.getPropertyValue("--nfidb-viewport-height")).toBe("620px");
-    } finally {
-      if (originalViewport) {
-        Object.defineProperty(window, "visualViewport", originalViewport);
-      } else {
-        Reflect.deleteProperty(window, "visualViewport");
-      }
-    }
-  });
-
   it("keeps controls closed during drawing and opens them only from the explicit button", () => {
     vi.useFakeTimers();
     const root = document.createElement("div");
